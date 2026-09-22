@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from argon2 import PasswordHasher
 from pydantic import ValidationError
 
+from app.models import User
 from app.schemas import UserCreate
 from app.services.users import register_user
 
@@ -195,6 +196,31 @@ def test_register_user_maps_lookup_database_errors():
     assert db.rollback_called
     assert error.value.status_code == 503
     assert error.value.detail == "Database temporarily unavailable"
+
+
+def test_user_model_protects_required_fields_and_account_defaults():
+    """The database schema protects required registration data and account state."""
+
+    columns = User.__table__.c
+
+    for name in (
+        "id",
+        "nus_student_number",
+        "email",
+        "display_name",
+        "password_hash",
+        "role",
+        "status",
+        "created_at",
+        "updated_at",
+    ):
+        assert columns[name].nullable is False
+
+    assert str(columns.role.server_default.arg) == "user"
+    assert str(columns.status.server_default.arg) == "active"
+    constraint_names = {constraint.name for constraint in User.__table__.constraints}
+    assert "ck_users_role" in constraint_names
+    assert "ck_users_status" in constraint_names
 
 
 @pytest.mark.parametrize(
