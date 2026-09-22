@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 class UserCreate(BaseModel):
     """Validate the fields required to register a new user."""
 
+    model_config = ConfigDict(extra="forbid")
+
     nus_student_number: str = Field(min_length=9, max_length=9)
     email: EmailStr
     display_name: str = Field(min_length=1, max_length=100)

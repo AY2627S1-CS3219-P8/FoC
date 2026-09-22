@@ -142,6 +142,13 @@ def test_user_create_rejects_non_string_text_fields(field, value):
         make_payload(**{field: value})
 
 
+def test_user_create_rejects_unknown_fields():
+    """Registration rejects fields that are not part of its public contract."""
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        make_payload(role="admin", status="active")
+
+
 def test_register_user_trims_trailing_whitespace_from_identity_fields():
     """Registration does not persist trailing whitespace in identity fields."""
 
