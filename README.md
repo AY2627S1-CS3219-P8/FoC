@@ -45,4 +45,30 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
   may be added as needed, but must still **respect the
   one-service-per-folder skeleton** for core implementation.
 
+## Development tooling
+
+The repository uses Python 3.12, Ruff for linting and formatting, mypy for
+type checking, pytest for tests, and pre-commit for local checks.
+
+Install the development tools and enable the hooks:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+pre-commit install
+```
+
+Run the checks manually with:
+
+```bash
+ruff check .
+ruff format --check .
+mypy .
+pytest
+```
+
+The type-checking and test commands become applicable once Python source
+files and tests are added to the repository.
+
 ---
