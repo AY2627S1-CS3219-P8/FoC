@@ -133,6 +133,15 @@ def test_user_create_rejects_malformed_email_addresses(email):
         make_payload(email=email)
 
 
+@pytest.mark.parametrize("field", ["nus_student_number", "display_name"])
+@pytest.mark.parametrize("value", [None, 123, [], {}])
+def test_user_create_rejects_non_string_text_fields(field, value):
+    """Non-string text fields return validation errors instead of server errors."""
+
+    with pytest.raises(ValidationError, match="must be a string"):
+        make_payload(**{field: value})
+
+
 def test_register_user_trims_trailing_whitespace_from_identity_fields():
     """Registration does not persist trailing whitespace in identity fields."""
 

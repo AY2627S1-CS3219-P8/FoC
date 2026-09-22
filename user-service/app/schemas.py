@@ -17,9 +17,11 @@ class UserCreate(BaseModel):
 
     @field_validator("nus_student_number", "display_name", mode="before")
     @classmethod
-    def non_blank(cls, value: str) -> str:
+    def non_blank(cls, value: object) -> str:
         """Trim surrounding whitespace and reject blank text values."""
 
+        if not isinstance(value, str):
+            raise ValueError("must be a string")
         value = value.strip()
         if not value:
             raise ValueError("must not be blank")
