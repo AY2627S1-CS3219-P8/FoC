@@ -25,6 +25,16 @@ class UserCreate(BaseModel):
             raise ValueError("must not be blank")
         return value
 
+    @field_validator("nus_student_number")
+    @classmethod
+    def student_number_format(cls, value: str) -> str:
+        """Normalize and validate the NUS student number format."""
+
+        value = value.upper()
+        if not re.fullmatch(r"[AU]\d{7}[A-Z]", value):
+            raise ValueError("must be a valid NUS student number")
+        return value
+
     @field_validator("password")
     @classmethod
     def password_policy(cls, value: str) -> str:

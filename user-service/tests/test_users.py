@@ -96,6 +96,25 @@ def test_register_user_normalizes_fields_and_applies_defaults():
 
 
 @pytest.mark.parametrize(
+    "student_number",
+    ["123456789", "A12345678", "A1234567", "A1234567!", "B1234567X", "!!!!!!!!!"],
+)
+def test_user_create_rejects_invalid_student_number_formats(student_number):
+    """Registration accepts only the expected NUS student number shape."""
+
+    with pytest.raises(ValidationError):
+        make_payload(nus_student_number=student_number)
+
+
+def test_user_create_normalizes_student_number_case():
+    """Student numbers are stored in uppercase for consistent identity matching."""
+
+    payload = make_payload(nus_student_number="a0123456x")
+
+    assert payload.nus_student_number == "A0123456X"
+
+
+@pytest.mark.parametrize(
     "password",
     ["password", "Password1", "Password!", "12345678!"],
 )
