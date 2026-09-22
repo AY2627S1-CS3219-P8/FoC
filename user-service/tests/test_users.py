@@ -14,8 +14,9 @@ from app.services.users import register_user
 class FakeSession:
     """Minimal session double for testing registration without a database."""
 
-    def __init__(self, existing=None, commit_error=None):
+    def __init__(self, existing=None, lookup_error=None, commit_error=None):
         self.existing = existing
+        self.lookup_error = lookup_error
         self.commit_error = commit_error
         self.user = None
         self.rollback_called = False
@@ -23,6 +24,8 @@ class FakeSession:
     def scalar(self, _query):
         """Return the configured result for the duplicate lookup."""
 
+        if self.lookup_error:
+            raise self.lookup_error
         return self.existing
 
     def add(self, user):
@@ -177,6 +180,21 @@ def test_register_user_rejects_an_existing_user_before_writing():
     assert error.value.status_code == 409
     assert error.value.detail == "User already exists"
     assert db.user is None
+
+
+def test_register_user_maps_lookup_database_errors():
+    """A failed duplicate lookup returns a service-unavailable response."""
+
+    db = FakeSession(
+        lookup_error=OperationalError("SELECT", {}, Exception("database unavailable"))
+    )
+
+    with pytest.raises(HTTPException) as error:
+        register_user(make_payload(), db)
+
+    assert db.rollback_called
+    assert error.value.status_code == 503
+    assert error.value.detail == "Database temporarily unavailable"
 
 
 @pytest.mark.parametrize(

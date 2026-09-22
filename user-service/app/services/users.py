@@ -25,11 +25,16 @@ def register_user(payload: UserCreate, db: Session) -> User:
     email = str(payload.email).lower()
     student_number = payload.nus_student_number.strip()
 
-    existing = db.scalar(
-        select(User).where(
-            (User.email == email) | (User.nus_student_number == student_number)
+    try:
+        existing = db.scalar(
+            select(User).where(
+                (User.email == email) | (User.nus_student_number == student_number)
+            )
         )
-    )
+    except OperationalError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
     if existing:
         raise HTTPException(status_code=409, detail="User already exists")
 
