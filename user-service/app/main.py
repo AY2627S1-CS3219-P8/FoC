@@ -2,9 +2,12 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from app.db import Base, engine
+from app.db import Base, engine, get_db
 from app.routes.users import router as users_router
 
 
@@ -24,6 +27,18 @@ def health_check():
     """Return a simple liveness response for health checks."""
 
     return {"status": "healthy"}
+
+
+@app.get("/ready")
+def readiness_check(db: Session = Depends(get_db)):
+    """Return ready only when the database can execute a lightweight query."""
+
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+
+    return {"status": "ready"}
 
 
 app.include_router(users_router)
