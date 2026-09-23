@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26-alpine AS base
+FROM node:26.10.0-alpine3.24 AS base
 WORKDIR /app
-RUN npm install -g corepack@latest && corepack enable
+RUN npm install -g corepack@0.36.0 && corepack enable
 
 FROM base AS deps
 COPY package.json yarn.lock ./
