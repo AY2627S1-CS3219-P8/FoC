@@ -2,7 +2,16 @@ name: CI
 
 on:
   push:
+    branches: [main]
+    paths:
+      - "user-service/**"
+      - "compose.yaml"
+      - ".github/workflows/ci.yml"
   pull_request:
+    paths:
+      - "user-service/**"
+      - "compose.yaml"
+      - ".github/workflows/ci.yml"
 
 permissions:
   contents: read
