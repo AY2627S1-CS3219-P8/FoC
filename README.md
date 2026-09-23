@@ -12,13 +12,13 @@ withdrawn, or exchanged for money, and only circulate within the platform.
 
 ## Team Members
 
-| Name | Role |
-| ----- | ----- |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
+| Name        | Role             |
+| ----------- | ---------------- |
+| Swee Kah Ho | Frontend Service |
+| Your Name   | Your ownership   |
+| Your Name   | Your ownership   |
+| Your Name   | Your ownership   |
+| Your Name   | Your ownership   |
 
 ---
 
