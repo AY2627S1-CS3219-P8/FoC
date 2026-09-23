@@ -1,0 +1,6 @@
+services:
+  frontend-service:
+    build:
+      context: ./frontend-service
+    ports:
+      - "3000:3000"

@@ -46,3 +46,27 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
   one-service-per-folder skeleton** for core implementation.
 
 ---
+
+## Running Locally with Docker Compose
+
+Services can be run via the root [`compose.yaml`](./compose.yaml).
+
+Start the services:
+
+```bash
+docker compose up
+```
+
+Rebuild after making changes:
+
+```bash
+docker compose up --build
+```
+
+Stop and remove the containers:
+
+```bash
+docker compose down
+```
+
+---

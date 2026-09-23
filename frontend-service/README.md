@@ -60,6 +60,22 @@ Then serve the production build:
 yarn start
 ```
 
+## Running with Docker
+
+Build the image (run from the `frontend-service` directory):
+
+```bash
+docker build -t frontend-service .
+```
+
+Run the container:
+
+```bash
+docker run -p 3000:3000 frontend-service
+```
+
+Open [http://localhost:3000](http://localhost:3000) to see the result.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
