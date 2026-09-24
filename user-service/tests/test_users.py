@@ -1,4 +1,7 @@
-"""Tests for user registration behavior."""
+"""Tests for user registration and login behavior."""
+
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -8,8 +11,8 @@ from argon2 import PasswordHasher
 from pydantic import ValidationError
 
 from app.models import User
-from app.schemas import UserCreate
-from app.services.users import register_user
+from app.schemas import UserCreate, UserLogin
+from app.services.users import hash_password, login_user, register_user
 
 
 class FakeSession:
@@ -52,6 +55,40 @@ class FakeSession:
         self.rollback_called = True
 
 
+class FakeLoginSession:
+    """Minimal session double for testing authentication without a database."""
+
+    def __init__(self, existing=None, lookup_error=None, commit_error=None):
+        self.existing = existing
+        self.lookup_error = lookup_error
+        self.commit_error = commit_error
+        self.session = None
+        self.rollback_called = False
+
+    def scalar(self, _query):
+        """Return the configured user lookup result."""
+
+        if self.lookup_error:
+            raise self.lookup_error
+        return self.existing
+
+    def add(self, session):
+        """Capture the session passed for persistence."""
+
+        self.session = session
+
+    def commit(self):
+        """Simulate a successful commit or raise the configured error."""
+
+        if self.commit_error:
+            raise self.commit_error
+
+    def rollback(self):
+        """Record that the failed transaction was rolled back."""
+
+        self.rollback_called = True
+
+
 def make_payload(**overrides):
     """Build a valid registration payload, allowing individual fields to vary."""
 
@@ -63,6 +100,23 @@ def make_payload(**overrides):
     }
     values.update(overrides)
     return UserCreate(**values)
+
+
+def make_user(password="Password1!", status="active"):
+    """Build a persisted-looking user for authentication tests."""
+
+    now = datetime.now(timezone.utc)
+    return User(
+        id=uuid4(),
+        nus_student_number="A0123456X",
+        email="student@example.com",
+        display_name="Student",
+        password_hash=hash_password(password),
+        role="user",
+        status=status,
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def test_register_user_hashes_password_before_persistence():
@@ -77,6 +131,61 @@ def test_register_user_hashes_password_before_persistence():
     assert db.user.password_hash != password
     assert db.user.password_hash.startswith("$argon2id$")
     assert PasswordHasher().verify(db.user.password_hash, password)
+
+
+def test_login_user_verifies_password_and_persists_hashed_session_token():
+    """Successful login returns a token while storing only its hash."""
+
+    db = FakeLoginSession(existing=make_user())
+
+    result = login_user(
+        UserLogin(nus_student_number="a0123456x", password="Password1!"),
+        db,
+    )
+
+    assert result.token_type == "bearer"
+    assert result.expires_in == 30 * 60
+    assert result.user.email == "student@example.com"
+    assert len(result.access_token) > 20
+    assert db.session.token_hash != result.access_token
+    assert db.session.user_id == result.user.id
+    assert db.session.token_hash
+    assert db.session.expires_at > db.session.last_activity_at
+    assert db.session.absolute_expires_at > db.session.expires_at
+
+
+@pytest.mark.parametrize("status", ["deactivated", "suspended"])
+def test_login_user_rejects_non_active_accounts_without_creating_session(status):
+    """Deactivated and suspended accounts receive the generic auth error."""
+
+    db = FakeLoginSession(existing=make_user(status=status))
+
+    with pytest.raises(HTTPException) as error:
+        login_user(
+            UserLogin(nus_student_number="A0123456X", password="Password1!"),
+            db,
+        )
+
+    assert error.value.status_code == 401
+    assert error.value.detail == "Invalid credentials"
+    assert db.session is None
+
+
+def test_login_user_rejects_unknown_or_incorrect_credentials_generically():
+    """Unknown users and wrong passwords do not disclose account existence."""
+
+    for user in (None, make_user()):
+        db = FakeLoginSession(existing=user)
+
+        with pytest.raises(HTTPException) as error:
+            login_user(
+                UserLogin(nus_student_number="A0123456X", password="wrong"),
+                db,
+            )
+
+        assert error.value.status_code == 401
+        assert error.value.detail == "Invalid credentials"
+        assert db.session is None
 
 
 def test_register_user_normalizes_fields_and_applies_defaults():

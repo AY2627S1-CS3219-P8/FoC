@@ -174,6 +174,37 @@ curl -X POST http://localhost:8080/users \
   -d '{"nus_student_number":"A0123456X","email":"student@example.com","display_name":"Student","password":"Password1!"}'
 ```
 
+Log in with the registered NUS student number and password:
+
+```bash
+curl -X POST http://localhost:8080/login \
+  -H 'Content-Type: application/json' \
+  -d '{"nus_student_number":"A0123456X","password":"Password1!"}'
+```
+
+The response contains an opaque bearer token. Session tokens are stored only
+as hashes and expire after 30 minutes of inactivity or 24 hours, whichever
+comes first. Invalid credentials and non-active accounts return the same
+generic authentication error.
+
+Use the returned token for protected requests:
+
+```bash
+curl http://localhost:8080/users/me \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+The service refreshes the inactivity deadline on valid protected requests,
+without extending the 24-hour absolute lifetime. End the session with:
+
+```bash
+curl -X POST http://localhost:8080/logout \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+Missing, malformed, expired, tampered, revoked, and non-active-account
+credentials are rejected with `401 Unauthorized`.
+
 The development database credentials are defined in `compose.yaml`; replace
 them with secrets or an untracked environment file before using a deployed
 environment. Schema creation here is intended as a starting point; add
