@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.auth import hash_session_token
+from app.auth import cleanup_sessions, hash_session_token
 from app.db import Base, get_db
 from app.main import app
 from app.models import User, UserSession
@@ -168,3 +168,82 @@ def test_logout_revokes_the_current_session(client, database):
     assert logout_response.status_code == 204
     assert profile_response.status_code == 401
     assert session.revoked_at is not None
+
+
+def test_login_cleans_up_unusable_sessions(client, database):
+    """A successful login opportunistically removes stale session records."""
+
+    user = create_user(database)
+    now = datetime.now(timezone.utc)
+    database.add_all(
+        [
+            UserSession(
+                user_id=user.id,
+                token_hash=hash_session_token("A" * 43),
+                created_at=now,
+                last_activity_at=now,
+                expires_at=now + timedelta(minutes=10),
+                absolute_expires_at=now + timedelta(hours=1),
+                revoked_at=now,
+            ),
+            UserSession(
+                user_id=user.id,
+                token_hash=hash_session_token("B" * 43),
+                created_at=now - timedelta(hours=1),
+                last_activity_at=now - timedelta(hours=1),
+                expires_at=now - timedelta(seconds=1),
+                absolute_expires_at=now + timedelta(hours=1),
+            ),
+        ]
+    )
+    database.commit()
+
+    token = login(client)
+
+    sessions = database.scalars(select(UserSession)).all()
+    assert len(sessions) == 1
+    assert sessions[0].token_hash == hash_session_token(token)
+
+
+def test_cleanup_removes_revoked_and_expired_sessions_but_keeps_active_sessions(database):
+    """Session housekeeping removes unusable records without touching live ones."""
+
+    user = create_user(database)
+    now = datetime.now(timezone.utc)
+    active_token = "A" * 43
+    revoked_token = "B" * 43
+    expired_token = "C" * 43
+    active = UserSession(
+        user_id=user.id,
+        token_hash=hash_session_token(active_token),
+        created_at=now,
+        last_activity_at=now,
+        expires_at=now + timedelta(minutes=10),
+        absolute_expires_at=now + timedelta(hours=1),
+    )
+    revoked = UserSession(
+        user_id=user.id,
+        token_hash=hash_session_token(revoked_token),
+        created_at=now,
+        last_activity_at=now,
+        expires_at=now + timedelta(minutes=10),
+        absolute_expires_at=now + timedelta(hours=1),
+        revoked_at=now,
+    )
+    expired = UserSession(
+        user_id=user.id,
+        token_hash=hash_session_token(expired_token),
+        created_at=now - timedelta(hours=1),
+        last_activity_at=now - timedelta(hours=1),
+        expires_at=now - timedelta(seconds=1),
+        absolute_expires_at=now + timedelta(hours=1),
+    )
+    database.add_all([active, revoked, expired])
+    database.commit()
+
+    deleted = cleanup_sessions(database, now=now)
+    database.commit()
+
+    remaining = database.scalars(select(UserSession)).all()
+    assert deleted == 2
+    assert [session.token_hash for session in remaining] == [hash_session_token(active_token)]

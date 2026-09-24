@@ -1,14 +1,42 @@
 """FastAPI application entry point for the User Service."""
 
-from contextlib import asynccontextmanager
+import asyncio
+import logging
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.db import Base, engine, get_db
+from app.auth import SESSION_CLEANUP_INTERVAL, cleanup_sessions
+from app.db import Base, SessionLocal, engine, get_db
 from app.routes.users import router as users_router
+
+
+logger = logging.getLogger(__name__)
+
+
+def run_session_cleanup() -> None:
+    """Delete unusable sessions in an independent database transaction."""
+
+    with SessionLocal() as db:
+        try:
+            deleted = cleanup_sessions(db)
+            db.commit()
+            if deleted:
+                logger.info("Removed %d expired or revoked sessions", deleted)
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Periodic session cleanup failed")
+
+
+async def session_cleanup_loop() -> None:
+    """Run session cleanup periodically until the application shuts down."""
+
+    while True:
+        run_session_cleanup()
+        await asyncio.sleep(SESSION_CLEANUP_INTERVAL.total_seconds())
 
 
 @asynccontextmanager
@@ -16,7 +44,13 @@ async def lifespan(_: FastAPI):
     """Create the database tables when the application starts."""
 
     Base.metadata.create_all(bind=engine)
-    yield
+    cleanup_task = asyncio.create_task(session_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(title="FoC User Service", lifespan=lifespan)

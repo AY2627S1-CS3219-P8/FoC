@@ -65,6 +65,11 @@ class FakeLoginSession:
         self.session = None
         self.rollback_called = False
 
+    def execute(self, _statement):
+        """Simulate a successful session cleanup query."""
+
+        return type("FakeResult", (), {"rowcount": 0})()
+
     def scalar(self, _query):
         """Return the configured user lookup result."""
 

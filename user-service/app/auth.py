@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ from app.models import User, UserSession
 
 SESSION_INACTIVITY = timedelta(minutes=30)
 SESSION_ABSOLUTE_LIFETIME = timedelta(hours=24)
+SESSION_CLEANUP_INTERVAL = timedelta(hours=1)
 AUTHENTICATION_ERROR = "Invalid authentication credentials"
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,256}$")
 
@@ -27,6 +28,26 @@ def hash_session_token(token: str) -> str:
     """Hash a bearer token before it is used in a database lookup or stored."""
 
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def cleanup_sessions(db: Session, now: datetime | None = None) -> int:
+    """Delete revoked and expired sessions and return the deleted row count.
+
+    The caller owns the transaction so cleanup can be committed together with
+    other authentication changes, such as creating a new login session.
+    """
+
+    cleanup_time = now or datetime.now(timezone.utc)
+    result = db.execute(
+        delete(UserSession).where(
+            or_(
+                UserSession.revoked_at.is_not(None),
+                UserSession.expires_at <= cleanup_time,
+                UserSession.absolute_expires_at <= cleanup_time,
+            )
+        )
+    )
+    return result.rowcount or 0
 
 
 @dataclass(frozen=True)

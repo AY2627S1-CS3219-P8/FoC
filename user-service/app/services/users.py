@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    cleanup_sessions,
     SESSION_ABSOLUTE_LIFETIME,
     SESSION_INACTIVITY,
     hash_session_token,
@@ -73,6 +74,7 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
     )
 
     try:
+        cleanup_sessions(db, now=now)
         db.add(session)
         db.commit()
     except IntegrityError as exc:
