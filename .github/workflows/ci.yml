@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "user-service/**"
+      - "compose.yaml"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "user-service/**"
+      - "compose.yaml"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  user-service:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: user-service/requirements-dev.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+        working-directory: user-service
+
+      - name: Run tests
+        run: python -m pytest -q
+        working-directory: user-service
+
+      - name: Validate Compose configuration
+        run: docker compose config
+
+      - name: Build user-service image
+        run: docker compose build user-service
