@@ -108,7 +108,7 @@ def register_user(payload: UserCreate, db: Session) -> User:
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
     if existing:
-        raise HTTPException(status_code=409, detail="User already exists")
+        raise HTTPException(status_code=409, detail="Unable to create account")
 
     user = User(
         nus_student_number=student_number,
@@ -123,7 +123,7 @@ def register_user(payload: UserCreate, db: Session) -> User:
         db.refresh(user)
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(status_code=409, detail="User already exists") from exc
+        raise HTTPException(status_code=409, detail="Unable to create account") from exc
     except OperationalError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc

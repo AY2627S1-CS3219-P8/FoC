@@ -166,7 +166,17 @@ cp .env.example .env
 docker compose up --build user-db user-service
 ```
 
-Create a user with:
+The service is available to other containers on the Compose network at
+`http://user-service:8080`. The current Compose configuration does not publish
+port 8080 to the host. To access the API from the host, temporarily add this
+to the `user-service` definition in `compose.yaml`:
+
+```yaml
+ports:
+  - "8080:8080"
+```
+
+Once the port is published, create a user with:
 
 ```bash
 curl -X POST http://localhost:8080/users \

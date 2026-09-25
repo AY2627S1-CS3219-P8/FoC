@@ -19,8 +19,6 @@ services:
     container_name: user-service
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@user-db:5432/foc_users
-    ports:
-      - "8080:8080"
     depends_on:
       user-db:
         condition: service_healthy
