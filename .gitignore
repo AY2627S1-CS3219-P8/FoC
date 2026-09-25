@@ -18,3 +18,8 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Frontend Service
+node_modules/
+.next/
+*.tsbuildinfo
