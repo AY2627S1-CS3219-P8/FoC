@@ -45,8 +45,26 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose config
 
-      - name: Build user-service image
-        run: docker compose build user-service
+      - name: Start Compose stack with one user-service instance
+        run: >-
+          docker compose -p foc-compose-smoke up
+          --build
+          --detach
+          --wait
+          user-service
+
+      - name: Verify user-service started
+        run: |
+          test "$(docker compose -p foc-compose-smoke ps -q user-service | wc -l | tr -d ' ')" -eq 1
+          docker compose -p foc-compose-smoke ps
+
+      - name: Show Compose logs on failure
+        if: failure()
+        run: docker compose -p foc-compose-smoke logs
+
+      - name: Clean up Compose smoke-test stack
+        if: always()
+        run: docker compose -p foc-compose-smoke down --volumes --remove-orphans
 
   user-service-postgres-migrations:
     runs-on: ubuntu-latest
