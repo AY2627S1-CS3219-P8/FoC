@@ -153,18 +153,36 @@ point and dependencies are added, build and run it from the repository root
 with the project compose configuration:
 
 ```bash
-docker compose build user-service
+docker compose build user-service user-migrate
 docker compose up user-service
 ```
 
 The local compose setup also starts PostgreSQL as `user-db`. The service uses
-the `DATABASE_URL` environment variable and creates the initial `users` table
-on startup. For local development:
+the `DATABASE_URL` environment variable. Compose runs the one-shot
+`user-migrate` service to apply all pending Alembic migrations before starting
+the application:
 
 ```bash
 cp .env.example .env
 docker compose up --build user-db user-service
 ```
+
+The application image does not run migrations in its own startup command, so
+multiple application replicas can start safely after the migration job
+completes. In another deployment system, run `alembic upgrade head` as a
+single migration job before starting or rolling out application replicas.
+
+To apply migrations directly during local development, run this from
+`user-service/` with the target database configured in `DATABASE_URL`:
+
+```bash
+python -m alembic upgrade head
+```
+
+Databases created by versions before Alembic was introduced are recognized as
+the baseline automatically when their existing `users` and `user_sessions`
+tables are present. Verify the schema and take a backup before migrating any
+production database.
 
 The service is available to other containers on the Compose network at
 `http://user-service:8080`. The current Compose configuration does not publish
@@ -218,8 +236,9 @@ credentials are rejected with `401 Unauthorized`.
 
 The development database credentials are defined in `compose.yaml`; replace
 them with secrets or an untracked environment file before using a deployed
-environment. Schema creation here is intended as a starting point; add
-Alembic migrations before evolving the production schema.
+environment. Create a new Alembic migration for every production schema
+change and run it once, as a deployment job, before starting application
+replicas.
 
 Do not commit credentials, tokens, private keys, or production configuration.
 Use environment variables or a local, untracked environment file for local
