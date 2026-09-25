@@ -179,7 +179,7 @@ def test_register_user_rejects_an_existing_user_before_writing():
         register_user(make_payload(), db)
 
     assert error.value.status_code == 409
-    assert error.value.detail == "User already exists"
+    assert error.value.detail == "Unable to create account"
     assert db.user is None
 
 
@@ -229,7 +229,7 @@ def test_user_model_protects_required_fields_and_account_defaults():
         (
             IntegrityError("INSERT", {}, Exception("duplicate")),
             409,
-            "User already exists",
+            "Unable to create account",
         ),
         (
             OperationalError("INSERT", {}, Exception("database unavailable")),
