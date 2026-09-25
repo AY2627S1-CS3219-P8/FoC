@@ -16,9 +16,11 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 database_url = os.getenv("DATABASE_URL")
-if database_url:
-    # Alembic's Config uses configparser interpolation for percent signs.
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+if not database_url:
+    raise RuntimeError("DATABASE_URL must be set before running Alembic migrations")
+
+# Alembic's Config uses configparser interpolation for percent signs.
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

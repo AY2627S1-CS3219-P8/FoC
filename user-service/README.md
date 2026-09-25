@@ -179,6 +179,10 @@ To apply migrations directly during local development, run this from
 python -m alembic upgrade head
 ```
 
+`DATABASE_URL` is required; migrations do not fall back to a local SQLite
+database. This prevents accidentally believing that a production database was
+migrated when only a local database was changed.
+
 The PostgreSQL migration smoke test is opt-in and requires a disposable test
 database. Set `TEST_DATABASE_URL` to that database and run:
 

@@ -41,6 +41,24 @@ def run_alembic_upgrade(database_url: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def test_alembic_requires_database_url():
+    """Migrations fail instead of silently targeting a fallback database."""
+
+    environment = os.environ.copy()
+    environment.pop("DATABASE_URL", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=SERVICE_DIR,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "DATABASE_URL must be set" in result.stderr
+
+
 def test_fresh_database_reaches_migration_head(tmp_path):
     """A new database receives both application tables and the version row."""
 
