@@ -59,6 +59,24 @@ def test_alembic_requires_database_url():
     assert "DATABASE_URL must be set" in result.stderr
 
 
+def test_application_requires_database_url():
+    """The application fails instead of silently selecting SQLite."""
+
+    environment = os.environ.copy()
+    environment.pop("DATABASE_URL", None)
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.db"],
+        cwd=SERVICE_DIR,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "DATABASE_URL must be set before starting the User Service" in result.stderr
+
+
 def test_fresh_database_reaches_migration_head(tmp_path):
     """A new database receives both application tables and the version row."""
 

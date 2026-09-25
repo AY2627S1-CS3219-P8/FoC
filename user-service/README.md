@@ -157,8 +157,9 @@ docker compose build user-service user-migrate
 docker compose up user-service
 ```
 
-The local compose setup also starts PostgreSQL as `user-db`. The service uses
-the `DATABASE_URL` environment variable. Compose runs the one-shot
+The local compose setup also starts PostgreSQL as `user-db`. The service
+requires the `DATABASE_URL` environment variable; it does not fall back to
+SQLite. Compose runs the one-shot
 `user-migrate` service to apply all pending Alembic migrations before starting
 the application:
 
