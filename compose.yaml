@@ -15,7 +15,8 @@ services:
       retries: 5
 
   user-service:
-    build: ./user-service
+    build:
+      context: ./user-service
     container_name: user-service
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@user-db:5432/foc_users
@@ -24,10 +25,17 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready')"]
+
       interval: 30s
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  frontend-service:
+    build:
+      context: ./frontend-service
+    ports:
+      - "3000:3000"
 
 volumes:
   user-db-data:
