@@ -6,6 +6,8 @@ Create Date: 2026-09-24
 
 """
 
+import re
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -16,13 +18,95 @@ branch_labels = None
 depends_on = None
 
 
+def _check_constraint_matches(
+    sqltext: str, column: str, allowed_values: set[str]
+) -> bool:
+    """Match a check semantically across SQLite and PostgreSQL renderings."""
+
+    normalized = " ".join(sqltext.lower().split())
+    literals = set(re.findall(r"'([^']*)'", normalized))
+    padded = f" {normalized} "
+    uses_membership = " in " in padded or " any " in padded
+    return (
+        column.lower() in normalized
+        and literals == {value.lower() for value in allowed_values}
+        and uses_membership
+        and " not in " not in padded
+    )
+
+
+def _validate_existing_users_table(bind) -> None:
+    """Reject an existing users table that is not the known legacy schema."""
+
+    inspector = sa.inspect(bind)
+    expected_columns = {
+        "id": False,
+        "nus_student_number": False,
+        "email": False,
+        "display_name": False,
+        "password_hash": False,
+        "role": False,
+        "status": False,
+        "created_at": False,
+        "updated_at": False,
+    }
+    columns = {column["name"]: column for column in inspector.get_columns("users")}
+    problems = [
+        f"missing column {name!r}"
+        for name in expected_columns
+        if name not in columns
+    ]
+    problems.extend(
+        f"column {name!r} has unexpected nullability"
+        for name, nullable in expected_columns.items()
+        if name in columns and columns[name]["nullable"] is not nullable
+    )
+
+    primary_key = inspector.get_pk_constraint("users")
+    if primary_key.get("constrained_columns") != ["id"]:
+        problems.append("primary key must be on id")
+
+    indexes = inspector.get_indexes("users")
+    for column in ("nus_student_number", "email"):
+        if not any(
+            index.get("column_names") == [column] and bool(index.get("unique"))
+            for index in indexes
+        ):
+            problems.append(f"missing unique index on {column!r}")
+
+    checks = {
+        constraint.get("name"): " ".join(constraint.get("sqltext", "").split()).lower()
+        for constraint in inspector.get_check_constraints("users")
+    }
+    expected_checks = {
+        "ck_users_role": ("role", {"user", "admin"}),
+        "ck_users_status": (
+            "status",
+            {"active", "deactivated", "suspended"},
+        ),
+    }
+    for name, (column, allowed_values) in expected_checks.items():
+        if not checks.get(name) or not _check_constraint_matches(
+            checks[name], column, allowed_values
+        ):
+            problems.append(f"missing or incorrect check constraint {name!r}")
+
+    if problems:
+        raise RuntimeError(
+            "Existing 'users' table does not match the expected legacy schema: "
+            + "; ".join(problems)
+        )
+
+
 def upgrade() -> None:
     """Create the initial user-account schema on a fresh database."""
 
     # The application previously created this schema with
     # Base.metadata.create_all(). Treat that schema as the baseline when
     # upgrading an existing database, while still creating it on a fresh one.
-    if sa.inspect(op.get_bind()).has_table("users"):
+    bind = op.get_bind()
+    if sa.inspect(bind).has_table("users"):
+        _validate_existing_users_table(bind)
         return
 
     op.create_table(

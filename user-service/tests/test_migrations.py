@@ -1,5 +1,6 @@
 """Regression tests for fresh and pre-Alembic database migrations."""
 
+import importlib.util
 import os
 import sqlite3
 import subprocess
@@ -8,6 +9,21 @@ from pathlib import Path
 
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
+BASELINE_MIGRATION = (
+    SERVICE_DIR / "alembic" / "versions" / "20260924_0001_baseline_users.py"
+)
+
+
+def load_baseline_migration():
+    """Load the baseline revision so its dialect-neutral validator can be tested."""
+
+    spec = importlib.util.spec_from_file_location(
+        "baseline_migration", BASELINE_MIGRATION
+    )
+    assert spec and spec.loader
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    return migration
 
 
 def run_alembic_upgrade(database_url: str) -> subprocess.CompletedProcess[str]:
@@ -43,6 +59,19 @@ def test_fresh_database_reaches_migration_head(tmp_path):
 
     assert {"users", "user_sessions", "alembic_version"} <= tables
     assert version == "20260924_0002"
+
+
+def test_check_constraint_validation_accepts_postgresql_rendering():
+    """Equivalent PostgreSQL check SQL is accepted by the legacy validator."""
+
+    migration = load_baseline_migration()
+
+    assert migration._check_constraint_matches(
+        "((role)::text = ANY ((ARRAY['user'::character varying, "
+        "'admin'::character varying])::text[]))",
+        "role",
+        {"user", "admin"},
+    )
 
 
 def test_legacy_create_all_database_is_adopted_without_data_loss(tmp_path):
@@ -89,3 +118,19 @@ with Session(engine) as database:
 
     assert version == "20260924_0002"
     assert user_count == 1
+
+
+def test_incompatible_legacy_schema_is_rejected(tmp_path):
+    """A same-named but incompatible table is not silently stamped as valid."""
+
+    database_path = tmp_path / "incompatible.db"
+    with sqlite3.connect(database_path) as database:
+        database.execute("CREATE TABLE users (id TEXT PRIMARY KEY)")
+        database.commit()
+
+    result = run_alembic_upgrade(f"sqlite:///{database_path}")
+
+    assert result.returncode != 0
+    assert "does not match the expected legacy schema" in (
+        result.stdout + result.stderr
+    )

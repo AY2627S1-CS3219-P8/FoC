@@ -179,6 +179,17 @@ To apply migrations directly during local development, run this from
 python -m alembic upgrade head
 ```
 
+The PostgreSQL migration smoke test is opt-in and requires a disposable test
+database. Set `TEST_DATABASE_URL` to that database and run:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/foc_users_test \
+  python -m pytest -q tests/test_migrations_postgres.py
+```
+
+CI runs this smoke test against a temporary PostgreSQL service. Do not point
+it at a development or production database.
+
 Databases created by versions before Alembic was introduced are recognized as
 the baseline automatically when their existing `users` and `user_sessions`
 tables are present. Verify the schema and take a backup before migrating any
