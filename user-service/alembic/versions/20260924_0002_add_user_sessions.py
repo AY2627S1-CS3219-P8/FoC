@@ -108,8 +108,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove persisted authentication sessions."""
+    """Reject a downgrade that would invalidate every persisted session."""
 
-    op.drop_index("ix_user_sessions_token_hash", table_name="user_sessions")
-    op.drop_index("ix_user_sessions_user_id", table_name="user_sessions")
-    op.drop_table("user_sessions")
+    raise RuntimeError(
+        "Downgrade is unsupported: reverting this migration would delete all user sessions."
+    )

@@ -134,8 +134,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove the initial user-account schema."""
+    """Reject a destructive downgrade that would delete user accounts."""
 
-    op.drop_index("ix_users_email", table_name="users")
-    op.drop_index("ix_users_nus_student_number", table_name="users")
-    op.drop_table("users")
+    raise RuntimeError(
+        "Downgrade is unsupported: reverting this migration would delete user accounts."
+    )
