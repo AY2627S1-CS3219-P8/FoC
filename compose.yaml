@@ -34,7 +34,7 @@ services:
     build: ./user-service
     command: ["alembic", "upgrade", "head"]
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@user-db:5432/foc_users
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     depends_on:
       user-db:
