@@ -140,10 +140,10 @@ class UserResponse(BaseModel):
 class OwnProfileResponse(UserResponse):
     """Profile representation returned to the account owner."""
 
-    # Order history belongs to the Order Service.  Until that integration is
-    # available, an account with no known orders is represented by an empty
-    # list rather than exposing another service's data store here.
+    # Order history belongs to the Order Service. The status distinguishes an
+    # account with no orders from an Order Service that is not available.
     order_history: list[dict[str, object]] = Field(default_factory=list)
+    order_history_status: Literal["available", "unavailable"] = "unavailable"
 
 
 class BasicProfileResponse(BaseModel):

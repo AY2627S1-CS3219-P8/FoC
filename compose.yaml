@@ -30,6 +30,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      ORDER_SERVICE_URL: ${ORDER_SERVICE_URL:-}
+      ORDER_SERVICE_TOKEN: ${ORDER_SERVICE_TOKEN:-}
+      ORDER_SERVICE_TIMEOUT_SECONDS: ${ORDER_SERVICE_TIMEOUT_SECONDS:-2}
     depends_on:
       user-db:
         condition: service_healthy

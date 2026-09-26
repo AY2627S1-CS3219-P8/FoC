@@ -399,12 +399,19 @@ definitions:
       - type: object
         required:
           - order_history
+          - order_history_status
         properties:
           order_history:
             type: array
             description: The authenticated user's order history.
             items:
               type: object
+          order_history_status:
+            type: string
+            description: Whether Order Service was reachable when the profile was read.
+            enum:
+              - available
+              - unavailable
 
   BasicProfileResponse:
     type: object

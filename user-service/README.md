@@ -240,10 +240,19 @@ curl http://localhost:8080/users/me \
 ```
 
 The owner profile response includes the NUS student number, display name,
-permitted account fields, and an `order_history` list. It never includes a
-password hash or authentication token. An authenticated user can view another
-active user's basic profile with `GET /users/{user_id}`; that response contains
-only `display_name`.
+permitted account fields, and an `order_history` list. It also includes
+`order_history_status`, which is `available` when Order Service returns the
+history and `unavailable` when Order Service has not been deployed or cannot be
+reached. An unavailable history must not be interpreted as an empty history.
+The response never includes a password hash or authentication token. An
+authenticated user can view another active user's basic profile with
+`GET /users/{user_id}`; that response contains only `display_name`.
+
+When configured, User Service calls the internal Order Service contract
+`GET /orders?requester_id=<user UUID>` and expects `{"items": [...]}`. Configure
+it with `ORDER_SERVICE_URL`, `ORDER_SERVICE_TOKEN`, and
+`ORDER_SERVICE_TIMEOUT_SECONDS`. User data and order data remain owned by
+their respective services.
 
 Update mutable profile fields with a partial request. Omitted fields are
 preserved, while the NUS student number, role, status, and timestamps are not

@@ -24,6 +24,7 @@ from app.services.users import (
     register_user,
     update_user_profile,
 )
+from app.services.profiles import own_profile_response
 
 
 router = APIRouter()
@@ -53,7 +54,7 @@ def logout(
 def get_current_user(auth: AuthContext = Depends(get_current_session)):
     """Return the authenticated user's protected profile fields."""
 
-    return OwnProfileResponse.model_validate(auth.user)
+    return own_profile_response(auth.user)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)
@@ -77,7 +78,7 @@ def update_current_user(
     """Update mutable fields on the authenticated user's profile."""
 
     user = update_user_profile(auth.user, payload, db)
-    return OwnProfileResponse.model_validate(user)
+    return own_profile_response(user)
 
 
 @router.patch("/users/{user_id}", response_model=OwnProfileResponse)
@@ -93,7 +94,7 @@ def update_user(
     if user_id != auth.user.id:
         raise HTTPException(status_code=403, detail="Cannot modify another user's profile")
     user = update_user_profile(auth.user, payload, db)
-    return OwnProfileResponse.model_validate(user)
+    return own_profile_response(user)
 
 
 @router.delete("/users/me", response_model=OwnProfileResponse)
@@ -105,7 +106,7 @@ def deactivate_current_user(
     """Deactivate the current account without deleting its profile record."""
 
     user = deactivate_user(auth.user, db)
-    return OwnProfileResponse.model_validate(user)
+    return own_profile_response(user)
 
 
 @router.post("/users/me/reactivate", response_model=OwnProfileResponse)
@@ -115,7 +116,7 @@ def reactivate_current_user(payload: UserLogin, db: Session = Depends(get_db)):
     """Reactivate an account by verifying its existing login credentials."""
 
     user = reactivate_user(payload, db)
-    return OwnProfileResponse.model_validate(user)
+    return own_profile_response(user)
 
 
 @router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
