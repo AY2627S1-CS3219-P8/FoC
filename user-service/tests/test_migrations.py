@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SERVICE_DIR = Path(__file__).resolve().parents[1]
 BASELINE_MIGRATION = (
@@ -170,3 +172,44 @@ def test_incompatible_legacy_schema_is_rejected(tmp_path):
     assert "does not match the expected legacy schema" in (
         result.stdout + result.stderr
     )
+
+
+@pytest.mark.parametrize(
+    ("student_number_type", "email_type"),
+    [("VARCHAR(8)", "VARCHAR(254)"), ("VARCHAR(9)", "TEXT")],
+)
+def test_legacy_schema_with_incompatible_types_or_lengths_is_rejected(
+    tmp_path, student_number_type, email_type
+):
+    """A same-named table with incorrect field definitions is not adopted."""
+
+    database_path = tmp_path / "incompatible-fields.db"
+    with sqlite3.connect(database_path) as database:
+        database.executescript(
+            f"""
+            CREATE TABLE users (
+                id CHAR(32) NOT NULL PRIMARY KEY,
+                nus_student_number {student_number_type} NOT NULL,
+                email {email_type} NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                password_hash VARCHAR(254) NOT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'user',
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                CONSTRAINT ck_users_role CHECK (role IN ('user', 'admin')),
+                CONSTRAINT ck_users_status CHECK (
+                    status IN ('active', 'deactivated', 'suspended')
+                )
+            );
+            CREATE UNIQUE INDEX ix_users_nus_student_number
+                ON users (nus_student_number);
+            CREATE UNIQUE INDEX ix_users_email ON users (email);
+            """
+        )
+
+    result = run_alembic_upgrade(f"sqlite:///{database_path}")
+
+    assert result.returncode != 0
+    output = result.stdout + result.stderr
+    assert "unexpected type or length" in output
