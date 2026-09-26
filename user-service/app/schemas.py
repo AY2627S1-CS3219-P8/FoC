@@ -36,7 +36,7 @@ class UserCreate(BaseModel):
         """Normalize and validate the NUS student number format."""
 
         value = value.upper()
-        if not re.fullmatch(r"[AU]\d{7}[A-Z]", value):
+        if not re.fullmatch(r"[AU][0-9]{7}[A-Z]", value):
             raise ValueError("must be a valid NUS student number")
         return value
 
@@ -45,7 +45,7 @@ class UserCreate(BaseModel):
     def password_policy(cls, value: str) -> str:
         """Require a password containing letters, numbers, and symbols."""
 
-        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value) or not re.search(
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"[0-9]", value) or not re.search(
             r"[^A-Za-z0-9]", value
         ):
             raise ValueError("password must contain a letter, number, and special character")
@@ -68,7 +68,7 @@ class UserLogin(BaseModel):
         if not isinstance(value, str):
             raise ValueError("must be a string")
         value = value.strip().upper()
-        if not re.fullmatch(r"[AU]\d{7}[A-Z]", value):
+        if not re.fullmatch(r"[AU][0-9]{7}[A-Z]", value):
             raise ValueError("must be a valid NUS student number")
         return value
 
