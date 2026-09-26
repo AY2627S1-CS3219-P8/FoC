@@ -91,7 +91,7 @@ def test_owner_profile_uses_order_history_provider(client, database, monkeypatch
     """A configured provider can contribute real history without User storage."""
 
     class FakeOrderHistoryProvider:
-        def get_for_user(self, user_id):
+        async def get_for_user(self, user_id):
             return OrderHistoryResult(
                 status="available",
                 items=[{"order_id": "order-1", "status": "delivered"}],
@@ -116,7 +116,7 @@ def test_owner_profile_does_not_fetch_order_history(client, database, monkeypatc
     """Profile reads stay available without an Order Service call."""
 
     class FailingOrderHistoryProvider:
-        def get_for_user(self, user_id):
+        async def get_for_user(self, user_id):
             raise AssertionError("profile reads must not fetch order history")
 
     create_user(database)

@@ -8,14 +8,12 @@ history.
 """
 
 from dataclasses import dataclass
-import json
 import logging
 import os
 from typing import Literal, Protocol
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 from uuid import UUID
+
+import httpx
 
 
 logger = logging.getLogger(__name__)
@@ -33,14 +31,14 @@ class OrderHistoryResult:
 class OrderHistoryProvider(Protocol):
     """Contract for retrieving history without coupling user persistence to orders."""
 
-    def get_for_user(self, user_id: UUID) -> OrderHistoryResult:
+    async def get_for_user(self, user_id: UUID) -> OrderHistoryResult:
         """Return the order history for one authenticated user."""
 
 
 class UnavailableOrderHistoryProvider:
     """Provider used while Order Service is not configured or not deployed."""
 
-    def get_for_user(self, user_id: UUID) -> OrderHistoryResult:
+    async def get_for_user(self, user_id: UUID) -> OrderHistoryResult:
         """Report that order history is not currently available."""
 
         return OrderHistoryResult(status="unavailable", items=[])
@@ -59,24 +57,24 @@ class HttpOrderHistoryProvider:
         self.service_token = service_token
         self.timeout = timeout
 
-    def get_for_user(self, user_id: UUID) -> OrderHistoryResult:
+    async def get_for_user(self, user_id: UUID) -> OrderHistoryResult:
         """Fetch history, degrading to an explicit unavailable result on failure."""
 
-        query = urlencode({"requester_id": str(user_id)})
-        request = Request(
-            f"{self.base_url}/orders?{query}",
-            headers={"Accept": "application/json"},
-            method="GET",
-        )
+        headers = {"Accept": "application/json"}
         if self.service_token:
-            request.add_header("Authorization", f"Bearer {self.service_token}")
+            headers["Authorization"] = f"Bearer {self.service_token}"
 
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                if response.status != 200:
-                    return self._unavailable(user_id, f"HTTP {response.status}")
-                payload = json.load(response)
-        except (HTTPError, URLError, OSError, TimeoutError, ValueError) as exc:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(
+                    f"{self.base_url}/orders",
+                    params={"requester_id": str(user_id)},
+                    headers=headers,
+                )
+                if response.status_code != 200:
+                    return self._unavailable(user_id, f"HTTP {response.status_code}")
+                payload = response.json()
+        except (httpx.HTTPError, OSError, TimeoutError, ValueError) as exc:
             return self._unavailable(user_id, type(exc).__name__)
 
         items = payload.get("items") if isinstance(payload, dict) else None
@@ -118,7 +116,7 @@ def _create_provider() -> OrderHistoryProvider:
 order_history_provider = _create_provider()
 
 
-def get_order_history(user_id: UUID) -> OrderHistoryResult:
+async def get_order_history(user_id: UUID) -> OrderHistoryResult:
     """Retrieve order history through the configured provider."""
 
-    return order_history_provider.get_for_user(user_id)
+    return await order_history_provider.get_for_user(user_id)

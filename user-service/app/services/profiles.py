@@ -11,10 +11,10 @@ def own_profile_response(user: User) -> UserResponse:
     return UserResponse.model_validate(user)
 
 
-def order_history_response(user: User) -> OrderHistoryResponse:
+async def order_history_response(user: User) -> OrderHistoryResponse:
     """Build the separate order-history response for the authenticated user."""
 
-    order_history = get_order_history(user.id)
+    order_history = await get_order_history(user.id)
     return OrderHistoryResponse(
         order_history=order_history.items,
         order_history_status=order_history.status,
