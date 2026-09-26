@@ -74,6 +74,7 @@ class AuthContext:
 
     user: User
     session: UserSession
+    user_id: UUID
 
 
 def _authentication_error() -> HTTPException:
@@ -130,6 +131,7 @@ def get_current_session(
         user = db.get(User, session.user_id)
         if user is None or user.status != "active":
             raise _authentication_error()
+        user_id = user.id
 
         session.last_activity_at = now
         session.expires_at = min(now + SESSION_INACTIVITY, _utc(session.absolute_expires_at))
@@ -143,7 +145,7 @@ def get_current_session(
             detail="Authentication temporarily unavailable",
         ) from exc
 
-    return AuthContext(user=user, session=session)
+    return AuthContext(user=user, session=session, user_id=user_id)
 
 
 def revoke_session(context: AuthContext, db: Session) -> None:

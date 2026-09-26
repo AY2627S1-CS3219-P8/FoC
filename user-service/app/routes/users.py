@@ -61,7 +61,7 @@ def get_current_user(auth: AuthContext = Depends(get_current_session)):
 async def get_current_user_order_history(auth: AuthContext = Depends(get_current_session)):
     """Return the authenticated user's order history through its own boundary."""
 
-    return await order_history_response(auth.user)
+    return await order_history_response(auth.user_id)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)
