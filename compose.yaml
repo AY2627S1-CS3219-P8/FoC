@@ -13,19 +13,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  user-service:
-    build:
-      context: ./user-service
-    container_name: user-service
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    depends_on:
-      user-db:
-        condition: service_healthy
-    restart: "no"
-
   user-service:
     build: ./user-service
     environment:
