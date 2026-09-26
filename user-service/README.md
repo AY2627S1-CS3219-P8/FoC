@@ -67,7 +67,7 @@ Successful authentication creates an authenticated session/token. Invalid,
 expired, malformed, or tampered credentials/tokens must be rejected without
 revealing whether a particular account exists.
 
-Sessions must expire after the configured inactivity period (30 minutes) or 24 absolute hours, whichever comes first. A session refresh period longer than 30 days requires re-authentication. Logout must invalidate the session, and invalidated sessions must not be accepted for protected operations.
+Sessions must expire after the configured inactivity period (30 minutes) or 24 absolute hours, whichever comes first. Logout must invalidate the session, and invalidated sessions must not be accepted for protected operations.
 
 Protected requests must verify that the authenticated identity matches the
 requested user where required. Ordinary users cannot grant themselves
