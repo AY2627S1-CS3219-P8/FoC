@@ -19,6 +19,9 @@ permissions:
 jobs:
   user-service:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: foc
+      POSTGRES_PASSWORD: ci-password
 
     steps:
       - name: Check out repository
