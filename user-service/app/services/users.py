@@ -7,7 +7,7 @@ from argon2 import PasswordHasher
 from fastapi import HTTPException
 from sqlalchemy import select
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -53,7 +53,7 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
 
     try:
         user = db.scalar(select(User).where(User.nus_student_number == student_number))
-    except OperationalError as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
@@ -81,7 +81,7 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Authentication temporarily unavailable") from exc
-    except OperationalError as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
@@ -104,7 +104,7 @@ def register_user(payload: UserCreate, db: Session) -> User:
                 (User.email == email) | (User.nus_student_number == student_number)
             )
         )
-    except OperationalError as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
@@ -125,7 +125,7 @@ def register_user(payload: UserCreate, db: Session) -> User:
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Unable to create account") from exc
-    except OperationalError as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
@@ -155,7 +155,7 @@ def update_user_profile(user: User, payload: UserUpdate, db: Session) -> User:
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(status_code=409, detail="Unable to update profile") from exc
-    except (OperationalError, SQLAlchemyError) as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
@@ -201,7 +201,7 @@ def reactivate_user(payload: UserLogin, db: Session) -> User:
     student_number = payload.nus_student_number.strip().upper()
     try:
         user = db.scalar(select(User).where(User.nus_student_number == student_number))
-    except OperationalError as exc:
+    except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 

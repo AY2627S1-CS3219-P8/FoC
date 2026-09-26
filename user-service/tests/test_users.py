@@ -5,14 +5,14 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from argon2 import PasswordHasher
 from pydantic import ValidationError
 
 from app.models import User
 from app.schemas import UserCreate, UserLogin
-from app.services.users import hash_password, login_user, register_user
+from app.services.users import hash_password, login_user, reactivate_user, register_user
 
 
 class FakeSession:
@@ -193,6 +193,57 @@ def test_login_user_rejects_unknown_or_incorrect_credentials_generically():
         assert db.session is None
 
 
+def test_login_user_maps_lookup_database_errors():
+    """A failed credential lookup returns a service-unavailable response."""
+
+    db = FakeLoginSession(lookup_error=SQLAlchemyError("SELECT failed"))
+
+    with pytest.raises(HTTPException) as error:
+        login_user(
+            UserLogin(nus_student_number="A0123456X", password="Password1!"),
+            db,
+        )
+
+    assert db.rollback_called
+    assert error.value.status_code == 503
+    assert error.value.detail == "Database temporarily unavailable"
+
+
+def test_login_user_maps_generic_database_commit_errors():
+    """A failed session write returns a service-unavailable response."""
+
+    db = FakeLoginSession(
+        existing=make_user(),
+        commit_error=SQLAlchemyError("INSERT failed"),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        login_user(
+            UserLogin(nus_student_number="A0123456X", password="Password1!"),
+            db,
+        )
+
+    assert db.rollback_called
+    assert error.value.status_code == 503
+    assert error.value.detail == "Database temporarily unavailable"
+
+
+def test_reactivate_user_maps_lookup_database_errors():
+    """A failed reactivation lookup returns a service-unavailable response."""
+
+    db = FakeLoginSession(lookup_error=SQLAlchemyError("SELECT failed"))
+
+    with pytest.raises(HTTPException) as error:
+        reactivate_user(
+            UserLogin(nus_student_number="A0123456X", password="Password1!"),
+            db,
+        )
+
+    assert db.rollback_called
+    assert error.value.status_code == 503
+    assert error.value.detail == "Database temporarily unavailable"
+
+
 def test_register_user_normalizes_fields_and_applies_defaults():
     """Registration stores normalized identity fields and safe account defaults."""
 
@@ -312,7 +363,7 @@ def test_register_user_maps_lookup_database_errors():
     """A failed duplicate lookup returns a service-unavailable response."""
 
     db = FakeSession(
-        lookup_error=OperationalError("SELECT", {}, Exception("database unavailable"))
+        lookup_error=SQLAlchemyError("SELECT failed")
     )
 
     with pytest.raises(HTTPException) as error:
@@ -357,7 +408,7 @@ def test_user_model_protects_required_fields_and_account_defaults():
             "Unable to create account",
         ),
         (
-            OperationalError("INSERT", {}, Exception("database unavailable")),
+            SQLAlchemyError("INSERT failed"),
             503,
             "Database temporarily unavailable",
         ),
