@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    AUTHENTICATION_ERROR,
     cleanup_sessions,
     revoke_user_sessions,
     SESSION_ABSOLUTE_LIFETIME,
@@ -29,6 +30,16 @@ DUMMY_PASSWORD_HASH = (
     "$argon2id$v=19$m=65536,t=3,p=4$mUztqNYD/jws5nZquc6jLw$"
     "Tm7egvuOlE/k+0RImshXBGISk81vSE39bBUf6Lw837U"
 )
+
+
+def _authentication_error() -> HTTPException:
+    """Return the same safe error used for invalid bearer credentials."""
+
+    return HTTPException(
+        status_code=401,
+        detail=AUTHENTICATION_ERROR,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def hash_password(password: str) -> str:
@@ -52,7 +63,11 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
     student_number = payload.nus_student_number.strip().upper()
 
     try:
-        user = db.scalar(select(User).where(User.nus_student_number == student_number))
+        user = db.scalar(
+            select(User)
+            .where(User.nus_student_number == student_number)
+            .with_for_update()
+        )
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
@@ -135,17 +150,29 @@ def register_user(payload: UserCreate, db: Session) -> User:
 def update_user_profile(user: User, payload: UserUpdate, db: Session) -> User:
     """Update only mutable fields on the authenticated user's profile."""
 
+    # Lock the account row before changing credentials or profile state. Login,
+    # deactivation, and reactivation acquire the same lock, so a session cannot
+    # be created after this operation revokes existing sessions.
+    if not payload.model_fields_set:
+        return user
+
+    try:
+        db.refresh(user, with_for_update=True)
+        if user.status != "active":
+            raise _authentication_error()
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
     if payload.email is not None:
         user.email = str(payload.email).strip().lower()
     if payload.display_name is not None:
         user.display_name = payload.display_name.strip()
     if payload.password is not None:
         user.password_hash = hash_password(payload.password)
-
-    # An empty PATCH is a valid no-op and should still return the current
-    # profile.  This also avoids an unnecessary write transaction.
-    if not payload.model_fields_set:
-        return user
 
     try:
         if payload.password is not None:
@@ -179,11 +206,17 @@ def get_user_profile(user_id, db: Session) -> User:
 def deactivate_user(user: User, db: Session) -> User:
     """Deactivate an account while retaining its persisted profile record."""
 
-    user.status = "deactivated"
     try:
+        db.refresh(user, with_for_update=True)
+        if user.status != "active":
+            raise _authentication_error()
+        user.status = "deactivated"
         revoke_user_sessions(db, user.id)
         db.commit()
         db.refresh(user)
+    except HTTPException:
+        db.rollback()
+        raise
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
@@ -200,7 +233,11 @@ def reactivate_user(payload: UserLogin, db: Session) -> User:
 
     student_number = payload.nus_student_number.strip().upper()
     try:
-        user = db.scalar(select(User).where(User.nus_student_number == student_number))
+        user = db.scalar(
+            select(User)
+            .where(User.nus_student_number == student_number)
+            .with_for_update()
+        )
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc

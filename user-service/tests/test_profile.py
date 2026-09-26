@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -11,10 +12,10 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base, get_db
 from app.main import app
 from app.models import User
-from app.schemas import UserCreate
+from app.schemas import UserCreate, UserUpdate
 from app.services import order_history
 from app.services.order_history import OrderHistoryResult
-from app.services.users import register_user
+from app.services.users import register_user, update_user_profile
 
 
 @pytest.fixture
@@ -286,6 +287,22 @@ def test_profile_update_rejects_another_user(client, database):
     assert response.status_code == 403
     database.refresh(other)
     assert other.display_name == "Other Student"
+
+
+def test_profile_update_rechecks_account_status_before_mutating(database):
+    """An account deactivated after authentication cannot be mutated afterward."""
+
+    user = create_user(database)
+    user.status = "deactivated"
+    database.commit()
+
+    with pytest.raises(HTTPException) as error:
+        update_user_profile(user, UserUpdate(display_name="Updated Student"), database)
+
+    assert error.value.status_code == 401
+    database.refresh(user)
+    assert user.status == "deactivated"
+    assert user.display_name == "Student"
 
 
 def test_profile_lookup_returns_not_found_for_unknown_user(client, database):
