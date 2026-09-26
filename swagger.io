@@ -141,6 +141,7 @@ paths:
             $ref: '#/definitions/ErrorResponse'
     patch:
       summary: Update the authenticated user's profile
+      description: Omitted fields are preserved. An empty object is accepted as a no-op; PUT is also supported as an alias.
       operationId: updateCurrentUser
       security:
         - bearerAuth: []
@@ -217,7 +218,7 @@ paths:
             $ref: '#/definitions/ErrorResponse'
     patch:
       summary: Update a user's profile
-      description: The authenticated user may only update the profile represented by their own bearer credential.
+      description: The authenticated user may only update the profile represented by their own bearer credential. Omitted fields are preserved. An empty object is accepted as a no-op; PUT is also supported as an alias.
       operationId: updateUserProfile
       security:
         - bearerAuth: []
@@ -337,7 +338,7 @@ definitions:
   UserUpdate:
     type: object
     additionalProperties: false
-    description: At least one mutable field may be supplied; omitted fields are preserved.
+    description: Mutable fields are optional, omitted fields are preserved, and an empty object is accepted as a no-op.
     properties:
       email:
         type: string

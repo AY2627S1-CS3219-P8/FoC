@@ -135,7 +135,9 @@ The project requirements specify the following targets for the User Service:
 
 ## API and integration notes
 
-Route names and request/response schemas will be added when the service API is implemented. Any API contract should document, at minimum:
+The implemented route names and request/response schemas are documented in
+`../swagger.io` and in the examples below. The API contract documents, at a
+minimum:
 
 - Registration, login, logout, session validation/refresh, and profile
   operations.
@@ -257,9 +259,10 @@ it with `ORDER_SERVICE_URL`, `ORDER_SERVICE_TOKEN`, and
 `ORDER_SERVICE_TIMEOUT_SECONDS`. User data and order data remain owned by
 their respective services.
 
-Update mutable profile fields with a partial request. Omitted fields are
-preserved, while the NUS student number, role, status, and timestamps are not
-accepted as update fields:
+Update mutable profile fields with a partial request using `PATCH` (or the
+`PUT` compatibility alias). Omitted fields are preserved, and an empty object
+is accepted as a no-op. The NUS student number, role, status, and timestamps
+are not accepted as update fields:
 
 ```bash
 curl -X PATCH http://localhost:8080/users/me \
@@ -268,11 +271,12 @@ curl -X PATCH http://localhost:8080/users/me \
   -d '{"display_name":"Updated Student","email":"new@example.com"}'
 ```
 
-`DELETE /users/me` deactivates the account without deleting its record. A
-deactivated account can be restored on the same record by posting its existing
-credentials to `/users/reactivate`, then logging in again. Password changes
-and deactivation revoke all active bearer sessions, so clients must
-authenticate again after either operation.
+`DELETE /users/me` (or `POST /users/me/deactivate`) deactivates the account
+without deleting its record. A deactivated account can be restored on the same
+record by posting its existing credentials to `/users/reactivate` (the
+`/users/me/reactivate` and `/reactivate` paths are compatibility aliases), then
+logging in again. Password changes and deactivation revoke all active bearer
+sessions, so clients must authenticate again after either operation.
 
 The service refreshes the inactivity deadline on valid protected requests,
 without extending the 24-hour absolute lifetime. End the session with:
