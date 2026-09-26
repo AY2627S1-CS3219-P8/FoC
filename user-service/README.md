@@ -67,7 +67,17 @@ Successful authentication creates an authenticated session/token. Invalid,
 expired, malformed, or tampered credentials/tokens must be rejected without
 revealing whether a particular account exists.
 
-Sessions must expire after the configured inactivity period (30 minutes) or 24 absolute hours, whichever comes first. A session refresh period longer than 30 days requires re-authentication. Logout must invalidate the session, and invalidated sessions must not be accepted for protected operations.
+Sessions expire after 30 minutes of inactivity or 24 absolute hours, whichever
+comes first. Valid protected requests refresh the inactivity deadline but never
+extend the absolute lifetime. Logout invalidates the session, and invalidated
+sessions must not be accepted for protected operations.
+
+Session validity and database cleanup are separate. Protected requests reject
+expired or revoked sessions immediately based on their timestamps and
+revocation state; the session row does not need to be deleted first. A
+background cleanup job deletes revoked and expired session rows once when the
+service starts and then hourly. Consequently, an unusable session row may
+remain in the database for up to roughly one hour after it becomes invalid.
 
 Protected requests must verify that the authenticated identity matches the
 requested user where required. Ordinary users cannot grant themselves
@@ -153,18 +163,52 @@ point and dependencies are added, build and run it from the repository root
 with the project compose configuration:
 
 ```bash
-docker compose build user-service
+docker compose build user-service user-migrate
 docker compose up user-service
 ```
 
-The local compose setup also starts PostgreSQL as `user-db`. The service uses
-the `DATABASE_URL` environment variable and creates the initial `users` table
-on startup. For local development:
+The local compose setup also starts PostgreSQL as `user-db`. The service
+requires the `DATABASE_URL` environment variable; it does not fall back to
+SQLite. Compose runs the one-shot
+`user-migrate` service to apply all pending Alembic migrations before starting
+the application:
 
 ```bash
 cp .env.example .env
 docker compose up --build user-db user-service
 ```
+
+The application image does not run migrations in its own startup command, so
+multiple application replicas can start safely after the migration job
+completes. In another deployment system, run `alembic upgrade head` as a
+single migration job before starting or rolling out application replicas.
+
+To apply migrations directly during local development, run this from
+`user-service/` with the target database configured in `DATABASE_URL`:
+
+```bash
+python -m alembic upgrade head
+```
+
+`DATABASE_URL` is required; migrations do not fall back to a local SQLite
+database. This prevents accidentally believing that a production database was
+migrated when only a local database was changed.
+
+The PostgreSQL migration smoke test is opt-in and requires a disposable test
+database. Set `TEST_DATABASE_URL` to that database and run:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/foc_users_test \
+  python -m pytest -q tests/test_migrations_postgres.py
+```
+
+CI runs this smoke test against a temporary PostgreSQL service. Do not point
+it at a development or production database.
+
+Databases created by versions before Alembic was introduced are recognized as
+the baseline automatically when their existing `users` and `user_sessions`
+tables are present. Verify the schema and take a backup before migrating any
+production database.
 
 The service is available to other containers on the Compose network at
 `http://user-service:8080`. The current Compose configuration does not publish
@@ -184,10 +228,43 @@ curl -X POST http://localhost:8080/users \
   -d '{"nus_student_number":"A0123456X","email":"student@example.com","display_name":"Student","password":"Password1!"}'
 ```
 
+Log in with the registered NUS student number and password:
+
+```bash
+curl -X POST http://localhost:8080/login \
+  -H 'Content-Type: application/json' \
+  -d '{"nus_student_number":"A0123456X","password":"Password1!"}'
+```
+
+The response contains an opaque bearer token. Session tokens are stored only
+as hashes and expire after 30 minutes of inactivity or 24 hours, whichever
+comes first. Revoked and expired session records are pruned by a background
+job that runs once at service startup and then hourly. Invalid credentials and
+non-active accounts return the same generic authentication error.
+
+Use the returned token for protected requests:
+
+```bash
+curl http://localhost:8080/users/me \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+The service refreshes the inactivity deadline on valid protected requests,
+without extending the 24-hour absolute lifetime. End the session with:
+
+```bash
+curl -X POST http://localhost:8080/logout \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+Missing, malformed, expired, tampered, revoked, and non-active-account
+credentials are rejected with `401 Unauthorized`.
+
 The development database credentials are defined in `compose.yaml`; replace
 them with secrets or an untracked environment file before using a deployed
-environment. Schema creation here is intended as a starting point; add
-Alembic migrations before evolving the production schema.
+environment. Create a new Alembic migration for every production schema
+change and run it once, as a deployment job, before starting application
+replicas.
 
 Do not commit credentials, tokens, private keys, or production configuration.
 Use environment variables or a local, untracked environment file for local

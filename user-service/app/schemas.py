@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -35,7 +36,7 @@ class UserCreate(BaseModel):
         """Normalize and validate the NUS student number format."""
 
         value = value.upper()
-        if not re.fullmatch(r"[AU]\d{7}[A-Z]", value):
+        if not re.fullmatch(r"[AU][0-9]{7}[A-Z]", value):
             raise ValueError("must be a valid NUS student number")
         return value
 
@@ -44,10 +45,31 @@ class UserCreate(BaseModel):
     def password_policy(cls, value: str) -> str:
         """Require a password containing letters, numbers, and symbols."""
 
-        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value) or not re.search(
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"[0-9]", value) or not re.search(
             r"[^A-Za-z0-9]", value
         ):
             raise ValueError("password must contain a letter, number, and special character")
+        return value
+
+
+class UserLogin(BaseModel):
+    """Validate the credentials required to log in."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nus_student_number: str = Field(min_length=9, max_length=9)
+    password: str = Field(min_length=1, max_length=100)
+
+    @field_validator("nus_student_number", mode="before")
+    @classmethod
+    def normalize_student_number(cls, value: object) -> str:
+        """Normalize and validate the NUS student number format."""
+
+        if not isinstance(value, str):
+            raise ValueError("must be a string")
+        value = value.strip().upper()
+        if not re.fullmatch(r"[AU][0-9]{7}[A-Z]", value):
+            raise ValueError("must be a valid NUS student number")
         return value
 
 
@@ -64,3 +86,12 @@ class UserResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class LoginResponse(BaseModel):
+    """Public result returned after successful authentication."""
+
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
+    user: UserResponse

@@ -20,8 +20,8 @@ jobs:
   user-service:
     runs-on: ubuntu-latest
     env:
-      POSTGRES_USER: foc
-      POSTGRES_PASSWORD: ci-password
+      POSTGRES_USER: foc_ci
+      POSTGRES_PASSWORD: "foc_ci:p@ss#with$special/slash?"
 
     steps:
       - name: Check out repository
@@ -43,7 +43,64 @@ jobs:
         working-directory: user-service
 
       - name: Validate Compose configuration
-        run: docker compose config
+        run: docker compose config --quiet
 
-      - name: Build user-service image
-        run: docker compose build user-service
+      - name: Start Compose stack with one user-service instance
+        run: >-
+          docker compose -p foc-compose-smoke up
+          --build
+          --detach
+          --wait
+          user-service
+
+      - name: Verify user-service started
+        run: |
+          test "$(docker compose -p foc-compose-smoke ps -q user-service | wc -l | tr -d ' ')" -eq 1
+          docker compose -p foc-compose-smoke ps
+
+      - name: Show Compose logs on failure
+        if: failure()
+        run: docker compose -p foc-compose-smoke logs
+
+      - name: Clean up Compose smoke-test stack
+        if: always()
+        run: docker compose -p foc-compose-smoke down --volumes --remove-orphans
+
+  user-service-postgres-migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: foc_users_test
+          POSTGRES_USER: foc_test
+          POSTGRES_PASSWORD: foc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U foc_test -d foc_users_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: user-service/requirements-dev.txt
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+        working-directory: user-service
+
+      - name: Run PostgreSQL migration smoke test
+        run: python -m pytest -q tests/test_migrations_postgres.py
+        working-directory: user-service
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://foc_test:foc_test@localhost:5432/foc_users_test
