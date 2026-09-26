@@ -67,7 +67,17 @@ Successful authentication creates an authenticated session/token. Invalid,
 expired, malformed, or tampered credentials/tokens must be rejected without
 revealing whether a particular account exists.
 
-Sessions must expire after the configured inactivity period (30 minutes) or 24 absolute hours, whichever comes first. Logout must invalidate the session, and invalidated sessions must not be accepted for protected operations.
+Sessions expire after 30 minutes of inactivity or 24 absolute hours, whichever
+comes first. Valid protected requests refresh the inactivity deadline but never
+extend the absolute lifetime. Logout invalidates the session, and invalidated
+sessions must not be accepted for protected operations.
+
+Session validity and database cleanup are separate. Protected requests reject
+expired or revoked sessions immediately based on their timestamps and
+revocation state; the session row does not need to be deleted first. A
+background cleanup job deletes revoked and expired session rows once when the
+service starts and then hourly. Consequently, an unusable session row may
+remain in the database for up to roughly one hour after it becomes invalid.
 
 Protected requests must verify that the authenticated identity matches the
 requested user where required. Ordinary users cannot grant themselves
@@ -228,9 +238,9 @@ curl -X POST http://localhost:8080/login \
 
 The response contains an opaque bearer token. Session tokens are stored only
 as hashes and expire after 30 minutes of inactivity or 24 hours, whichever
-comes first. Revoked and expired session records are pruned hourly. Invalid
-credentials and non-active accounts return the same
-generic authentication error.
+comes first. Revoked and expired session records are pruned by a background
+job that runs once at service startup and then hourly. Invalid credentials and
+non-active accounts return the same generic authentication error.
 
 Use the returned token for protected requests:
 
