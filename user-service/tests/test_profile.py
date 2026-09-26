@@ -1,0 +1,192 @@
+"""Integration tests for profile access and lifecycle operations."""
+
+from uuid import uuid4
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.db import Base, get_db
+from app.main import app
+from app.models import User
+from app.schemas import UserCreate
+from app.services.users import register_user
+
+
+@pytest.fixture
+def database():
+    """Provide an isolated database for profile tests."""
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    with Session(engine) as db:
+        yield db
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
+
+@pytest.fixture
+def client(database):
+    """Use the isolated database for profile HTTP requests."""
+
+    def override_database():
+        yield database
+
+    app.dependency_overrides[get_db] = override_database
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+def create_user(database, **overrides) -> User:
+    """Create a valid active user for a profile scenario."""
+
+    values = {
+        "nus_student_number": "A0123456X",
+        "email": "student@example.com",
+        "display_name": "Student",
+        "password": "Password1!",
+    }
+    values.update(overrides)
+    return register_user(UserCreate(**values), database)
+
+
+def login(client, student_number="A0123456X", password="Password1!") -> str:
+    """Log in and return the bearer token."""
+
+    response = client.post(
+        "/login",
+        json={"nus_student_number": student_number, "password": password},
+    )
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+def test_owner_can_view_profile_without_authentication_data(client, database):
+    """The owner receives protected profile fields but no credentials."""
+
+    user = create_user(database)
+    response = client.get("/users/me", headers={"Authorization": f"Bearer {login(client)}"})
+
+    assert response.status_code == 200
+    assert response.json()["nus_student_number"] == user.nus_student_number
+    assert response.json()["display_name"] == "Student"
+    assert response.json()["order_history"] == []
+    assert "password_hash" not in response.json()
+    assert "access_token" not in response.json()
+
+
+def test_other_profile_exposes_only_display_name(client, database):
+    """A profile lookup for another user returns only the basic profile."""
+
+    create_user(database)
+    other = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="other@example.com",
+        display_name="Other Student",
+    )
+    response = client.get(
+        f"/users/{other.id}",
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"display_name": "Other Student"}
+
+
+def test_owner_can_partially_update_mutable_profile_fields(client, database):
+    """Profile updates preserve omitted fields and replace the password hash."""
+
+    user = create_user(database)
+    token = login(client)
+    response = client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"display_name": "  Updated Student  ", "email": "NEW@example.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Updated Student"
+    assert response.json()["email"] == "new@example.com"
+    assert response.json()["nus_student_number"] == user.nus_student_number
+    assert user.password_hash
+
+    database.refresh(user)
+    assert user.display_name == "Updated Student"
+    assert user.email == "new@example.com"
+    assert user.nus_student_number == "A0123456X"
+
+
+@pytest.mark.parametrize("field", ["nus_student_number", "role", "status", "created_at"])
+def test_profile_update_rejects_protected_fields(client, database, field):
+    """UID, account state, role, and timestamps cannot be client-edited."""
+
+    create_user(database)
+    response = client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {login(client)}"},
+        json={field: str(uuid4())},
+    )
+
+    assert response.status_code == 422
+
+
+def test_profile_update_rejects_another_user(client, database):
+    """A user cannot address a profile update to another account."""
+
+    create_user(database)
+    other = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="other@example.com",
+        display_name="Other Student",
+    )
+    response = client.patch(
+        f"/users/{other.id}",
+        headers={"Authorization": f"Bearer {login(client)}"},
+        json={"display_name": "Should Not Change"},
+    )
+
+    assert response.status_code == 403
+    database.refresh(other)
+    assert other.display_name == "Other Student"
+
+
+def test_deactivation_preserves_record_and_reactivation_restores_it(client, database):
+    """Deactivation is reversible on the same user row."""
+
+    user = create_user(database)
+    token = login(client)
+    deactivated = client.post(
+        "/users/me/deactivate",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert deactivated.status_code == 200
+    assert deactivated.json()["status"] == "deactivated"
+    database.expire_all()
+    stored = database.scalar(select(User).where(User.id == user.id))
+    assert stored is not None
+    assert stored.status == "deactivated"
+
+    blocked = client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
+    assert blocked.status_code == 401
+
+    reactivated = client.post(
+        "/users/me/reactivate",
+        json={"nus_student_number": "A0123456X", "password": "Password1!"},
+    )
+    assert reactivated.status_code == 200
+    assert reactivated.json()["id"] == str(user.id)
+    assert reactivated.json()["status"] == "active"
+
+    database.expire_all()
+    assert database.scalar(select(User).where(User.id == user.id)).status == "active"

@@ -128,15 +128,153 @@ paths:
         - bearerAuth: []
       responses:
         "200":
-          description: Authenticated user's non-sensitive profile.
+          description: Authenticated user's protected profile, including order history.
           schema:
-            $ref: '#/definitions/UserResponse'
+            $ref: '#/definitions/OwnProfileResponse'
         "401":
           description: Bearer credentials are missing or invalid.
           schema:
             $ref: '#/definitions/ErrorResponse'
         "503":
           description: Authentication storage is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+    patch:
+      summary: Update the authenticated user's profile
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: body
+          name: profile
+          required: true
+          schema:
+            $ref: '#/definitions/UserUpdate'
+      responses:
+        "200":
+          description: Updated profile.
+          schema:
+            $ref: '#/definitions/OwnProfileResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The email address is already in use.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: Request validation failed.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+    delete:
+      summary: Deactivate the authenticated user's account
+      operationId: deactivateCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Account deactivated; the profile record is retained.
+          schema:
+            $ref: '#/definitions/OwnProfileResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /users/{user_id}:
+    get:
+      summary: Get another user's basic profile
+      operationId: getUserProfile
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: The user's display name only.
+          schema:
+            $ref: '#/definitions/BasicProfileResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+    patch:
+      summary: Update a user's profile
+      description: The authenticated user may only update the profile represented by their own bearer credential.
+      operationId: updateUserProfile
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+        - in: body
+          name: profile
+          required: true
+          schema:
+            $ref: '#/definitions/UserUpdate'
+      responses:
+        "200":
+          description: Updated profile.
+          schema:
+            $ref: '#/definitions/OwnProfileResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user cannot modify another user's profile.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: Request validation failed.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+
+  /users/reactivate:
+    post:
+      summary: Reactivate a deactivated account
+      operationId: reactivateUser
+      parameters:
+        - in: body
+          name: credentials
+          required: true
+          schema:
+            $ref: '#/definitions/UserLogin'
+      responses:
+        "200":
+          description: Existing account reactivated.
+          schema:
+            $ref: '#/definitions/OwnProfileResponse'
+        "401":
+          description: Credentials are invalid or the account is suspended.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: Request validation failed.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
 
@@ -194,6 +332,27 @@ definitions:
         maxLength: 100
         example: Campus!123
 
+  UserUpdate:
+    type: object
+    additionalProperties: false
+    description: At least one mutable field may be supplied; omitted fields are preserved.
+    properties:
+      email:
+        type: string
+        format: email
+        example: new-address@example.com
+      display_name:
+        type: string
+        minLength: 1
+        maxLength: 100
+        example: Alex Tan
+      password:
+        type: string
+        format: password
+        description: 8–100 characters containing a letter, number, and special character.
+        minLength: 8
+        maxLength: 100
+
   UserResponse:
     type: object
     required:
@@ -233,6 +392,27 @@ definitions:
       updated_at:
         type: string
         format: date-time
+
+  OwnProfileResponse:
+    allOf:
+      - $ref: '#/definitions/UserResponse'
+      - type: object
+        required:
+          - order_history
+        properties:
+          order_history:
+            type: array
+            description: The authenticated user's order history.
+            items:
+              type: object
+
+  BasicProfileResponse:
+    type: object
+    required:
+      - display_name
+    properties:
+      display_name:
+        type: string
 
   LoginResponse:
     type: object

@@ -73,6 +73,55 @@ class UserLogin(BaseModel):
         return value
 
 
+class UserUpdate(BaseModel):
+    """Validate mutable fields accepted by a profile update."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    password: str | None = Field(default=None, min_length=8, max_length=100)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        """Trim and lowercase email addresses before validation and storage."""
+
+        if value is None:
+            raise ValueError("must be a string")
+        if not isinstance(value, str):
+            raise ValueError("must be a string")
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value.lower()
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def normalize_display_name(cls, value: object) -> str:
+        """Trim profile names and reject blank or non-text values."""
+
+        if value is None or not isinstance(value, str):
+            raise ValueError("must be a string")
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def password_policy(cls, value: object) -> str:
+        """Apply the same password policy used during registration."""
+
+        if value is None or not isinstance(value, str):
+            raise ValueError("must be a string")
+        if not re.search(r"[A-Za-z]", value) or not re.search(
+            r"\d", value
+        ) or not re.search(r"[^A-Za-z0-9]", value):
+            raise ValueError("password must contain a letter, number, and special character")
+        return value
+
+
 class UserResponse(BaseModel):
     """Public representation of a user account without authentication data."""
 
@@ -86,6 +135,23 @@ class UserResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class OwnProfileResponse(UserResponse):
+    """Profile representation returned to the account owner."""
+
+    # Order history belongs to the Order Service.  Until that integration is
+    # available, an account with no known orders is represented by an empty
+    # list rather than exposing another service's data store here.
+    order_history: list[dict[str, object]] = Field(default_factory=list)
+
+
+class BasicProfileResponse(BaseModel):
+    """Minimal profile representation visible to another authenticated user."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    display_name: str
 
 
 class LoginResponse(BaseModel):

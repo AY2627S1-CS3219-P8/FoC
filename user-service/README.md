@@ -239,6 +239,27 @@ curl http://localhost:8080/users/me \
   -H 'Authorization: Bearer <access-token>'
 ```
 
+The owner profile response includes the NUS student number, display name,
+permitted account fields, and an `order_history` list. It never includes a
+password hash or authentication token. An authenticated user can view another
+active user's basic profile with `GET /users/{user_id}`; that response contains
+only `display_name`.
+
+Update mutable profile fields with a partial request. Omitted fields are
+preserved, while the NUS student number, role, status, and timestamps are not
+accepted as update fields:
+
+```bash
+curl -X PATCH http://localhost:8080/users/me \
+  -H 'Authorization: Bearer <access-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"display_name":"Updated Student","email":"new@example.com"}'
+```
+
+`DELETE /users/me` deactivates the account without deleting its record. A
+deactivated account can be restored on the same record by posting its existing
+credentials to `/users/reactivate`, then logging in again.
+
 The service refreshes the inactivity deadline on valid protected requests,
 without extending the 24-hour absolute lifetime. End the session with:
 
