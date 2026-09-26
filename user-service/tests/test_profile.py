@@ -150,6 +150,62 @@ def test_owner_can_partially_update_mutable_profile_fields(client, database):
     assert user.nus_student_number == "A0123456X"
 
 
+def test_empty_profile_update_is_a_no_op(client, database):
+    """An empty update returns the current profile without changing it."""
+
+    user = create_user(database)
+    response = client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {login(client)}"},
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(user.id)
+    assert response.json()["email"] == "student@example.com"
+    assert response.json()["display_name"] == "Student"
+    database.refresh(user)
+    assert user.email == "student@example.com"
+    assert user.display_name == "Student"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("email", "not-an-email"), ("password", "weak")],
+)
+def test_profile_update_rejects_invalid_mutable_values(client, database, field, value):
+    """Invalid email and password updates do not reach persistence."""
+
+    user = create_user(database)
+    original_password_hash = user.password_hash
+    response = client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {login(client)}"},
+        json={field: value},
+    )
+
+    assert response.status_code == 422
+    database.refresh(user)
+    assert user.email == "student@example.com"
+    assert user.password_hash == original_password_hash
+
+
+def test_profile_update_supports_put_compatibility_alias(client, database):
+    """The PUT compatibility route applies the same profile update contract."""
+
+    user = create_user(database)
+    response = client.put(
+        "/users/me",
+        headers={"Authorization": f"Bearer {login(client)}"},
+        json={"display_name": "Updated Student"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Updated Student"
+    database.refresh(user)
+    assert user.display_name == "Updated Student"
+
+
 @pytest.mark.parametrize(
     "display_name",
     ["Updated!", "Alice@NUS", "Alice\\NUS", "Student123", "Student\nName"],
@@ -232,11 +288,51 @@ def test_profile_update_rejects_another_user(client, database):
     assert other.display_name == "Other Student"
 
 
+def test_profile_lookup_returns_not_found_for_unknown_user(client, database):
+    """Unknown user IDs do not disclose profile data."""
+
+    create_user(database)
+    response = client.get(
+        f"/users/{uuid4()}",
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+def test_profile_lookup_hides_deactivated_user(client, database):
+    """Deactivated users are not available through basic profile lookup."""
+
+    create_user(database)
+    other = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="other@example.com",
+        display_name="Other Student",
+    )
+    other_token = login(client, student_number="A0123457X")
+    deactivated = client.post(
+        "/users/me/deactivate",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert deactivated.status_code == 200
+
+    response = client.get(
+        f"/users/{other.id}",
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
 def test_deactivation_preserves_record_and_reactivation_restores_it(client, database):
     """Deactivation is reversible on the same user row."""
 
     user = create_user(database)
     token = login(client)
+    second_token = login(client)
     deactivated = client.post(
         "/users/me/deactivate",
         headers={"Authorization": f"Bearer {token}"},
@@ -249,8 +345,19 @@ def test_deactivation_preserves_record_and_reactivation_restores_it(client, data
     assert stored is not None
     assert stored.status == "deactivated"
 
-    blocked = client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
-    assert blocked.status_code == 401
+    for revoked_token in (token, second_token):
+        blocked = client.get(
+            "/users/me", headers={"Authorization": f"Bearer {revoked_token}"}
+        )
+        assert blocked.status_code == 401
+
+    invalid_reactivation = client.post(
+        "/users/reactivate",
+        json={"nus_student_number": "A0123456X", "password": "WrongPassword1!"},
+    )
+    assert invalid_reactivation.status_code == 401
+    database.refresh(user)
+    assert user.status == "deactivated"
 
     reactivated = client.post(
         "/users/me/reactivate",
