@@ -228,8 +228,8 @@ curl -X POST http://localhost:8080/login \
 
 The response contains an opaque bearer token. Session tokens are stored only
 as hashes and expire after 30 minutes of inactivity or 24 hours, whichever
-comes first. Revoked and expired session records are pruned hourly and during
-successful login. Invalid credentials and non-active accounts return the same
+comes first. Revoked and expired session records are pruned hourly. Invalid
+credentials and non-active accounts return the same
 generic authentication error.
 
 Use the returned token for protected requests:

@@ -33,8 +33,7 @@ def hash_session_token(token: str) -> str:
 def cleanup_sessions(db: Session, now: datetime | None = None) -> int:
     """Delete revoked and expired sessions and return the deleted row count.
 
-    The caller owns the transaction so cleanup can be committed together with
-    other authentication changes, such as creating a new login session.
+    The caller owns the transaction and is responsible for committing it.
     """
 
     cleanup_time = now or datetime.now(timezone.utc)
