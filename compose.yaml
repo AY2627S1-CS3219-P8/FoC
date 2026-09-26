@@ -30,6 +30,17 @@ services:
       start_period: 10s
       retries: 3
 
+  user-migrate:
+    build: ./user-service
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@user-db:5432/foc_users
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    depends_on:
+      user-db:
+        condition: service_healthy
+    restart: "no"
+
   frontend-service:
     build:
       context: ./frontend-service
