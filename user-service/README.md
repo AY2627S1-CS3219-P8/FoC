@@ -67,7 +67,7 @@ Successful authentication creates an authenticated session/token. Invalid,
 expired, malformed, or tampered credentials/tokens must be rejected without
 revealing whether a particular account exists.
 
-Sessions must expire after the configured inactivity period (30 minutes) or 24 absolute hours, whichever comes first. A session refresh period longer than 30 days requires re-authentication. Logout must invalidate the session, and invalidated sessions must not be accepted for protected operations.
+Sessions must expire after the configured inactivity period (30 minutes) or 24 absolute hours, whichever comes first. Logout must invalidate the session, and invalidated sessions must not be accepted for protected operations.
 
 Protected requests must verify that the authenticated identity matches the
 requested user where required. Ordinary users cannot grant themselves
@@ -183,6 +183,38 @@ curl -X POST http://localhost:8080/users \
   -H 'Content-Type: application/json' \
   -d '{"nus_student_number":"A0123456X","email":"student@example.com","display_name":"Student","password":"Password1!"}'
 ```
+
+Log in with the registered NUS student number and password:
+
+```bash
+curl -X POST http://localhost:8080/login \
+  -H 'Content-Type: application/json' \
+  -d '{"nus_student_number":"A0123456X","password":"Password1!"}'
+```
+
+The response contains an opaque bearer token. Session tokens are stored only
+as hashes and expire after 30 minutes of inactivity or 24 hours, whichever
+comes first. Revoked and expired session records are pruned hourly and during
+successful login. Invalid credentials and non-active accounts return the same
+generic authentication error.
+
+Use the returned token for protected requests:
+
+```bash
+curl http://localhost:8080/users/me \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+The service refreshes the inactivity deadline on valid protected requests,
+without extending the 24-hour absolute lifetime. End the session with:
+
+```bash
+curl -X POST http://localhost:8080/logout \
+  -H 'Authorization: Bearer <access-token>'
+```
+
+Missing, malformed, expired, tampered, revoked, and non-active-account
+credentials are rejected with `401 Unauthorized`.
 
 The development database credentials are defined in `compose.yaml`; replace
 them with secrets or an untracked environment file before using a deployed
