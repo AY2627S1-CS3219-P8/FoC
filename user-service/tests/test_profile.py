@@ -150,6 +150,33 @@ def test_owner_can_partially_update_mutable_profile_fields(client, database):
     assert user.nus_student_number == "A0123456X"
 
 
+def test_password_update_revokes_existing_session(client, database):
+    """Changing a password invalidates the bearer session that made the change."""
+
+    create_user(database)
+    token = login(client)
+    second_token = login(client)
+    response = client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"password": "NewPassword1!"},
+    )
+
+    assert response.status_code == 200
+    for revoked_token in (token, second_token):
+        assert client.get(
+            "/users/me", headers={"Authorization": f"Bearer {revoked_token}"}
+        ).status_code == 401
+    assert client.post(
+        "/login",
+        json={"nus_student_number": "A0123456X", "password": "Password1!"},
+    ).status_code == 401
+    assert client.post(
+        "/login",
+        json={"nus_student_number": "A0123456X", "password": "NewPassword1!"},
+    ).status_code == 200
+
+
 @pytest.mark.parametrize("field", ["nus_student_number", "role", "status", "created_at"])
 def test_profile_update_rejects_protected_fields(client, database, field):
     """UID, account state, role, and timestamps cannot be client-edited."""
@@ -212,6 +239,9 @@ def test_deactivation_preserves_record_and_reactivation_restores_it(client, data
     assert reactivated.status_code == 200
     assert reactivated.json()["id"] == str(user.id)
     assert reactivated.json()["status"] == "active"
+    assert client.get(
+        "/users/me", headers={"Authorization": f"Bearer {token}"}
+    ).status_code == 401
 
     database.expire_all()
     assert database.scalar(select(User).where(User.id == user.id)).status == "active"

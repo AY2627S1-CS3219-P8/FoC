@@ -267,7 +267,9 @@ curl -X PATCH http://localhost:8080/users/me \
 
 `DELETE /users/me` deactivates the account without deleting its record. A
 deactivated account can be restored on the same record by posting its existing
-credentials to `/users/reactivate`, then logging in again.
+credentials to `/users/reactivate`, then logging in again. Password changes
+and deactivation revoke all active bearer sessions, so clients must
+authenticate again after either operation.
 
 The service refreshes the inactivity deadline on valid protected requests,
 without extending the 24-hour absolute lifetime. End the session with:

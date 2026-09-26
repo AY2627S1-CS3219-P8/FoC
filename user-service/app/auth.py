@@ -4,10 +4,11 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,23 @@ def cleanup_sessions(db: Session, now: datetime | None = None) -> int:
                 UserSession.absolute_expires_at <= cleanup_time,
             )
         )
+    )
+    return result.rowcount or 0
+
+
+def revoke_user_sessions(
+    db: Session, user_id: UUID, now: datetime | None = None
+) -> int:
+    """Revoke every active session for a user within the caller's transaction."""
+
+    revoked_at = now or datetime.now(timezone.utc)
+    result = db.execute(
+        update(UserSession)
+        .where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=revoked_at)
     )
     return result.rowcount or 0
 

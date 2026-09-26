@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     cleanup_sessions,
+    revoke_user_sessions,
     SESSION_ABSOLUTE_LIFETIME,
     SESSION_INACTIVITY,
     hash_session_token,
@@ -147,6 +148,8 @@ def update_user_profile(user: User, payload: UserUpdate, db: Session) -> User:
         return user
 
     try:
+        if payload.password is not None:
+            revoke_user_sessions(db, user.id)
         db.commit()
         db.refresh(user)
     except IntegrityError as exc:
@@ -178,6 +181,7 @@ def deactivate_user(user: User, db: Session) -> User:
 
     user.status = "deactivated"
     try:
+        revoke_user_sessions(db, user.id)
         db.commit()
         db.refresh(user)
     except SQLAlchemyError as exc:
