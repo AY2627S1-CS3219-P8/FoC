@@ -8,6 +8,22 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
+_DISPLAY_NAME_PATTERN = re.compile(r"[A-Za-z]+(?: [A-Za-z]+)*")
+
+
+def _normalize_display_name(value: object) -> str:
+    """Normalize a display name and reject unsupported characters."""
+
+    if not isinstance(value, str):
+        raise ValueError("must be a string")
+    value = value.strip()
+    if not value:
+        raise ValueError("must not be blank")
+    if not _DISPLAY_NAME_PATTERN.fullmatch(value):
+        raise ValueError("display_name contains unsupported characters")
+    return value
+
+
 class UserCreate(BaseModel):
     """Validate the fields required to register a new user."""
 
@@ -18,10 +34,10 @@ class UserCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=8, max_length=100)
 
-    @field_validator("nus_student_number", "display_name", mode="before")
+    @field_validator("nus_student_number", mode="before")
     @classmethod
     def non_blank(cls, value: object) -> str:
-        """Trim surrounding whitespace and reject blank text values."""
+        """Trim surrounding whitespace and reject blank student numbers."""
 
         if not isinstance(value, str):
             raise ValueError("must be a string")
@@ -29,6 +45,13 @@ class UserCreate(BaseModel):
         if not value:
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def validate_display_name(cls, value: object) -> str:
+        """Normalize and validate the registration display name."""
+
+        return _normalize_display_name(value)
 
     @field_validator("nus_student_number")
     @classmethod
@@ -99,14 +122,9 @@ class UserUpdate(BaseModel):
     @field_validator("display_name", mode="before")
     @classmethod
     def normalize_display_name(cls, value: object) -> str:
-        """Trim profile names and reject blank or non-text values."""
+        """Normalize and validate the profile display name."""
 
-        if value is None or not isinstance(value, str):
-            raise ValueError("must be a string")
-        value = value.strip()
-        if not value:
-            raise ValueError("must not be blank")
-        return value
+        return _normalize_display_name(value)
 
     @field_validator("password", mode="before")
     @classmethod

@@ -38,6 +38,9 @@ The service must collect and maintain the following registration/profile data:
 
 The NUS student number and account-creation timestamp are immutable. The
 profile name, email address, and password are mutable, subject to validation.
+Display names are trimmed at the edges and must contain only English letters
+separated by single spaces; punctuation, digits, backslashes, and control
+characters are rejected.
 Order history and credit balance are protected profile information and should
 only be exposed through an appropriate authenticated response or consuming
 service; sensitive authentication data must never be included.

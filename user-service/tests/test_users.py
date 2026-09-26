@@ -251,6 +251,17 @@ def test_user_create_rejects_malformed_email_addresses(email):
         make_payload(email=email)
 
 
+@pytest.mark.parametrize(
+    "display_name",
+    ["Student!", "Alice@NUS", "Alice\\NUS", "Student123", "Student\nName"],
+)
+def test_user_create_rejects_display_names_with_unsupported_characters(display_name):
+    """Registration rejects display names outside the supported English format."""
+
+    with pytest.raises(ValidationError, match="display_name contains unsupported"):
+        make_payload(display_name=display_name)
+
+
 @pytest.mark.parametrize("field", ["nus_student_number", "display_name"])
 @pytest.mark.parametrize("value", [None, 123, [], {}])
 def test_user_create_rejects_non_string_text_fields(field, value):

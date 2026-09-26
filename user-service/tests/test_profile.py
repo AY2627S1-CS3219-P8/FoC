@@ -150,6 +150,26 @@ def test_owner_can_partially_update_mutable_profile_fields(client, database):
     assert user.nus_student_number == "A0123456X"
 
 
+@pytest.mark.parametrize(
+    "display_name",
+    ["Updated!", "Alice@NUS", "Alice\\NUS", "Student123", "Student\nName"],
+)
+def test_profile_update_rejects_display_names_with_unsupported_characters(
+    client, database, display_name
+):
+    """Profile updates reject display names outside the supported English format."""
+
+    create_user(database)
+    response = client.patch(
+        "/users/me",
+        headers={"Authorization": f"Bearer {login(client)}"},
+        json={"display_name": display_name},
+    )
+
+    assert response.status_code == 422
+    assert "display_name contains unsupported" in response.json()["detail"][0]["msg"]
+
+
 def test_password_update_revokes_existing_session(client, database):
     """Changing a password invalidates the bearer session that made the change."""
 

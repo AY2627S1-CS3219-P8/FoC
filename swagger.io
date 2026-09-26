@@ -301,6 +301,8 @@ definitions:
         example: student@example.com
       display_name:
         type: string
+        description: English letters separated by single spaces; surrounding whitespace is trimmed.
+        pattern: '^[A-Za-z]+(?: [A-Za-z]+)*$'
         minLength: 1
         maxLength: 100
         example: Alex Tan
@@ -343,6 +345,8 @@ definitions:
         example: new-address@example.com
       display_name:
         type: string
+        description: English letters separated by single spaces; surrounding whitespace is trimmed.
+        pattern: '^[A-Za-z]+(?: [A-Za-z]+)*$'
         minLength: 1
         maxLength: 100
         example: Alex Tan
