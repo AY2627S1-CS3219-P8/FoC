@@ -155,11 +155,9 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
 
-class OwnProfileResponse(UserResponse):
-    """Profile representation returned to the account owner."""
+class OrderHistoryResponse(BaseModel):
+    """Order history returned by the dedicated history boundary."""
 
-    # Order history belongs to the Order Service. The status distinguishes an
-    # account with no orders from an Order Service that is not available.
     order_history: list[dict[str, object]] = Field(default_factory=list)
     order_history_status: Literal["available", "unavailable"] = "unavailable"
 

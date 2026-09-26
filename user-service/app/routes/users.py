@@ -10,7 +10,7 @@ from app.db import get_db
 from app.schemas import (
     BasicProfileResponse,
     LoginResponse,
-    OwnProfileResponse,
+    OrderHistoryResponse,
     UserCreate,
     UserLogin,
     UserResponse,
@@ -24,7 +24,7 @@ from app.services.users import (
     register_user,
     update_user_profile,
 )
-from app.services.profiles import own_profile_response
+from app.services.profiles import order_history_response, own_profile_response
 
 
 router = APIRouter()
@@ -50,11 +50,18 @@ def logout(
     return response
 
 
-@router.get("/users/me", response_model=OwnProfileResponse)
+@router.get("/users/me", response_model=UserResponse)
 def get_current_user(auth: AuthContext = Depends(get_current_session)):
-    """Return the authenticated user's protected profile fields."""
+    """Return the authenticated user's profile without order data."""
 
     return own_profile_response(auth.user)
+
+
+@router.get("/users/me/order-history", response_model=OrderHistoryResponse)
+def get_current_user_order_history(auth: AuthContext = Depends(get_current_session)):
+    """Return the authenticated user's order history through its own boundary."""
+
+    return order_history_response(auth.user)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)
@@ -68,8 +75,8 @@ def get_user(user_id: UUID, auth: AuthContext = Depends(get_current_session), db
     return user
 
 
-@router.patch("/users/me", response_model=OwnProfileResponse)
-@router.put("/users/me", response_model=OwnProfileResponse)
+@router.patch("/users/me", response_model=UserResponse)
+@router.put("/users/me", response_model=UserResponse)
 def update_current_user(
     payload: UserUpdate,
     auth: AuthContext = Depends(get_current_session),
@@ -81,8 +88,8 @@ def update_current_user(
     return own_profile_response(user)
 
 
-@router.patch("/users/{user_id}", response_model=OwnProfileResponse)
-@router.put("/users/{user_id}", response_model=OwnProfileResponse)
+@router.patch("/users/{user_id}", response_model=UserResponse)
+@router.put("/users/{user_id}", response_model=UserResponse)
 def update_user(
     user_id: UUID,
     payload: UserUpdate,
@@ -97,8 +104,8 @@ def update_user(
     return own_profile_response(user)
 
 
-@router.delete("/users/me", response_model=OwnProfileResponse)
-@router.post("/users/me/deactivate", response_model=OwnProfileResponse)
+@router.delete("/users/me", response_model=UserResponse)
+@router.post("/users/me/deactivate", response_model=UserResponse)
 def deactivate_current_user(
     auth: AuthContext = Depends(get_current_session),
     db: Session = Depends(get_db),
@@ -109,9 +116,9 @@ def deactivate_current_user(
     return own_profile_response(user)
 
 
-@router.post("/users/me/reactivate", response_model=OwnProfileResponse)
-@router.post("/users/reactivate", response_model=OwnProfileResponse)
-@router.post("/reactivate", response_model=OwnProfileResponse)
+@router.post("/users/me/reactivate", response_model=UserResponse)
+@router.post("/users/reactivate", response_model=UserResponse)
+@router.post("/reactivate", response_model=UserResponse)
 def reactivate_current_user(payload: UserLogin, db: Session = Depends(get_db)):
     """Reactivate an account by verifying its existing login credentials."""
 

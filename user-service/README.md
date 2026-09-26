@@ -95,8 +95,8 @@ silently create a new account.
 ## Profile access rules
 
 - An authenticated user may view their own profile, including their NUS
-  student number, display name, and order-history information made available
-  by the platform.
+  student number and display name. Order history is retrieved through its
+  separate order-history boundary.
 - An authenticated user may view another user's basic profile information,
   limited to the profile name.
 - Sensitive information must be omitted or masked in full-value displays.
@@ -244,20 +244,22 @@ curl http://localhost:8080/users/me \
   -H 'Authorization: Bearer <access-token>'
 ```
 
-The owner profile response includes the NUS student number, display name,
-permitted account fields, and an `order_history` list. It also includes
-`order_history_status`, which is `available` when Order Service returns the
-history and `unavailable` when Order Service has not been deployed or cannot be
-reached. An unavailable history must not be interpreted as an empty history.
-The response never includes a password hash or authentication token. An
-authenticated user can view another active user's basic profile with
+The owner profile response includes the NUS student number, display name, and
+permitted account fields. It never includes a password hash or authentication
+token. An authenticated user can view another active user's basic profile with
 `GET /users/{user_id}`; that response contains only `display_name`.
 
-When configured, User Service calls the internal Order Service contract
-`GET /orders?requester_id=<user UUID>` and expects `{"items": [...]}`. Configure
-it with `ORDER_SERVICE_URL`, `ORDER_SERVICE_TOKEN`, and
+Fetch the authenticated user's order history separately with
+`GET /users/me/order-history`. The response includes an `order_history` list
+and `order_history_status`, which is `available` when Order Service returns
+history and `unavailable` when Order Service has not been deployed or cannot be
+reached. An unavailable history must not be interpreted as an empty history.
+
+The dedicated order-history boundary calls the internal Order Service contract
+`GET /orders?requester_id=<user UUID>` and expects `{"items": [...]}` when
+configured. Configure it with `ORDER_SERVICE_URL`, `ORDER_SERVICE_TOKEN`, and
 `ORDER_SERVICE_TIMEOUT_SECONDS`. User data and order data remain owned by
-their respective services.
+their respective services; profile reads and writes do not call Order Service.
 
 Update mutable profile fields with a partial request using `PATCH` (or the
 `PUT` compatibility alias). Omitted fields are preserved, and an empty object

@@ -128,9 +128,9 @@ paths:
         - bearerAuth: []
       responses:
         "200":
-          description: Authenticated user's protected profile, including order history.
+          description: Authenticated user's protected profile without order history.
           schema:
-            $ref: '#/definitions/OwnProfileResponse'
+            $ref: '#/definitions/UserResponse'
         "401":
           description: Bearer credentials are missing or invalid.
           schema:
@@ -139,6 +139,7 @@ paths:
           description: Authentication storage is temporarily unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
+
     patch:
       summary: Update the authenticated user's profile
       description: Omitted fields are preserved. An empty object is accepted as a no-op; PUT is also supported as an alias.
@@ -155,7 +156,7 @@ paths:
         "200":
           description: Updated profile.
           schema:
-            $ref: '#/definitions/OwnProfileResponse'
+            $ref: '#/definitions/UserResponse'
         "401":
           description: Bearer credentials are missing or invalid.
           schema:
@@ -181,13 +182,33 @@ paths:
         "200":
           description: Account deactivated; the profile record is retained.
           schema:
-            $ref: '#/definitions/OwnProfileResponse'
+            $ref: '#/definitions/UserResponse'
         "401":
           description: Bearer credentials are missing or invalid.
           schema:
             $ref: '#/definitions/ErrorResponse'
         "503":
           description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /users/me/order-history:
+    get:
+      summary: Get the authenticated user's order history
+      operationId: getCurrentUserOrderHistory
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Authenticated user's order history and availability status.
+          schema:
+            $ref: '#/definitions/OrderHistoryResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "503":
+          description: Authentication storage is temporarily unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
 
@@ -237,7 +258,7 @@ paths:
         "200":
           description: Updated profile.
           schema:
-            $ref: '#/definitions/OwnProfileResponse'
+            $ref: '#/definitions/UserResponse'
         "401":
           description: Bearer credentials are missing or invalid.
           schema:
@@ -265,7 +286,7 @@ paths:
         "200":
           description: Existing account reactivated.
           schema:
-            $ref: '#/definitions/OwnProfileResponse'
+            $ref: '#/definitions/UserResponse'
         "401":
           description: Credentials are invalid or the account is suspended.
           schema:
@@ -398,25 +419,23 @@ definitions:
         type: string
         format: date-time
 
-  OwnProfileResponse:
-    allOf:
-      - $ref: '#/definitions/UserResponse'
-      - type: object
-        required:
-          - order_history
-          - order_history_status
-        properties:
-          order_history:
-            type: array
-            description: The authenticated user's order history.
-            items:
-              type: object
-          order_history_status:
-            type: string
-            description: Whether Order Service was reachable when the profile was read.
-            enum:
-              - available
-              - unavailable
+  OrderHistoryResponse:
+    type: object
+    required:
+      - order_history
+      - order_history_status
+    properties:
+      order_history:
+        type: array
+        description: The authenticated user's order history.
+        items:
+          type: object
+      order_history_status:
+        type: string
+        description: Whether Order Service was reachable when the history was read.
+        enum:
+          - available
+          - unavailable
 
   BasicProfileResponse:
     type: object

@@ -81,8 +81,8 @@ def test_owner_can_view_profile_without_authentication_data(client, database):
     assert response.status_code == 200
     assert response.json()["nus_student_number"] == user.nus_student_number
     assert response.json()["display_name"] == "Student"
-    assert response.json()["order_history"] == []
-    assert response.json()["order_history_status"] == "unavailable"
+    assert "order_history" not in response.json()
+    assert "order_history_status" not in response.json()
     assert "password_hash" not in response.json()
     assert "access_token" not in response.json()
 
@@ -100,13 +100,32 @@ def test_owner_profile_uses_order_history_provider(client, database, monkeypatch
     create_user(database)
     monkeypatch.setattr(order_history, "order_history_provider", FakeOrderHistoryProvider())
 
-    response = client.get("/users/me", headers={"Authorization": f"Bearer {login(client)}"})
+    response = client.get(
+        "/users/me/order-history",
+        headers={"Authorization": f"Bearer {login(client)}"},
+    )
 
     assert response.status_code == 200
     assert response.json()["order_history_status"] == "available"
     assert response.json()["order_history"] == [
         {"order_id": "order-1", "status": "delivered"}
     ]
+
+
+def test_owner_profile_does_not_fetch_order_history(client, database, monkeypatch):
+    """Profile reads stay available without an Order Service call."""
+
+    class FailingOrderHistoryProvider:
+        def get_for_user(self, user_id):
+            raise AssertionError("profile reads must not fetch order history")
+
+    create_user(database)
+    monkeypatch.setattr(order_history, "order_history_provider", FailingOrderHistoryProvider())
+
+    response = client.get("/users/me", headers={"Authorization": f"Bearer {login(client)}"})
+
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Student"
 
 
 def test_other_profile_exposes_only_display_name(client, database):
