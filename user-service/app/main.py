@@ -35,7 +35,7 @@ async def session_cleanup_loop() -> None:
     """Run session cleanup periodically until the application shuts down."""
 
     while True:
-        run_session_cleanup()
+        await asyncio.to_thread(run_session_cleanup)
         await asyncio.sleep(SESSION_CLEANUP_INTERVAL.total_seconds())
 
 
