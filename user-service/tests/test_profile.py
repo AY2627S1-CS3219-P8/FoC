@@ -324,6 +324,21 @@ def test_profile_update_rechecks_account_status_before_mutating(database):
     assert user.display_name == "Student"
 
 
+def test_empty_profile_update_rechecks_account_status(database):
+    """An empty update also rejects an account deactivated after authentication."""
+
+    user = create_user(database)
+    user.status = "deactivated"
+    database.commit()
+
+    with pytest.raises(HTTPException) as error:
+        update_user_profile(user, UserUpdate(), database)
+
+    assert error.value.status_code == 401
+    database.refresh(user)
+    assert user.status == "deactivated"
+
+
 def test_profile_lookup_returns_not_found_for_unknown_user(client, database):
     """Unknown user IDs do not disclose profile data."""
 

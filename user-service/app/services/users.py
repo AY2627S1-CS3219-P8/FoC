@@ -153,13 +153,12 @@ def update_user_profile(user: User, payload: UserUpdate, db: Session) -> User:
     # Lock the account row before changing credentials or profile state. Login,
     # deactivation, and reactivation acquire the same lock, so a session cannot
     # be created after this operation revokes existing sessions.
-    if not payload.model_fields_set:
-        return user
-
     try:
         db.refresh(user, with_for_update=True)
         if user.status != "active":
             raise _authentication_error()
+        if not payload.model_fields_set:
+            return user
     except HTTPException:
         db.rollback()
         raise
