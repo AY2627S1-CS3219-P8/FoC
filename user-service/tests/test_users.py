@@ -333,6 +333,7 @@ def test_user_model_protects_required_fields_and_account_defaults():
     assert str(columns.role.server_default.arg) == "user"
     assert str(columns.status.server_default.arg) == "active"
     constraint_names = {constraint.name for constraint in User.__table__.constraints}
+    assert "ck_users_nus_student_number_length" in constraint_names
     assert "ck_users_role" in constraint_names
     assert "ck_users_status" in constraint_names
 

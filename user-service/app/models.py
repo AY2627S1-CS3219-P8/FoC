@@ -20,6 +20,12 @@ class User(Base):
 
     __tablename__ = "users"
     __table_args__ = (
+        # API schemas enforce the full student-number format; this portable
+        # database invariant protects the required length for every write path.
+        CheckConstraint(
+            "length(nus_student_number) = 9",
+            name="ck_users_nus_student_number_length",
+        ),
         CheckConstraint("role IN ('user', 'admin')", name="ck_users_role"),
         CheckConstraint(
             "status IN ('active', 'deactivated', 'suspended')",

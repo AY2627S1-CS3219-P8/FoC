@@ -94,7 +94,7 @@ def test_fresh_database_reaches_migration_head(tmp_path):
         version = database.execute("SELECT version_num FROM alembic_version").fetchone()[0]
 
     assert {"users", "user_sessions", "alembic_version"} <= tables
-    assert version == "20260924_0002"
+    assert version == "20260926_0003"
 
 
 def test_check_constraint_validation_accepts_postgresql_rendering():
@@ -152,7 +152,7 @@ with Session(engine) as database:
         version = database.execute("SELECT version_num FROM alembic_version").fetchone()[0]
         user_count = database.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
-    assert version == "20260924_0002"
+    assert version == "20260926_0003"
     assert user_count == 1
 
 
