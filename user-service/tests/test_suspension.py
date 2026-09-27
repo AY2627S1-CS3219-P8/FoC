@@ -192,6 +192,80 @@ def test_admin_cannot_suspend_another_admin(client, database):
     ).status_code == 200
 
 
+def test_admin_can_revoke_another_admin_rights(client, database):
+    """Revoking rights demotes the target without invalidating their session."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Admin",
+    )
+    target.role = "admin"
+    database.commit()
+
+    admin_token = login(client, admin.nus_student_number)
+    target_token = login(client, target.nus_student_number)
+    response = client.post(
+        f"/admin/users/{target.id}/revoke-admin",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "user"
+    database.refresh(target)
+    assert target.role == "user"
+    assert client.get(
+        "/users/me", headers={"Authorization": f"Bearer {target_token}"}
+    ).json()["role"] == "user"
+
+
+def test_admin_cannot_revoke_own_admin_rights(client, database):
+    """Self-revocation is rejected so the caller remains an administrator."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    database.commit()
+
+    response = client.post(
+        f"/admin/users/{admin.id}/revoke-admin",
+        headers={"Authorization": f"Bearer {login(client, admin.nus_student_number)}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Administrators cannot revoke their own administrator rights"
+    }
+    database.refresh(admin)
+    assert admin.role == "admin"
+
+
+def test_revoke_admin_requires_an_admin_target(client, database):
+    """Revocation rejects a target that is already a regular user."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Student",
+    )
+    database.commit()
+
+    response = client.post(
+        f"/admin/users/{target.id}/revoke-admin",
+        headers={"Authorization": f"Bearer {login(client, admin.nus_student_number)}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "User is not an administrator"}
+    database.refresh(target)
+    assert target.role == "user"
+
+
 def test_suspending_unknown_user_returns_not_found(client, database):
     """An authorized administrator receives a safe not-found response."""
 

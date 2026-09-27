@@ -263,6 +263,50 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     return target
 
 
+def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
+    """Remove administrator rights from another administrator account.
+
+    The actor is locked and re-authorized in the same transaction as the role
+    change. Self-revocation is rejected so the successful actor remains an
+    administrator after the operation.
+    """
+
+    try:
+        actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+
+        target = db.scalar(select(User).where(User.id == target_id).with_for_update())
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot revoke their own administrator rights",
+            )
+        if target.role != "admin":
+            raise HTTPException(status_code=409, detail="User is not an administrator")
+
+        target.role = "user"
+        db.commit()
+        db.refresh(target)
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    logger.info(
+        "admin_rights_revoked",
+        extra={
+            "actor_user_id": str(actor.id),
+            "target_user_id": str(target.id),
+        },
+    )
+    return target
+
+
 def deactivate_user(user: User, db: Session) -> User:
     """Deactivate an account while retaining its persisted profile record."""
 

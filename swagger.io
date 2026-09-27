@@ -321,6 +321,49 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
 
+  /admin/users/{user_id}/revoke-admin:
+    post:
+      summary: Revoke administrator rights
+      description: An active administrator removes administrator rights from another administrator. The caller cannot revoke their own rights, so at least one administrator remains. The target remains an active regular user and existing sessions remain valid.
+      operationId: revokeAdminRights
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Administrator rights revoked.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator or is attempting to revoke their own rights.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The target user is not currently an administrator.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /users/{user_id}:
     get:
       summary: Get another user's basic profile

@@ -24,6 +24,7 @@ from app.services.users import (
     login_user,
     reactivate_user,
     register_user,
+    revoke_admin_rights,
     suspend_user,
     update_user_profile,
 )
@@ -80,6 +81,17 @@ def suspend_account(
     """Suspend a user account as an active administrator."""
 
     return suspend_user(auth.user_id, user_id, db)
+
+
+@router.post("/admin/users/{user_id}/revoke-admin", response_model=UserResponse)
+def revoke_admin(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Revoke administrator rights from another administrator."""
+
+    return revoke_admin_rights(auth.user_id, user_id, db)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)
