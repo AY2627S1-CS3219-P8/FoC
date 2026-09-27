@@ -9,6 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 
+ADMIN_STATE_LOCK_NAME = "administrator_state"
+
+
 def utc_now() -> datetime:
     """Return the current timezone-aware UTC timestamp."""
 
@@ -75,3 +78,17 @@ class UserSession(Base):
         DateTime(timezone=True), nullable=False
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AdminStateLock(Base):
+    """Singleton row used to serialize administrator-state mutations."""
+
+    __tablename__ = "admin_state_locks"
+    __table_args__ = (
+        CheckConstraint(
+            f"lock_name = '{ADMIN_STATE_LOCK_NAME}'",
+            name="ck_admin_state_locks_name",
+        ),
+    )
+
+    lock_name: Mapped[str] = mapped_column(String(50), primary_key=True, nullable=False)

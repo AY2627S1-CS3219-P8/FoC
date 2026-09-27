@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import User
+from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
 from app.schemas import UserCreate, UserUpdate
 from app.services.users import register_user, update_user_profile
 
@@ -27,6 +27,8 @@ def database():
     )
     Base.metadata.create_all(bind=engine)
     with Session(engine) as db:
+        db.add(AdminStateLock(lock_name=ADMIN_STATE_LOCK_NAME))
+        db.commit()
         yield db
     Base.metadata.drop_all(bind=engine)
     engine.dispose()

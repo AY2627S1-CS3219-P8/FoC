@@ -7,7 +7,7 @@ from uuid import UUID
 
 from argon2 import PasswordHasher
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -20,7 +20,7 @@ from app.auth import (
     SESSION_INACTIVITY,
     hash_session_token,
 )
-from app.models import User, UserSession
+from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User, UserSession
 from app.schemas import LoginResponse, UserCreate, UserLogin, UserUpdate
 
 
@@ -43,6 +43,46 @@ def _authentication_error() -> HTTPException:
         detail=AUTHENTICATION_ERROR,
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def _load_user(user_id: UUID, db: Session, *, lock: bool = False) -> User | None:
+    """Load a user, optionally taking a row lock and refreshing its state."""
+
+    statement = (
+        select(User)
+        .where(User.id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return db.scalar(statement)
+
+
+def _load_user_by_student_number(
+    student_number: str, db: Session, *, lock: bool = False
+) -> User | None:
+    """Load a user by normalized student number, optionally with a row lock."""
+
+    statement = (
+        select(User)
+        .where(User.nus_student_number == student_number)
+        .execution_options(populate_existing=True)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return db.scalar(statement)
+
+
+def _lock_admin_state(db: Session) -> None:
+    """Lock the migrated singleton row coordinating admin-state mutations."""
+
+    lock = db.scalar(
+        select(AdminStateLock)
+        .where(AdminStateLock.lock_name == ADMIN_STATE_LOCK_NAME)
+        .with_for_update()
+    )
+    if lock is None:
+        raise HTTPException(status_code=503, detail="Administrator state lock unavailable")
 
 
 def hash_password(password: str) -> str:
@@ -219,24 +259,6 @@ def is_user_admin(user_id: UUID, db: Session) -> bool:
     return bool(user and user.status == "active" and user.role == "admin")
 
 
-def _lock_active_admins(db: Session) -> list[UUID]:
-    """Lock active administrator rows in one stable order.
-
-    Account-management operations that can affect administrator state call
-    this first. Sharing the lock order prevents two concurrent operations from
-    acquiring administrator rows in opposite orders and deadlocking.
-    """
-
-    return list(
-        db.scalars(
-            select(User.id)
-            .where(User.role == "admin", User.status == "active")
-            .order_by(User.id)
-            .with_for_update()
-        ).all()
-    )
-
-
 def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """Suspend an account after authorizing the active administrator.
 
@@ -247,12 +269,31 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """
 
     try:
-        _lock_active_admins(db)
-        actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
+        # Suspension cannot change administrator state: self-suspension and
+        # suspending another administrator are both rejected below. Perform
+        # the authorization and target checks before taking account locks.
+        actor = _load_user(actor_id, db)
         if actor is None or actor.status != "active" or actor.role != "admin":
             raise HTTPException(status_code=403, detail="Admin privileges required")
 
-        target = db.scalar(select(User).where(User.id == target_id).with_for_update())
+        target = _load_user(target_id, db)
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot suspend their own account",
+            )
+        if target.role == "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot suspend another administrator",
+            )
+
+        actor = _load_user(actor_id, db, lock=True)
+        target = _load_user(target_id, db, lock=True)
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
         if target.id == actor.id:
@@ -296,12 +337,26 @@ def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """
 
     try:
-        _lock_active_admins(db)
-        actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
+        actor = _load_user(actor_id, db)
         if actor is None or actor.status != "active" or actor.role != "admin":
             raise HTTPException(status_code=403, detail="Admin privileges required")
 
-        target = db.scalar(select(User).where(User.id == target_id).with_for_update())
+        target = _load_user(target_id, db)
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot revoke their own administrator rights",
+            )
+        if target.role != "admin":
+            raise HTTPException(status_code=409, detail="User is not an administrator")
+
+        _lock_admin_state(db)
+        actor = _load_user(actor_id, db, lock=True)
+        target = _load_user(target_id, db, lock=True)
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
         if target.id == actor.id:
@@ -336,19 +391,35 @@ def deactivate_user(user: User, db: Session) -> User:
     """Deactivate an account while retaining its persisted profile record."""
 
     try:
-        # Lock active administrator rows before locking the account being
-        # deactivated. This serializes administrator deactivation decisions
-        # and uses the same lock order as other admin-state mutations.
-        active_admin_ids = _lock_active_admins(db)
-        locked_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
+        candidate = _load_user(user.id, db)
+        if candidate is None or candidate.status != "active":
+            raise _authentication_error()
+
+        admin_state_locked = candidate.role == "admin"
+        if admin_state_locked:
+            _lock_admin_state(db)
+
+        locked_user = _load_user(user.id, db, lock=True)
 
         if locked_user is None or locked_user.status != "active":
             raise _authentication_error()
-        if locked_user.role == "admin" and len(active_admin_ids) <= 1:
+        if locked_user.role == "admin" and not admin_state_locked:
             raise HTTPException(
-                status_code=409,
-                detail="Cannot deactivate the last administrator",
+                status_code=503,
+                detail="Account state changed; please retry the request",
             )
+        if locked_user.role == "admin":
+            active_admin_count = db.scalar(
+                select(func.count(User.id)).where(
+                    User.role == "admin",
+                    User.status == "active",
+                )
+            )
+            if active_admin_count <= 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot deactivate the last administrator",
+                )
 
         locked_user.status = "deactivated"
         revoke_user_sessions(db, locked_user.id)
@@ -367,30 +438,41 @@ def reactivate_user(payload: UserLogin, db: Session) -> User:
     """Reactivate a deactivated account after verifying its credentials.
 
     Reactivation is intentionally credential-based because a deactivated
-    account cannot use ordinary authenticated operations.  It updates the
+    account cannot use ordinary authenticated operations. It updates the
     existing row and never creates a second account.
     """
 
     student_number = payload.nus_student_number.strip().upper()
     try:
-        user = db.scalar(
-            select(User)
-            .where(User.nus_student_number == student_number)
-            .with_for_update()
-        )
+        candidate = _load_user_by_student_number(student_number, db)
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    password_hash = user.password_hash if user else DUMMY_PASSWORD_HASH
+    password_hash = candidate.password_hash if candidate else DUMMY_PASSWORD_HASH
     password_matches = verify_password(payload.password, password_hash)
-    if not user or not password_matches or user.status == "suspended":
+    if not candidate or not password_matches or candidate.status == "suspended":
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    user.status = "active"
     try:
+        # An administrator reactivation changes the active-admin set, so it
+        # follows the same lock order as deactivation and role revocation.
+        if candidate.role == "admin":
+            _lock_admin_state(db)
+        user = _load_user_by_student_number(student_number, db, lock=True)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        # Re-check after locking in case the password or account status changed
+        # while the credential was being verified.
+        if not verify_password(payload.password, user.password_hash) or user.status == "suspended":
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        user.status = "active"
         db.commit()
         db.refresh(user)
+    except HTTPException:
+        db.rollback()
+        raise
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
