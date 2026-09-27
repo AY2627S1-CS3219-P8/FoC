@@ -10,7 +10,6 @@ from app.db import get_db
 from app.schemas import (
     BasicProfileResponse,
     LoginResponse,
-    OrderHistoryResponse,
     UserCreate,
     UserLogin,
     UserResponse,
@@ -24,7 +23,7 @@ from app.services.users import (
     register_user,
     update_user_profile,
 )
-from app.services.profiles import order_history_response, own_profile_response
+from app.services.profiles import own_profile_response
 
 
 router = APIRouter()
@@ -52,16 +51,9 @@ def logout(
 
 @router.get("/users/me", response_model=UserResponse)
 def get_current_user(auth: AuthContext = Depends(get_current_session)):
-    """Return the authenticated user's profile without order data."""
+    """Return the authenticated user's profile."""
 
     return own_profile_response(auth.user)
-
-
-@router.get("/users/me/order-history", response_model=OrderHistoryResponse)
-async def get_current_user_order_history(auth: AuthContext = Depends(get_current_session)):
-    """Return the authenticated user's order history through its own boundary."""
-
-    return await order_history_response(auth.user_id)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)

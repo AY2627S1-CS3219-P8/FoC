@@ -128,7 +128,7 @@ paths:
         - bearerAuth: []
       responses:
         "200":
-          description: Authenticated user's protected profile without order history.
+          description: Authenticated user's protected profile.
           schema:
             $ref: '#/definitions/UserResponse'
         "401":
@@ -189,26 +189,6 @@ paths:
             $ref: '#/definitions/ErrorResponse'
         "503":
           description: Database is temporarily unavailable.
-          schema:
-            $ref: '#/definitions/ErrorResponse'
-
-  /users/me/order-history:
-    get:
-      summary: Get the authenticated user's order history
-      operationId: getCurrentUserOrderHistory
-      security:
-        - bearerAuth: []
-      responses:
-        "200":
-          description: Authenticated user's order history and availability status.
-          schema:
-            $ref: '#/definitions/OrderHistoryResponse'
-        "401":
-          description: Bearer credentials are missing or invalid.
-          schema:
-            $ref: '#/definitions/ErrorResponse'
-        "503":
-          description: Authentication storage is temporarily unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
 
@@ -418,24 +398,6 @@ definitions:
       updated_at:
         type: string
         format: date-time
-
-  OrderHistoryResponse:
-    type: object
-    required:
-      - order_history
-      - order_history_status
-    properties:
-      order_history:
-        type: array
-        description: The authenticated user's order history.
-        items:
-          type: object
-      order_history_status:
-        type: string
-        description: Whether Order Service was reachable when the history was read.
-        enum:
-          - available
-          - unavailable
 
   BasicProfileResponse:
     type: object

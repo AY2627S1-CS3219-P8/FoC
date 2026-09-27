@@ -155,13 +155,6 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
 
-class OrderHistoryResponse(BaseModel):
-    """Order history returned by the dedicated history boundary."""
-
-    order_history: list[dict[str, object]] = Field(default_factory=list)
-    order_history_status: Literal["available", "unavailable"] = "unavailable"
-
-
 class BasicProfileResponse(BaseModel):
     """Minimal profile representation visible to another authenticated user."""
 
