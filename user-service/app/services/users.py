@@ -255,7 +255,12 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
         target = db.scalar(select(User).where(User.id == target_id).with_for_update())
         if target is None:
             raise HTTPException(status_code=404, detail="User not found")
-        if target.id != actor.id and target.role == "admin":
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot suspend their own account",
+            )
+        if target.role == "admin":
             raise HTTPException(
                 status_code=403,
                 detail="Administrators cannot suspend another administrator",

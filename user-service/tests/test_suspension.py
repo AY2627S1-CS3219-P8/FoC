@@ -192,6 +192,30 @@ def test_admin_cannot_suspend_another_admin(client, database):
     ).status_code == 200
 
 
+def test_admin_cannot_suspend_own_account(client, database):
+    """An administrator cannot remove their own active access."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    database.commit()
+    admin_token = login(client, admin.nus_student_number)
+
+    response = client.post(
+        f"/admin/users/{admin.id}/suspend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Administrators cannot suspend their own account"
+    }
+    database.refresh(admin)
+    assert admin.status == "active"
+    assert client.get(
+        "/users/me", headers={"Authorization": f"Bearer {admin_token}"}
+    ).status_code == 200
+
+
 def test_admin_can_revoke_another_admin_rights(client, database):
     """Revoking rights demotes the target without invalidating their session."""
 

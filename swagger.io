@@ -313,7 +313,7 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
         "403":
-          description: The authenticated user is not an active administrator or the target is another administrator.
+          description: The authenticated user is not an active administrator, the target is another administrator, or the caller is attempting to suspend their own account.
           schema:
             $ref: '#/definitions/ErrorResponse'
         "404":
