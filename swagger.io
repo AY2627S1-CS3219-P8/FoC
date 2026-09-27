@@ -20,6 +20,11 @@ securityDefinitions:
     name: Authorization
     in: header
     description: Use the format `Bearer <access_token>`.
+  internalServiceAuth:
+    type: apiKey
+    name: X-Internal-Service-Token
+    in: header
+    description: Shared secret for trusted service-to-service requests. Never expose this header to clients.
 
 paths:
   /health:
@@ -43,6 +48,37 @@ paths:
             $ref: '#/definitions/StatusResponse'
         "503":
           description: Database is unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /internal/users/{user_id}/admin:
+    get:
+      summary: Check whether a user is an active administrator
+      description: Internal endpoint for trusted services such as Order Service. It returns false for regular, unknown, deactivated, or suspended users.
+      operationId: checkUserAdmin
+      security:
+        - internalServiceAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Administrative authorization result.
+          schema:
+            $ref: '#/definitions/AdminCheckResponse'
+        "401":
+          description: Internal service credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Internal authorization is not configured or the database is unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
 
@@ -576,6 +612,15 @@ definitions:
     properties:
       display_name:
         type: string
+
+  AdminCheckResponse:
+    type: object
+    required:
+      - is_admin
+    properties:
+      is_admin:
+        type: boolean
+        description: True only when the account exists, is active, and has role admin.
 
   LoginResponse:
     type: object

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.auth import AuthContext, get_current_session, revoke_session
 from app.db import get_db
 from app.schemas import (
+    AdminCheckResponse,
     BasicProfileResponse,
     LoginResponse,
     UserCreate,
@@ -15,9 +16,11 @@ from app.schemas import (
     UserResponse,
     UserUpdate,
 )
+from app.service_auth import require_internal_service
 from app.services.users import (
     deactivate_user,
     get_user_profile,
+    is_user_admin,
     login_user,
     reactivate_user,
     register_user,
@@ -27,6 +30,17 @@ from app.services.profiles import own_profile_response
 
 
 router = APIRouter()
+
+
+@router.get("/internal/users/{user_id}/admin", response_model=AdminCheckResponse)
+def check_user_admin(
+    user_id: UUID,
+    _: None = Depends(require_internal_service),
+    db: Session = Depends(get_db),
+):
+    """Return an active user's admin status to a trusted internal service."""
+
+    return AdminCheckResponse(is_admin=is_user_admin(user_id, db))
 
 
 @router.post("/login", response_model=LoginResponse)

@@ -160,6 +160,23 @@ Consuming services should depend on the User Service API or documented
 authentication events, not on implementation details or direct database
 access.
 
+### Internal administrator checks
+
+Trusted services can check a user's authorization without accessing the User
+Service database directly:
+
+```bash
+curl http://user-service:8080/internal/users/<user-id>/admin \
+  -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
+```
+
+The response is only `{"is_admin": true}` or `{"is_admin": false}`. It is
+`true` only for an existing active account whose persisted role is `admin`;
+regular, unknown, deactivated, and suspended accounts return `false`.
+Requests require the shared `USER_SERVICE_INTERNAL_TOKEN` configured for the
+User Service and trusted callers. Keep this token in deployment secrets and
+never forward it to clients.
+
 ## Local development
 
 The service is containerized from this directory. Once the application entry

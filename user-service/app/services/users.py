@@ -2,6 +2,7 @@
 
 import secrets
 from datetime import datetime, timezone
+from uuid import UUID
 
 from argon2 import PasswordHasher
 from fastapi import HTTPException
@@ -200,6 +201,20 @@ def get_user_profile(user_id, db: Session) -> User:
     if user is None or user.status != "active":
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+def is_user_admin(user_id: UUID, db: Session) -> bool:
+    """Return whether an existing, active account has administrative access."""
+
+    try:
+        user = db.get(User, user_id)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    # An inactive account must not retain authorization in another service,
+    # even if its persisted role is still admin.
+    return bool(user and user.status == "active" and user.role == "admin")
 
 
 def deactivate_user(user: User, db: Session) -> User:
