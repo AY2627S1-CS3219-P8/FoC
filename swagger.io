@@ -256,6 +256,10 @@ paths:
           description: Bearer credentials are missing or invalid.
           schema:
             $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The account is the last active administrator and cannot be deactivated.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
         "503":
           description: Database is temporarily unavailable.
           schema:
@@ -275,6 +279,10 @@ paths:
             $ref: '#/definitions/UserResponse'
         "401":
           description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The account is the last active administrator and cannot be deactivated.
           schema:
             $ref: '#/definitions/ErrorResponse'
         "503":

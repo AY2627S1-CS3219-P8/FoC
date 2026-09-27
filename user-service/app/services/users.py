@@ -219,6 +219,24 @@ def is_user_admin(user_id: UUID, db: Session) -> bool:
     return bool(user and user.status == "active" and user.role == "admin")
 
 
+def _lock_active_admins(db: Session) -> list[UUID]:
+    """Lock active administrator rows in one stable order.
+
+    Account-management operations that can affect administrator state call
+    this first. Sharing the lock order prevents two concurrent operations from
+    acquiring administrator rows in opposite orders and deadlocking.
+    """
+
+    return list(
+        db.scalars(
+            select(User.id)
+            .where(User.role == "admin", User.status == "active")
+            .order_by(User.id)
+            .with_for_update()
+        ).all()
+    )
+
+
 def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """Suspend an account after authorizing the active administrator.
 
@@ -229,6 +247,7 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """
 
     try:
+        _lock_active_admins(db)
         actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
         if actor is None or actor.status != "active" or actor.role != "admin":
             raise HTTPException(status_code=403, detail="Admin privileges required")
@@ -272,6 +291,7 @@ def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """
 
     try:
+        _lock_active_admins(db)
         actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
         if actor is None or actor.status != "active" or actor.role != "admin":
             raise HTTPException(status_code=403, detail="Admin privileges required")
@@ -311,20 +331,31 @@ def deactivate_user(user: User, db: Session) -> User:
     """Deactivate an account while retaining its persisted profile record."""
 
     try:
-        db.refresh(user, with_for_update=True)
-        if user.status != "active":
+        # Lock active administrator rows before locking the account being
+        # deactivated. This serializes administrator deactivation decisions
+        # and uses the same lock order as other admin-state mutations.
+        active_admin_ids = _lock_active_admins(db)
+        locked_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
+
+        if locked_user is None or locked_user.status != "active":
             raise _authentication_error()
-        user.status = "deactivated"
-        revoke_user_sessions(db, user.id)
+        if locked_user.role == "admin" and len(active_admin_ids) <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot deactivate the last administrator",
+            )
+
+        locked_user.status = "deactivated"
+        revoke_user_sessions(db, locked_user.id)
         db.commit()
-        db.refresh(user)
+        db.refresh(locked_user)
     except HTTPException:
         db.rollback()
         raise
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
-    return user
+    return locked_user
 
 
 def reactivate_user(payload: UserLogin, db: Session) -> User:
