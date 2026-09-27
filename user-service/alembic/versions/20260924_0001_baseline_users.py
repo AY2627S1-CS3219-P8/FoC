@@ -35,6 +35,32 @@ def _check_constraint_matches(
     )
 
 
+def _column_type_matches(column, expected: str, length: int | None, dialect_name: str) -> bool:
+    """Match a legacy column type across the SQLite and PostgreSQL renderings."""
+
+    actual = column["type"]
+
+    if expected == "uuid":
+        if dialect_name == "sqlite":
+            return isinstance(actual, sa.CHAR) and actual.length == 32
+        return isinstance(actual, sa.Uuid)
+
+    if expected == "string":
+        return (
+            isinstance(actual, sa.String)
+            and not isinstance(actual, sa.Text)
+            and actual.length == length
+        )
+
+    if expected == "datetime":
+        if not isinstance(actual, sa.DateTime):
+            return False
+        # SQLite does not preserve timezone metadata in its DATETIME type.
+        return dialect_name == "sqlite" or actual.timezone is True
+
+    return False
+
+
 def _validate_existing_users_table(bind) -> None:
     """Reject an existing users table that is not the known legacy schema."""
 
@@ -61,6 +87,26 @@ def _validate_existing_users_table(bind) -> None:
         for name, nullable in expected_columns.items()
         if name in columns and columns[name]["nullable"] is not nullable
     )
+
+    expected_types = {
+        "id": ("uuid", None),
+        "nus_student_number": ("string", 9),
+        "email": ("string", 254),
+        "display_name": ("string", 100),
+        "password_hash": ("string", 254),
+        "role": ("string", 20),
+        "status": ("string", 20),
+        "created_at": ("datetime", None),
+        "updated_at": ("datetime", None),
+    }
+    for name, (expected, length) in expected_types.items():
+        if name in columns and not _column_type_matches(
+            columns[name], expected, length, bind.dialect.name
+        ):
+            expected_description = expected if length is None else f"{expected}({length})"
+            problems.append(
+                f"column {name!r} has unexpected type or length; expected {expected_description}"
+            )
 
     primary_key = inspector.get_pk_constraint("users")
     if primary_key.get("constrained_columns") != ["id"]:

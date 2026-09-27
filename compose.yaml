@@ -13,18 +13,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  user-migrate:
-    build: ./user-service
-    command: ["alembic", "upgrade", "head"]
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    depends_on:
-      user-db:
-        condition: service_healthy
-    restart: "no"
-
   user-service:
     build: ./user-service
     environment:
@@ -41,6 +29,23 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+
+  user-migrate:
+    build: ./user-service
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    depends_on:
+      user-db:
+        condition: service_healthy
+    restart: "no"
+
+  frontend-service:
+    build:
+      context: ./frontend-service
+    ports:
+      - "3000:3000"
 
 volumes:
   user-db-data:

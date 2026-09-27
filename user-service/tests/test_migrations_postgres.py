@@ -47,4 +47,4 @@ def test_fresh_postgres_database_reaches_migration_head():
         engine.dispose()
 
     assert {"users", "user_sessions", "alembic_version"} <= tables
-    assert version == "20260924_0002"
+    assert version == "20260926_0003"
