@@ -20,6 +20,8 @@ jobs:
   compose-validation:
     runs-on: ubuntu-latest
     env:
+      POSTGRES_USER: foc_ci
+      POSTGRES_PASSWORD: focCiPassword123
       SUPPLIER_POSTGRES_DB: supplier_ci
       SUPPLIER_POSTGRES_USER: supplier_ci
       SUPPLIER_POSTGRES_PASSWORD: supplierCiPassword123
