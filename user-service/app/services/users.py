@@ -1,5 +1,6 @@
 """Business logic for user registration, authentication, and profiles."""
 
+import logging
 import secrets
 from datetime import datetime, timezone
 from uuid import UUID
@@ -24,6 +25,7 @@ from app.schemas import LoginResponse, UserCreate, UserLogin, UserUpdate
 
 
 password_hasher = PasswordHasher()
+logger = logging.getLogger(__name__)
 
 # A valid Argon2id hash makes unknown-user attempts take the same verification
 # path as known-user attempts without storing or comparing a plaintext secret.
@@ -215,6 +217,50 @@ def is_user_admin(user_id: UUID, db: Session) -> bool:
     # An inactive account must not retain authorization in another service,
     # even if its persisted role is still admin.
     return bool(user and user.status == "active" and user.role == "admin")
+
+
+def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
+    """Suspend an account after authorizing the active administrator.
+
+    Authorization and the status change are performed in the same transaction
+    so callers cannot bypass the role check by invoking the service directly or
+    by racing an account-status change. All sessions belonging to the target
+    are revoked before the transaction commits.
+    """
+
+    try:
+        actor = db.scalar(select(User).where(User.id == actor_id).with_for_update())
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+
+        target = db.scalar(select(User).where(User.id == target_id).with_for_update())
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id != actor.id and target.role == "admin":
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot suspend another administrator",
+            )
+
+        target.status = "suspended"
+        revoke_user_sessions(db, target.id)
+        db.commit()
+        db.refresh(target)
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    logger.info(
+        "account_suspended",
+        extra={
+            "actor_user_id": str(actor.id),
+            "target_user_id": str(target.id),
+        },
+    )
+    return target
 
 
 def deactivate_user(user: User, db: Session) -> User:

@@ -282,6 +282,45 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
 
+  /admin/users/{user_id}/suspend:
+    post:
+      summary: Suspend a user account
+      description: An active administrator suspends an account and all sessions belonging to it. The target cannot log in or use existing sessions afterward.
+      operationId: suspendUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: User account suspended.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator or the target is another administrator.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /users/{user_id}:
     get:
       summary: Get another user's basic profile

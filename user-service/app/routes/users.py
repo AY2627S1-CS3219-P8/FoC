@@ -24,6 +24,7 @@ from app.services.users import (
     login_user,
     reactivate_user,
     register_user,
+    suspend_user,
     update_user_profile,
 )
 from app.services.profiles import own_profile_response
@@ -68,6 +69,17 @@ def get_current_user(auth: AuthContext = Depends(get_current_session)):
     """Return the authenticated user's profile."""
 
     return own_profile_response(auth.user)
+
+
+@router.post("/admin/users/{user_id}/suspend", response_model=UserResponse)
+def suspend_account(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Suspend a user account as an active administrator."""
+
+    return suspend_user(auth.user_id, user_id, db)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)
