@@ -8,8 +8,9 @@ Other services access supplier information through the API. They do not
 connect directly to the Supplier Service database.
 
 The current scaffold provides validated startup configuration, `GET /health`,
-and interactive API documentation. The supplier schema, business API and
-container deployment described below remain design targets.
+and interactive API documentation. The API and a persistent PostgreSQL/PostGIS
+database run through Docker Compose. The supplier schema and business API
+described below remain design targets.
 
 ## Local Development
 
@@ -48,8 +49,8 @@ services do not need to be running for the health check.
 Settings are validated during application startup. Missing required values
 or invalid values prevent startup. The root `.env.example` documents example
 values; copying it to `.env` does not automatically load it into this
-application. Export variables explicitly for local runs. Future Compose
-configuration must pass them into the container explicitly. Keep real
+application. Export variables explicitly for local runs. Compose reads the
+root `.env` and passes settings into the containers explicitly. Keep real
 credentials out of committed files.
 
 Start the API using the virtual environment's Python to avoid accidentally
@@ -75,6 +76,112 @@ Tests use explicit dummy settings or temporary environment variables and
 require no running database or User Service. They cover the health response,
 configuration defaults and validation, and rejection of invalid configuration
 at application startup.
+
+## Docker Compose
+
+Run these commands from the repository root. Docker must be running with
+Linux container support. Stop any local Uvicorn process using port 8081
+before starting the API container.
+
+### Configuration
+
+If a root `.env` does not already exist, copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Set these database initialization values in `.env`:
+
+- `SUPPLIER_POSTGRES_DB`, for example `supplier_db`.
+- `SUPPLIER_POSTGRES_USER`, for example `supplier_admin`.
+- `SUPPLIER_POSTGRES_PASSWORD`, using a local development password.
+
+Keep real credentials in the ignored `.env` file. Compose constructs the
+database URL from these values; use letters and numbers for the local
+password to avoid characters requiring URL encoding. The bootstrap database
+account is used temporarily; a separate application role comes later.
+
+Compose reads `.env` for variable substitution and explicitly passes
+settings into the containers. VS Code terminal environment injection is
+not required. Existing shell variables take precedence over `.env` values.
+`AUTH_TIMEOUT_SECONDS` defaults to `3` and `LOG_LEVEL` defaults to `INFO`
+when unset or empty in the Compose environment.
+
+### Build and start
+
+```bash
+docker compose config --quiet
+docker compose build supplier-db supplier-service
+docker compose up -d supplier-db supplier-service
+docker compose ps supplier-db supplier-service
+```
+
+The API starts after the database health check succeeds. Both containers
+should eventually report healthy. These commands start only the supplier
+containers; the scaffold does not yet require User Service to be running.
+
+Open these addresses:
+
+- Health: <http://127.0.0.1:8081/health>
+- API documentation: <http://127.0.0.1:8081/docs>
+
+The health endpoint returns HTTP 200 with `{"status":"healthy"}`.
+It checks API liveness, not database connectivity. To inspect the response,
+logs, or API runtime user:
+
+```bash
+curl -i http://127.0.0.1:8081/health
+docker compose logs --tail=80 supplier-db supplier-service
+docker compose exec supplier-service id
+```
+
+The API runs as UID 10001 (`supplier`).
+
+### Networking and storage
+
+The API joins the shared application network and the private supplier
+network. The database joins only the private supplier network and has no
+published host port. A `5432/tcp` entry in `docker compose ps` is not a host
+port mapping. The API publishes only `127.0.0.1:8081`.
+
+Inside the API container, the database address is `supplier-db:5432` and
+the User Service address is `http://user-service:8080`. These names refer
+to Compose services; `localhost` refers to the current container.
+
+The named volume `supplier-db-data`, mounted at `/var/lib/postgresql/data`,
+preserves database files when the database container is recreated. Compose
+normally prefixes the volume name with the project name. Removing this
+volume deletes the stored database contents.
+
+Database initialization credentials apply when the data directory is
+first created. Editing the password in `.env` afterward does not change
+the existing PostgreSQL account password; change the account password in
+PostgreSQL and update the corresponding configuration together.
+
+To stop the supplier containers while retaining their data:
+
+```bash
+docker compose stop supplier-service supplier-db
+```
+
+### Implementation status
+
+The database image extends PostgreSQL 16 with PostGIS packages. Its base
+image is pinned to a multi-platform index digest supporting AMD64 and
+ARM64. Compose builds for the host architecture without forcing AMD64
+emulation. PostGIS packages installed through apt are not version-pinned,
+so pinning the base image alone does not make the whole build immutable.
+
+Local Apple Silicon checks have confirmed container health, the API
+response, non-root API execution, PostGIS availability, and persistence
+across database container recreation. The PostgreSQL cluster identifier
+remained unchanged after recreation. Native AMD64 execution still needs
+verification.
+
+PostGIS is available but is not yet enabled in the supplier database.
+A later migration will enable it and create the supplier schema. The API
+does not yet connect to PostgreSQL or authenticate through User Service.
 
 ## Initial Scope
 
