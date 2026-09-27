@@ -259,6 +259,18 @@ def is_user_admin(user_id: UUID, db: Session) -> bool:
     return bool(user and user.status == "active" and user.role == "admin")
 
 
+def get_user_status(user_id: UUID, db: Session) -> str:
+    """Return an account status without disclosing whether a user exists."""
+
+    try:
+        user = db.get(User, user_id)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    return user.status if user else "unknown"
+
+
 def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """Suspend an account after authorizing the active administrator.
 

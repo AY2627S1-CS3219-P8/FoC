@@ -14,11 +14,13 @@ from app.schemas import (
     UserCreate,
     UserLogin,
     UserResponse,
+    UserStatusResponse,
     UserUpdate,
 )
 from app.service_auth import require_internal_service
 from app.services.users import (
     deactivate_user,
+    get_user_status,
     get_user_profile,
     is_user_admin,
     login_user,
@@ -44,6 +46,17 @@ def check_user_admin(
     """Return an active user's admin status to a trusted internal service."""
 
     return AdminCheckResponse(is_admin=is_user_admin(user_id, db))
+
+
+@router.get("/internal/users/{user_id}/status", response_model=UserStatusResponse)
+def check_user_status(
+    user_id: UUID,
+    _: None = Depends(require_internal_service),
+    db: Session = Depends(get_db),
+):
+    """Return an account's status to a trusted internal service."""
+
+    return UserStatusResponse(status=get_user_status(user_id, db))
 
 
 @router.post("/login", response_model=LoginResponse)

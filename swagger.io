@@ -82,6 +82,37 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
 
+  /internal/users/{user_id}/status:
+    get:
+      summary: Check a user's account status
+      description: Internal endpoint for trusted services. It returns active, deactivated, suspended, or unknown for a missing account. Consumers that only need access authorization should treat only active as allowed.
+      operationId: checkUserStatus
+      security:
+        - internalServiceAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Account status result.
+          schema:
+            $ref: '#/definitions/UserStatusResponse'
+        "401":
+          description: Internal service credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Internal authorization is not configured or the database is unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /users:
     post:
       summary: Register a user account
@@ -754,6 +785,20 @@ definitions:
       is_admin:
         type: boolean
         description: True only when the account exists, is active, and has role admin.
+
+  UserStatusResponse:
+    type: object
+    required:
+      - status
+    properties:
+      status:
+        type: string
+        enum:
+          - active
+          - deactivated
+          - suspended
+          - unknown
+        description: Account status. Unknown represents a missing user and avoids disclosing account existence.
 
   LoginResponse:
     type: object

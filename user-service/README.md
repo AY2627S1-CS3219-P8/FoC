@@ -177,6 +177,20 @@ Requests require the shared `USER_SERVICE_INTERNAL_TOKEN` configured for the
 User Service and trusted callers. Keep this token in deployment secrets and
 never forward it to clients.
 
+Trusted services can also check the lifecycle state of a user:
+
+```bash
+curl http://user-service:8080/internal/users/<user-id>/status \
+  -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
+```
+
+The response is `{"status":"active"}`, `{"status":"deactivated"}`,
+`{"status":"suspended"}`, or `{"status":"unknown"}` for a missing user.
+Services that only need to authorize access should treat only `active` as
+allowed. The exact status is useful when a consuming service needs different
+messaging, workflow, or audit behavior for self-deactivation versus
+administrator suspension.
+
 ## Local development
 
 The service is containerized from this directory. Once the application entry

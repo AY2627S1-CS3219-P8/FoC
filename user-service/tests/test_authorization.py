@@ -114,6 +114,39 @@ def test_internal_check_returns_false_for_regular_or_unknown_users(client, datab
     assert unknown_response.json() == {"is_admin": False}
 
 
+@pytest.mark.parametrize("account_status", ["active", "deactivated", "suspended"])
+def test_internal_status_check_returns_persisted_account_status(
+    client, database, account_status
+):
+    """Trusted services receive the exact persisted lifecycle status."""
+
+    user = create_user(database)
+    user.status = account_status
+    database.commit()
+
+    response = client.get(
+        f"/internal/users/{user.id}/status",
+        headers={"X-Internal-Service-Token": INTERNAL_TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": account_status}
+
+
+def test_internal_status_check_returns_unknown_without_disclosing_existence(
+    client, database
+):
+    """Missing users receive the same successful response shape as status checks."""
+
+    response = client.get(
+        f"/internal/users/{uuid4()}/status",
+        headers={"X-Internal-Service-Token": INTERNAL_TOKEN},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "unknown"}
+
+
 @pytest.mark.parametrize(
     "headers",
     [{}, {"X-Internal-Service-Token": "wrong-token"}],
@@ -123,6 +156,20 @@ def test_internal_check_requires_the_service_token(client, database, headers):
 
     user = create_user(database)
     response = client.get(f"/internal/users/{user.id}/admin", headers=headers)
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid internal service credentials"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"X-Internal-Service-Token": "wrong-token"}],
+)
+def test_internal_status_check_requires_the_service_token(client, database, headers):
+    """Status checks are restricted to trusted internal callers."""
+
+    user = create_user(database)
+    response = client.get(f"/internal/users/{user.id}/status", headers=headers)
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid internal service credentials"
