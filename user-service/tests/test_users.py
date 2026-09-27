@@ -65,11 +65,6 @@ class FakeLoginSession:
         self.session = None
         self.rollback_called = False
 
-    def execute(self, _statement):
-        """Simulate a successful session cleanup query."""
-
-        return type("FakeResult", (), {"rowcount": 0})()
-
     def scalar(self, _query):
         """Return the configured user lookup result."""
 
@@ -215,7 +210,15 @@ def test_register_user_normalizes_fields_and_applies_defaults():
 
 @pytest.mark.parametrize(
     "student_number",
-    ["123456789", "A12345678", "A1234567", "A1234567!", "B1234567X", "!!!!!!!!!"],
+    [
+        "123456789",
+        "A12345678",
+        "A1234567",
+        "A1234567!",
+        "B1234567X",
+        "A１２３４５６７X",
+        "!!!!!!!!!",
+    ],
 )
 def test_user_create_rejects_invalid_student_number_formats(student_number):
     """Registration accepts only the expected NUS student number shape."""
@@ -234,13 +237,20 @@ def test_user_create_normalizes_student_number_case():
 
 @pytest.mark.parametrize(
     "password",
-    ["password", "Password1", "Password!", "12345678!"],
+    ["password", "Password1", "Password!", "12345678!", "Password١!"],
 )
 def test_user_create_rejects_passwords_that_do_not_meet_policy(password):
     """Passwords must contain letters, numbers, and special characters."""
 
     with pytest.raises(ValidationError, match="password must contain"):
         make_payload(password=password)
+
+
+def test_user_login_rejects_non_ascii_student_number_digits():
+    """Login accepts only ASCII digits in student numbers."""
+
+    with pytest.raises(ValidationError):
+        UserLogin(nus_student_number="A１２３４５６７X", password="Password1!")
 
 
 @pytest.mark.parametrize("email", ["not-an-email", "student@", "@example.com"])
@@ -333,6 +343,7 @@ def test_user_model_protects_required_fields_and_account_defaults():
     assert str(columns.role.server_default.arg) == "user"
     assert str(columns.status.server_default.arg) == "active"
     constraint_names = {constraint.name for constraint in User.__table__.constraints}
+    assert "ck_users_nus_student_number_length" in constraint_names
     assert "ck_users_role" in constraint_names
     assert "ck_users_status" in constraint_names
 

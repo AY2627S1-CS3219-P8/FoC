@@ -6,7 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./user-service.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL must be set before starting the User Service")
 
 engine_kwargs = {"pool_pre_ping": True}
 if DATABASE_URL.startswith("sqlite"):

@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.auth import SESSION_CLEANUP_INTERVAL, cleanup_sessions
-from app.db import Base, SessionLocal, engine, get_db
+from app.db import SessionLocal, get_db
 from app.routes.users import router as users_router
 
 
@@ -41,9 +41,8 @@ async def session_cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Create the database tables when the application starts."""
+    """Run background maintenance while the application is serving requests."""
 
-    Base.metadata.create_all(bind=engine)
     cleanup_task = asyncio.create_task(session_cleanup_loop())
     try:
         yield
