@@ -17,6 +17,9 @@ permissions:
 jobs:
   user-service:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: foc_ci
+      POSTGRES_PASSWORD: "foc_ci:p@ss#with$special/slash?"
 
     steps:
       - name: Check out repository
