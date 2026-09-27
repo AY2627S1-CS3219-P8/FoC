@@ -237,6 +237,14 @@ TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/foc_users_te
   python -m pytest -q tests/test_migrations_postgres.py
 ```
 
+The administrator-state concurrency tests use the same disposable PostgreSQL
+database and separate connections for each worker:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/foc_users_test \
+  python -m pytest -q tests/test_concurrency_postgres.py
+```
+
 CI runs this smoke test against a temporary PostgreSQL service. Do not point
 it at a development or production database.
 
