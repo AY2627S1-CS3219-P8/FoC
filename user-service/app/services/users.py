@@ -328,6 +328,75 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
     return target
 
 
+def unsuspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
+    """Restore another suspended account to active status.
+
+    Restoring a suspended administrator changes the active-admin set, so that
+    case acquires the administrator-state lock before locking user rows.
+    Existing sessions are revoked so the restored account must authenticate
+    again after suspension.
+    """
+
+    try:
+        actor = _load_user(actor_id, db)
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+
+        target = _load_user(target_id, db)
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot unsuspend their own account",
+            )
+        if target.status != "suspended":
+            raise HTTPException(status_code=409, detail="User is not suspended")
+
+        admin_state_locked = target.role == "admin"
+        if admin_state_locked:
+            _lock_admin_state(db)
+
+        actor = _load_user(actor_id, db, lock=True)
+        target = _load_user(target_id, db, lock=True)
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot unsuspend their own account",
+            )
+        if target.status != "suspended":
+            raise HTTPException(status_code=409, detail="User is not suspended")
+        if target.role == "admin" and not admin_state_locked:
+            raise HTTPException(
+                status_code=503,
+                detail="Account state changed; please retry the request",
+            )
+
+        target.status = "active"
+        revoke_user_sessions(db, target.id)
+        db.commit()
+        db.refresh(target)
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    logger.info(
+        "account_unsuspended",
+        extra={
+            "actor_user_id": str(actor.id),
+            "target_user_id": str(target.id),
+        },
+    )
+    return target
+
+
 def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
     """Remove administrator rights from another administrator account.
 

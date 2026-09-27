@@ -372,6 +372,49 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
 
+  /admin/users/{user_id}/unsuspend:
+    post:
+      summary: Unsuspend a user account
+      description: An active administrator restores another suspended account to active status. The target must authenticate again after restoration because existing sessions are revoked.
+      operationId: unsuspendUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: User account restored to active status.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator or is attempting to unsuspend their own account.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The target user is not suspended.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database or administrator-state locking is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /users/{user_id}:
     get:
       summary: Get another user's basic profile

@@ -218,6 +218,123 @@ def test_admin_cannot_suspend_own_account(client, database):
     ).status_code == 200
 
 
+def test_admin_can_unsuspend_user_and_revoke_stale_sessions(client, database):
+    """Unsuspension restores access but requires a fresh login."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Student",
+    )
+    database.commit()
+
+    target_token = login(client, target.nus_student_number)
+    target.status = "suspended"
+    database.commit()
+    admin_token = login(client, admin.nus_student_number)
+
+    response = client.post(
+        f"/admin/users/{target.id}/unsuspend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+    database.refresh(target)
+    assert target.status == "active"
+    session = database.scalar(
+        select(UserSession).where(UserSession.token_hash == hash_session_token(target_token))
+    )
+    assert session.revoked_at is not None
+    assert client.get(
+        "/users/me", headers={"Authorization": f"Bearer {target_token}"}
+    ).status_code == 401
+    assert client.post(
+        "/login",
+        json={
+            "nus_student_number": target.nus_student_number,
+            "password": "Password1!",
+        },
+    ).status_code == 200
+
+
+def test_admin_can_unsuspend_another_suspended_admin(client, database):
+    """Restoring a suspended admin preserves the administrator role."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Admin",
+    )
+    target.role = "admin"
+    target.status = "suspended"
+    database.commit()
+    admin_token = login(client, admin.nus_student_number)
+
+    response = client.post(
+        f"/admin/users/{target.id}/unsuspend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "active"
+    assert response.json()["role"] == "admin"
+    database.refresh(target)
+    assert target.status == "active"
+    assert target.role == "admin"
+
+
+def test_admin_cannot_unsuspend_own_account(client, database):
+    """An administrator cannot target their own account for unsuspension."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    database.commit()
+    admin_token = login(client, admin.nus_student_number)
+
+    response = client.post(
+        f"/admin/users/{admin.id}/unsuspend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Administrators cannot unsuspend their own account"
+    }
+    database.refresh(admin)
+    assert admin.status == "active"
+    assert admin.role == "admin"
+
+
+def test_unsuspend_requires_a_suspended_target(client, database):
+    """Unsuspension rejects an account that is not suspended."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Student",
+    )
+    database.commit()
+    admin_token = login(client, admin.nus_student_number)
+
+    response = client.post(
+        f"/admin/users/{target.id}/unsuspend",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "User is not suspended"}
+
+
 def test_admin_can_revoke_another_admin_rights(client, database):
     """Revoking rights demotes the target without invalidating their session."""
 
