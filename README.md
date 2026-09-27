@@ -12,13 +12,13 @@ withdrawn, or exchanged for money, and only circulate within the platform.
 
 ## Team Members
 
-| Name | Role |
-| ----- | ----- |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
-| Your Name | Your ownership |
+| Name        | Role             |
+| ----------- | ---------------- |
+| Swee Kah Ho | Frontend Service |
+| Your Name   | Your ownership   |
+| Your Name   | Your ownership   |
+| Your Name   | Your ownership   |
+| Your Name   | Your ownership   |
 
 ---
 
@@ -44,5 +44,29 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
 - Files for agentic coding tools (e.g. agent configs, prompts, skills)
   may be added as needed, but must still **respect the
   one-service-per-folder skeleton** for core implementation.
+
+---
+
+## Running Locally with Docker Compose
+
+Services can be run via the root [`compose.yaml`](./compose.yaml).
+
+Start the services:
+
+```bash
+docker compose up
+```
+
+Rebuild after making changes:
+
+```bash
+docker compose up --build
+```
+
+Stop and remove the containers:
+
+```bash
+docker compose down
+```
 
 ---

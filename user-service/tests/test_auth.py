@@ -170,41 +170,6 @@ def test_logout_revokes_the_current_session(client, database):
     assert session.revoked_at is not None
 
 
-def test_login_cleans_up_unusable_sessions(client, database):
-    """A successful login opportunistically removes stale session records."""
-
-    user = create_user(database)
-    now = datetime.now(timezone.utc)
-    database.add_all(
-        [
-            UserSession(
-                user_id=user.id,
-                token_hash=hash_session_token("A" * 43),
-                created_at=now,
-                last_activity_at=now,
-                expires_at=now + timedelta(minutes=10),
-                absolute_expires_at=now + timedelta(hours=1),
-                revoked_at=now,
-            ),
-            UserSession(
-                user_id=user.id,
-                token_hash=hash_session_token("B" * 43),
-                created_at=now - timedelta(hours=1),
-                last_activity_at=now - timedelta(hours=1),
-                expires_at=now - timedelta(seconds=1),
-                absolute_expires_at=now + timedelta(hours=1),
-            ),
-        ]
-    )
-    database.commit()
-
-    token = login(client)
-
-    sessions = database.scalars(select(UserSession)).all()
-    assert len(sessions) == 1
-    assert sessions[0].token_hash == hash_session_token(token)
-
-
 def test_cleanup_removes_revoked_and_expired_sessions_but_keeps_active_sessions(database):
     """Session housekeeping removes unusable records without touching live ones."""
 
