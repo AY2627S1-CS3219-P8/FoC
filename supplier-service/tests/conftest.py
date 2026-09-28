@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        database_url="postgresql://test_user:test_password@localhost:5432/test_supplier",      # A valid dummy PostgreSQL URL
+        database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",      # A valid dummy PostgreSQL URL
         user_service_url="http://localhost:8000",                                              # A valid dummy HTTP URL
         auth_timeout_seconds=5,                                                                # A positive, finite number
         log_level="INFO",                                                                      # One of the allowed log levels

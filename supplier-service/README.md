@@ -7,10 +7,15 @@ exposes an API for browsing and managing that information.
 Other services access supplier information through the API. They do not
 connect directly to the Supplier Service database.
 
-The current scaffold provides validated startup configuration, `GET /health`,
-and interactive API documentation. The API and a persistent PostgreSQL/PostGIS
-database run through Docker Compose. The supplier schema and business API
-described below remain design targets.
+The service provides validated startup configuration, `GET /health`,
+interactive API documentation, and SQLAlchemy models for `supplier`,
+`category`, and `supplier_category`. Application startup initializes a
+database engine and session factory, and shutdown disposes of the engine.
+Request-scoped sessions are closed without automatically committing;
+service functions will own transaction boundaries.
+
+The API and a persistent PostgreSQL/PostGIS database run through Docker
+Compose. Database migrations and the supplier business API remain future work.
 
 ## Local Development
 
@@ -29,7 +34,7 @@ untracked; each developer creates their own environment.
 Set configuration in the terminal where you will start the server:
 
 ```bash
-export DATABASE_URL='postgresql://test_user:test_password@localhost:5432/test_supplier'
+export DATABASE_URL='postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier'
 export USER_SERVICE_URL='http://localhost:8000'
 export AUTH_TIMEOUT_SECONDS='3'
 export LOG_LEVEL='INFO'
@@ -41,7 +46,7 @@ services do not need to be running for the health check.
 
 | Variable | Requirement |
 | --- | --- |
-| `DATABASE_URL` | Required PostgreSQL connection URL |
+| `DATABASE_URL` | Required PostgreSQL connection URL using `postgresql+psycopg` |
 | `USER_SERVICE_URL` | Required HTTP or HTTPS base URL for User Service |
 | `AUTH_TIMEOUT_SECONDS` | Positive, finite number; defaults to `3.0` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`; defaults to `INFO` |
@@ -72,10 +77,31 @@ Run the tests from `supplier-service/`:
 ./.venv/bin/python -m pytest -q
 ```
 
-Tests use explicit dummy settings or temporary environment variables and
-require no running database or User Service. They cover the health response,
-configuration defaults and validation, and rejection of invalid configuration
-at application startup.
+Current unit and API tests use explicit dummy settings or temporary
+environment variables and require no running database or User Service.
+They cover the health response, configuration defaults and validation,
+the required Psycopg driver scheme, rejection of invalid startup
+configuration, and database engine initialization and disposal.
+
+### Integration-test database configuration
+
+Future database integration tests use `TEST_DATABASE_URL`, which must
+be configured explicitly. The fixtures never fall back to `DATABASE_URL`.
+
+The test URL must:
+
+- Use `postgresql+psycopg`.
+- Specify a database name ending in `_test`.
+- Use a different database name from `DATABASE_URL`, when that variable is set.
+
+These checks guard against accidental development-database use. Configure
+the URL to point to a separate database reserved for tests.
+
+The fixtures currently validate configuration and manage a test engine.
+They do not provision a database, create tables, or apply migrations.
+Migration-based integration tests will be added with the migration setup.
+
+Current unit and API tests do not require `TEST_DATABASE_URL`.
 
 ## Docker Compose
 
