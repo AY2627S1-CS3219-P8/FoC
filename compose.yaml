@@ -13,6 +13,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+      
   user-service:
     build: ./user-service
     environment:
