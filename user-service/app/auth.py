@@ -4,10 +4,11 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -49,12 +50,30 @@ def cleanup_sessions(db: Session, now: datetime | None = None) -> int:
     return result.rowcount or 0
 
 
+def revoke_user_sessions(
+    db: Session, user_id: UUID, now: datetime | None = None
+) -> int:
+    """Revoke every active session for a user within the caller's transaction."""
+
+    revoked_at = now or datetime.now(timezone.utc)
+    result = db.execute(
+        update(UserSession)
+        .where(
+            UserSession.user_id == user_id,
+            UserSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=revoked_at)
+    )
+    return result.rowcount or 0
+
+
 @dataclass(frozen=True)
 class AuthContext:
     """The authenticated user and the session used for the current request."""
 
     user: User
     session: UserSession
+    user_id: UUID
 
 
 def _authentication_error() -> HTTPException:
@@ -111,6 +130,7 @@ def get_current_session(
         user = db.get(User, session.user_id)
         if user is None or user.status != "active":
             raise _authentication_error()
+        user_id = user.id
 
         session.last_activity_at = now
         session.expires_at = min(now + SESSION_INACTIVITY, _utc(session.absolute_expires_at))
@@ -124,7 +144,7 @@ def get_current_session(
             detail="Authentication temporarily unavailable",
         ) from exc
 
-    return AuthContext(user=user, session=session)
+    return AuthContext(user=user, session=session, user_id=user_id)
 
 
 def revoke_session(context: AuthContext, db: Session) -> None:
