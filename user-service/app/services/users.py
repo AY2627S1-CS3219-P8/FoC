@@ -90,7 +90,6 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
     )
 
     try:
-        cleanup_sessions(db, now=now)
         db.add(session)
         db.commit()
     except IntegrityError as exc:
