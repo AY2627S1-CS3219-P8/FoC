@@ -15,6 +15,8 @@ RUN useradd --create-home --uid 10001 supplier
 
 # Replace your existing application COPY with one that sets ownership.
 COPY --chown=supplier:supplier app ./app
+COPY --chown=supplier:supplier alembic.ini ./
+COPY --chown=supplier:supplier migrations ./migrations
 
 # Switch subsequent instructions to the runtime user
 USER supplier

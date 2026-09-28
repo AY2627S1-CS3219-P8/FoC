@@ -1,9 +1,9 @@
 from datetime import datetime, time
 from uuid import UUID, uuid4
 
-from geoalchemy2 import Geography, Geometry
+from geoalchemy2 import Geography
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import cast, CheckConstraint, Column, DateTime, ForeignKey, func, Index, Integer, SmallInteger, Table, Text, Time
+from sqlalchemy import literal_column, CheckConstraint, Column, DateTime, ForeignKey, func, Index, Integer, SmallInteger, Table, Text, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -149,8 +149,8 @@ Index(
 Index(
     "uq_supplier_active_name_location",
     func.lower(func.btrim(Supplier.name)),  # normalize by trimming then lowercasing
-    func.ST_X(cast(Supplier.location, Geometry)),   # extract longitude
-    func.ST_Y(cast(Supplier.location, Geometry)),   # extract latitude
+    func.ST_X(literal_column("location::geometry")),   # extract longitude
+    func.ST_Y(literal_column("location::geometry")),   # extract latitude
     unique=True,    # require uniqueness
     postgresql_where=Supplier.deleted_at.is_(None), # don't include deleted suppliers
 )

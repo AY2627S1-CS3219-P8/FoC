@@ -15,7 +15,9 @@ Request-scoped sessions are closed without automatically committing;
 service functions will own transaction boundaries.
 
 The API and a persistent PostgreSQL/PostGIS database run through Docker
-Compose. Database migrations and the supplier business API remain future work.
+Compose. Alembic migrations create the schema and four controlled categories.
+See [schema operations](docs/migrations.md) for bootstrap, role separation,
+migration commands, and integration tests. The supplier business API remains future work.
 
 ## Local Development
 
@@ -85,7 +87,7 @@ configuration, and database engine initialization and disposal.
 
 ### Integration-test database configuration
 
-Future database integration tests use `TEST_DATABASE_URL`, which must
+Database integration tests use `TEST_DATABASE_URL`, which must
 be configured explicitly. The fixtures never fall back to `DATABASE_URL`.
 
 The test URL must:
@@ -97,9 +99,9 @@ The test URL must:
 These checks guard against accidental development-database use. Configure
 the URL to point to a separate database reserved for tests.
 
-The fixtures currently validate configuration and manage a test engine.
-They do not provision a database, create tables, or apply migrations.
-Migration-based integration tests will be added with the migration setup.
+Fixtures validate configuration and apply Alembic migrations to the explicitly
+configured test database. See [schema operations](docs/migrations.md) for
+disposable database setup and optional privilege/lifecycle checks.
 
 Current unit and API tests do not require `TEST_DATABASE_URL`.
 
@@ -126,7 +128,9 @@ Set these database initialization values in `.env`:
 Keep real credentials in the ignored `.env` file. Compose constructs the
 database URL from these values; use letters and numbers for the local
 password to avoid characters requiring URL encoding. The bootstrap database
-account is used temporarily; a separate application role comes later.
+account is reserved for bootstrap. Configure `SUPPLIER_MIGRATION_PASSWORD` and
+`SUPPLIER_RUNTIME_PASSWORD`, then follow [schema operations](docs/migrations.md)
+before starting the API with its restricted runtime role.
 
 Compose reads `.env` for variable substitution and explicitly passes
 settings into the containers. VS Code terminal environment injection is
@@ -205,9 +209,9 @@ across database container recreation. The PostgreSQL cluster identifier
 remained unchanged after recreation. Native AMD64 execution still needs
 verification.
 
-PostGIS is available but is not yet enabled in the supplier database.
-A later migration will enable it and create the supplier schema. The API
-does not yet connect to PostgreSQL or authenticate through User Service.
+The administrator bootstrap enables PostGIS; migrations create the schema.
+The API initializes its database engine but does not yet authenticate through
+User Service or gate readiness on the installed migration revision.
 
 ## Initial Scope
 
