@@ -4,6 +4,11 @@ Revision ID: ${up_revision}
 Revises: ${down_revision | comma,n}
 Create Date: ${create_date}
 """
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Boilerplate generation — provide revision structure and fail-fast operation placeholders.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../ai/usage-log.md; ai-20260929-001
 
 from typing import Sequence, Union
 

@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Debugging assistance; Refactoring and documentation improvements — identify metadata drift and align coordinate-index expressions with the migration.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../ai/usage-log.md; ai-20260929-001
+
 from datetime import datetime, time
 from uuid import UUID, uuid4
 

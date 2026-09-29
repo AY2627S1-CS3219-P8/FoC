@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Learning support; Boilerplate generation; Writing implementation code — configure isolated Alembic fixtures and per-test transaction rollback.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../../ai/usage-log.md; ai-20260929-001
+
 import os
 from collections.abc import Iterator
 from pathlib import Path

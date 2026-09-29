@@ -1,3 +1,10 @@
+<!-- AI Assistance Disclosure:
+Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+Scope: Documentation — describe database migration, role setup, and observed verification.
+Author review: Keith confirmed review of all affected changes.
+Details: ai/usage-log.md; ai-20260929-001
+-->
+
 # Supplier Service
 
 The Supplier Service maintains the campus stores, facilities and locations
@@ -813,3 +820,21 @@ record the audit entry and finalize the request in one transaction.
 
 The approval workflow should reuse the same validation and mutation logic
 as direct administrator CRUD.
+
+## AI Use Summary (Supplier Service)
+
+Codex (GPT-6) provided **Requirements work**, **Learning support**,
+**Boilerplate generation**, **Writing implementation code**, **Debugging
+assistance**, and **Refactoring and documentation improvements** for database
+migrations, role access, service image setup, and integration checks, including
+Supplier-related changes to root `.env.example`, `compose.yaml`, and `README.md`. The
+coordinate-index expression was aligned after Alembic detected metadata drift.
+
+Observed verification: 54 tests passed against disposable PostGIS, including
+runtime-role and isolated downgrade/re-upgrade checks; Alembic found no drift;
+the service image built and reported revision `0002` as head. Keith confirmed
+review of all affected changes.
+
+See the [canonical Supplier Service usage record](ai/usage-log.md#ai-20260929-001).
+Some prompt excerpts are redacted at the user's request; original
+per-message timestamps are unavailable. No file header exceptions apply.

@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Requirements work; Learning support; Writing implementation code — create PostGIS tables, constraints, indexes, and downgrade behavior from the agreed schema requirements.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../../ai/usage-log.md; ai-20260929-001
+
 from alembic import op
 import sqlalchemy as sa
 from geoalchemy2 import Geography

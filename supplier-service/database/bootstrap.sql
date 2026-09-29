@@ -1,3 +1,9 @@
+-- AI Assistance Disclosure:
+-- Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+-- Scope: Writing implementation code — provision PostGIS and migration/runtime roles with separated schema privileges.
+-- Author review: Keith confirmed review of all affected changes.
+-- Details: ../ai/usage-log.md; ai-20260929-001
+
 -- Run as the database administrator against the supplier database only.
 -- Passwords are read from the psql process environment, never committed.
 \set ON_ERROR_STOP on

@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Boilerplate generation — configure the Supplier API connection to use its restricted runtime database role.
+# Author review: Keith confirmed review of all affected changes.
+# Details: supplier-service/ai/usage-log.md; ai-20260929-001
+
 services:
   user-db:
     image: postgres:16-alpine

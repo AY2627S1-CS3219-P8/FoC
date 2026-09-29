@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Boilerplate generation — package Alembic configuration and revisions in the service image.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ai/usage-log.md; ai-20260929-001
+
 # Use the Python version chosen for the service
 FROM python:3.12-slim
 

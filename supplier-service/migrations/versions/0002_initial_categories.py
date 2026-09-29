@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Writing implementation code — insert controlled categories with permanent UUIDs and guarded downgrade behavior.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../../ai/usage-log.md; ai-20260929-001
+
 """Seed the controlled categories with permanent, once-generated UUIDs."""
 
 from uuid import UUID

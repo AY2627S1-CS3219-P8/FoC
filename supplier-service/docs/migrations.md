@@ -1,3 +1,10 @@
+<!-- AI Assistance Disclosure:
+Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+Scope: Refactoring and documentation improvements — write database setup, role, migration, and isolated verification instructions.
+Author review: Keith confirmed review of all affected changes.
+Details: ../ai/usage-log.md; ai-20260929-001
+-->
+
 # Supplier schema operations
 
 Revision `0001` creates the schema; `0002` inserts Food, Coffee, Shopping and

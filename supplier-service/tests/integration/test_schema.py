@@ -1,3 +1,9 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Scope: Learning support; Writing implementation code; Debugging assistance — test schema rules, indexes, category data, concurrency, role permissions, drift, and downgrade/re-upgrade behavior.
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../../ai/usage-log.md; ai-20260929-001
+
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import time
