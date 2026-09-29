@@ -8,6 +8,22 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
+_DISPLAY_NAME_PATTERN = re.compile(r"[A-Za-z]+(?: [A-Za-z]+)*")
+
+
+def _normalize_display_name(value: object) -> str:
+    """Normalize a display name and reject unsupported characters."""
+
+    if not isinstance(value, str):
+        raise ValueError("must be a string")
+    value = value.strip()
+    if not value:
+        raise ValueError("must not be blank")
+    if not _DISPLAY_NAME_PATTERN.fullmatch(value):
+        raise ValueError("display_name contains unsupported characters")
+    return value
+
+
 class UserCreate(BaseModel):
     """Validate the fields required to register a new user."""
 
@@ -29,6 +45,13 @@ class UserCreate(BaseModel):
         if not value:
             raise ValueError("must not be blank")
         return value
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def validate_display_name(cls, value: object) -> str:
+        """Normalize and validate the registration display name."""
+
+        return _normalize_display_name(value)
 
     @field_validator("nus_student_number")
     @classmethod
@@ -73,6 +96,50 @@ class UserLogin(BaseModel):
         return value
 
 
+class UserUpdate(BaseModel):
+    """Validate mutable fields accepted by a profile update."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    password: str | None = Field(default=None, min_length=8, max_length=100)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value: object) -> object:
+        """Trim and lowercase email addresses before validation and storage."""
+
+        if value is None:
+            raise ValueError("must be a string")
+        if not isinstance(value, str):
+            raise ValueError("must be a string")
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value.lower()
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def normalize_display_name(cls, value: object) -> str:
+        """Normalize and validate the profile display name."""
+
+        return _normalize_display_name(value)
+
+    @field_validator("password", mode="before")
+    @classmethod
+    def password_policy(cls, value: object) -> str:
+        """Apply the same password policy used during registration."""
+
+        if value is None or not isinstance(value, str):
+            raise ValueError("must be a string")
+        if not re.search(r"[A-Za-z]", value) or not re.search(
+            r"\d", value
+        ) or not re.search(r"[^A-Za-z0-9]", value):
+            raise ValueError("password must contain a letter, number, and special character")
+        return value
+
+
 class UserResponse(BaseModel):
     """Public representation of a user account without authentication data."""
 
@@ -86,6 +153,14 @@ class UserResponse(BaseModel):
     status: str
     created_at: datetime
     updated_at: datetime
+
+
+class BasicProfileResponse(BaseModel):
+    """Minimal profile representation visible to another authenticated user."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    display_name: str
 
 
 class LoginResponse(BaseModel):

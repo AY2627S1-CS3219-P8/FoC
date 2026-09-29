@@ -38,9 +38,12 @@ The service must collect and maintain the following registration/profile data:
 
 The NUS student number and account-creation timestamp are immutable. The
 profile name, email address, and password are mutable, subject to validation.
-Order history and credit balance are protected profile information and should
-only be exposed through an appropriate authenticated response or consuming
-service; sensitive authentication data must never be included.
+Display names are trimmed at the edges and must contain only English letters
+separated by single spaces; punctuation, digits, backslashes, and control
+characters are rejected.
+Sensitive profile information should only be exposed through an appropriate
+authenticated response or consuming service; sensitive authentication data
+must never be included.
 
 ## Authentication and authorization
 
@@ -102,8 +105,7 @@ silently create a new account.
 ## Profile access rules
 
 - An authenticated user may view their own profile, including their NUS
-  student number, display name, and order-history information made available
-  by the platform.
+  student number and display name.
 - An authenticated user may view another user's basic profile information,
   limited to the profile name.
 - Sensitive information must be omitted or masked in full-value displays.
@@ -142,7 +144,9 @@ The project requirements specify the following targets for the User Service:
 
 ## API and integration notes
 
-Route names and request/response schemas will be added when the service API is implemented. Any API contract should document, at minimum:
+The implemented route names and request/response schemas are documented in
+`../swagger.io` and in the examples below. The API contract documents, at a
+minimum:
 
 - Registration, login, logout, session validation/refresh, and profile
   operations.
@@ -248,6 +252,32 @@ Use the returned token for protected requests:
 curl http://localhost:8080/users/me \
   -H 'Authorization: Bearer <access-token>'
 ```
+
+The owner profile response includes the NUS student number, display name, and
+permitted account fields. It never includes a password hash or authentication
+token. An authenticated user can view another active user's basic profile with
+`GET /users/{user_id}`; that response contains only `display_name`.
+
+
+
+Update mutable profile fields with a partial request using `PATCH` (or the
+`PUT` compatibility alias). Omitted fields are preserved, and an empty object
+is accepted as a no-op. The NUS student number, role, status, and timestamps
+are not accepted as update fields:
+
+```bash
+curl -X PATCH http://localhost:8080/users/me \
+  -H 'Authorization: Bearer <access-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"display_name":"Updated Student","email":"new@example.com"}'
+```
+
+`DELETE /users/me` (or `POST /users/me/deactivate`) deactivates the account
+without deleting its record. A deactivated account can be restored on the same
+record by posting its existing credentials to `/users/reactivate` (the
+`/users/me/reactivate` and `/reactivate` paths are compatibility aliases), then
+logging in again. Password changes and deactivation revoke all active bearer
+sessions, so clients must authenticate again after either operation.
 
 The service refreshes the inactivity deadline on valid protected requests,
 without extending the 24-hour absolute lifetime. End the session with:
