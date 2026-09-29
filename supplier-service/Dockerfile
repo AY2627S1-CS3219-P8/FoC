@@ -1,8 +1,8 @@
 # AI Assistance Disclosure:
 # Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
-# Scope: Boilerplate generation — package Alembic configuration and revisions in the service image.
+# Scope: Boilerplate generation — package Alembic configuration and revisions in the service image. Configure the bounded API health probe to use /ready (2026-09-29).
 # Author review: Keith confirmed review of all affected changes.
-# Details: ai/usage-log.md; ai-20260929-001
+# Details: ai/usage-log.md; ai-20260929-001; ai-20260929-003
 
 # Use the Python version chosen for the service
 FROM python:3.12-slim
@@ -32,7 +32,7 @@ EXPOSE 8080
 
 # Probe the running API
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)"
 
 # Server command
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

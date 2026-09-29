@@ -1,8 +1,8 @@
 <!-- AI Assistance Disclosure:
 Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
-Scope: Documentation — describe database migration, role setup, and observed verification.
+Scope: Documentation — describe database migration, role setup, and observed verification. Refactoring and documentation improvements — update migration-gated deployment, readiness/liveness behavior, inspection, recovery, and verification guidance (2026-09-29).
 Author review: Keith confirmed review of all affected changes.
-Details: ai/usage-log.md; ai-20260929-001
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004
 -->
 
 # Supplier Service
@@ -15,16 +15,18 @@ Other services access supplier information through the API. They do not
 connect directly to the Supplier Service database.
 
 The service provides validated startup configuration, `GET /health`,
-interactive API documentation, and SQLAlchemy models for `supplier`,
+`GET /ready`, interactive API documentation, and SQLAlchemy models for `supplier`,
 `category`, and `supplier_category`. Application startup initializes a
 database engine and session factory, and shutdown disposes of the engine.
 Request-scoped sessions are closed without automatically committing;
 service functions will own transaction boundaries.
 
 The API and a persistent PostgreSQL/PostGIS database run through Docker
-Compose. Alembic migrations create the schema and four controlled categories.
-See [schema operations](docs/migrations.md) for bootstrap, role separation,
-migration commands, and integration tests. The supplier business API remains future work.
+Compose. A separate migration job shares the application image and applies
+Alembic revisions before a newly created API starts. Migrations create the schema
+and four controlled categories; startup and probes do not create tables.
+See [schema operations](docs/migrations.md) for ordered installation, deployment
+to an existing volume, role grants, recovery rehearsals, and integration tests. The supplier business API remains future work.
 
 ## Local Development
 
@@ -49,9 +51,10 @@ export AUTH_TIMEOUT_SECONDS='3'
 export LOG_LEVEL='INFO'
 ```
 
-These URLs and credentials are dummy local examples. The scaffold validates
-URL formats but makes no database or User Service connections, so those
-services do not need to be running for the health check.
+These URLs and credentials are dummy local examples. Startup validates settings
+and creates the engine without connecting. `/health` needs neither a database
+nor User Service. `/ready` needs a reachable, migrated database and runtime
+permission to read its revision state; User Service is not contacted by either probe.
 
 | Variable | Requirement |
 | --- | --- |
@@ -78,19 +81,24 @@ Open <http://127.0.0.1:8081/health> and expect HTTP 200 with
 `{"status":"healthy"}`. Open <http://127.0.0.1:8081/docs> to inspect the API
 and execute `GET /health` using **Try it out**. Neither endpoint requires
 authentication. The health endpoint indicates application liveness; it does
-not establish database readiness. Stop the server with **Ctrl+C**.
+not establish database readiness. `GET /ready` returns HTTP 200 with
+`{"status":"ready"}` only when connectivity succeeds and installed Alembic heads
+exactly match the nonempty packaged heads. Otherwise it returns HTTP 503 with
+`{"status":"not_ready"}` and a generic diagnostic without connection details.
+Stop the server with **Ctrl+C**.
 
 Run the tests from `supplier-service/`:
 
 ```bash
-./.venv/bin/python -m pytest -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
 ```
 
 Current unit and API tests use explicit dummy settings or temporary
 environment variables and require no running database or User Service.
 They cover the health response, configuration defaults and validation,
 the required Psycopg driver scheme, rejection of invalid startup
-configuration, and database engine initialization and disposal.
+configuration, database engine initialization and disposal, revision matching,
+configuration/connection failures, connection release, and readiness recovery.
 
 ### Integration-test database configuration
 
@@ -145,41 +153,69 @@ not required. Existing shell variables take precedence over `.env` values.
 `AUTH_TIMEOUT_SECONDS` defaults to `3` and `LOG_LEVEL` defaults to `INFO`
 when unset or empty in the Compose environment.
 
-### Build and start
+### Fresh installation and later deployments
+
+For a fresh database, follow the [ordered installation guide](docs/migrations.md#fresh-installation):
+configure credentials, start the database with `--wait`, run administrator
+PostGIS/role bootstrap, build the application image, explicitly run
+`supplier-migrate`, apply runtime grants, then start the API. Migration success
+alone does not grant `supplier_runtime` permission to read `alembic_version`;
+without that grant, readiness returns 503.
+
+After bootstrap, migrations, and grants have succeeded:
 
 ```bash
-docker compose config --quiet
-docker compose build supplier-db supplier-service
-docker compose up -d supplier-db supplier-service
-docker compose ps supplier-db supplier-service
+docker compose up -d --wait --wait-timeout 90 supplier-service
+docker compose ps -a supplier-db supplier-migrate supplier-service
 ```
 
-The API starts after the database health check succeeds. Both containers
-should eventually report healthy. These commands start only the supplier
-containers; the scaffold does not yet require User Service to be running.
+Compose waits for database health and successful migration-job completion before
+starting a newly created API. Expect a migration job exited with code 0 and
+healthy database/API containers. Both API and job use `foc-supplier-service:local`
+from the existing Supplier build context. The job has no HTTP health check,
+published port, or automatic restart. Both run as application UID 10001 while
+using separate database roles.
 
-Open these addresses:
+For each new image, use the [existing-volume deployment sequence](docs/migrations.md#deploying-a-new-image-with-the-existing-volume):
+rebuild the shared image, wait for the database, stop the API for maintenance,
+explicitly recreate/run the migration job and check its exit code, review/reapply
+grants, then recreate the API. A previously completed job does not prove a new
+image has been migrated. Compose dependencies do not schedule every deployment
+or stop an API that is already running when a dependency fails.
 
-- Health: <http://127.0.0.1:8081/health>
-- API documentation: <http://127.0.0.1:8081/docs>
+### Probes and inspection
 
-The health endpoint returns HTTP 200 with `{"status":"healthy"}`.
-It checks API liveness, not database connectivity. To inspect the response,
-logs, or API runtime user:
+- Readiness: <http://127.0.0.1:8081/ready> — connectivity and exact migration heads;
+  returns 200 with `{"status":"ready"}` or safe 503 with `{"status":"not_ready"}`.
+- Liveness: <http://127.0.0.1:8081/health> — returns 200 with
+  `{"status":"healthy"}` independently of database availability.
+- API documentation: <http://127.0.0.1:8081/docs>.
+
+The image health check uses `/ready` with a three-second HTTP timeout. Inspect
+packaged versus installed revisions, the migration job, and container health:
 
 ```bash
-curl -i http://127.0.0.1:8081/health
-docker compose logs --tail=80 supplier-db supplier-service
+curl -i --max-time 5 http://127.0.0.1:8081/ready
+curl -i --max-time 5 http://127.0.0.1:8081/health
+docker compose ps -a supplier-db supplier-migrate supplier-service
+docker compose logs --tail=80 supplier-migrate supplier-service
+docker compose run --rm --no-deps supplier-migrate python -m alembic heads
+docker compose run --rm --no-deps supplier-migrate python -m alembic current
+docker inspect --format '{{json .State.Health}}' "$(docker compose ps -q supplier-service)"
 docker compose exec supplier-service id
 ```
 
-The API runs as UID 10001 (`supplier`).
+Readiness recovers after database access, schema revisions, or grants are
+repaired. See the [isolated recovery rehearsal](docs/migrations.md#isolated-deployment-and-recovery-rehearsal)
+for outage, older-schema, and failed-migration checks that preserve persistent
+data. A failed migration blocks a new API container; fix the cause and rerun the
+job instead of resetting its database.
 
 ### Networking and storage
 
 The API joins the shared application network and the private supplier
-network. The database joins only the private supplier network and has no
-published host port. A `5432/tcp` entry in `docker compose ps` is not a host
+network. The migration job and database join only the private supplier network
+and have no published host port. A `5432/tcp` entry in `docker compose ps` is not a host
 port mapping. The API publishes only `127.0.0.1:8081`.
 
 Inside the API container, the database address is `supplier-db:5432` and
@@ -217,8 +253,16 @@ remained unchanged after recreation. Native AMD64 execution still needs
 verification.
 
 The administrator bootstrap enables PostGIS; migrations create the schema.
-The API initializes its database engine but does not yet authenticate through
-User Service or gate readiness on the installed migration revision.
+The API initializes its database engine and gates readiness on connectivity and
+installed migration revisions; it does not yet authenticate through User Service.
+Compose gates new API startup on database health and successful migration completion.
+
+Deployment verification on disposable data covered fresh bootstrap and grants,
+upgrade from `0001` to packaged head `0002` on the same volume with a surviving
+supplier row, database-outage and schema-repair readiness recovery, and a temporary
+failed migration blocking new API startup before successful recovery. See the
+[verification record](docs/migrations.md#observed-verification) for test results,
+limits, and project-scoped cleanup commands.
 
 ## Initial Scope
 
@@ -838,3 +882,41 @@ review of all affected changes.
 See the [canonical Supplier Service usage record](ai/usage-log.md#ai-20260929-001).
 Some prompt excerpts are redacted at the user's request; original
 per-message timestamps are unavailable. No file header exceptions apply.
+
+For the readiness change, Codex (GPT-6) provided **Writing implementation code**
+for `app/routes/health.py`, `tests/api/test_health.py`, and the new
+`tests/api/test_readiness.py`, following the specified existing engine and Alembic
+architecture. The endpoint and isolated tests were retained. Agent verification:
+40 API/unit tests passed with one dependency deprecation warning, and
+`git diff --check` passed. PostgreSQL integration was not verified for this change.
+Keith confirmed review of all affected readiness changes; no human test rerun
+is claimed. The [readiness usage record](ai/usage-log.md#ai-20260929-002)
+contains the exact implementation prompt and final response. Original message
+timestamps are unavailable; no redactions or header exceptions apply to this entry.
+
+For Compose migration gating, Codex (GPT-6) provided **Boilerplate generation**
+for root `compose.yaml` and `supplier-service/Dockerfile`: a shared image,
+a dedicated migration job, successful-completion startup gating, and a bounded
+`/ready` image probe. These changes were retained and reviewed by Keith.
+Agent checks passed for Compose validation, image build, packaged revision
+inspection, explicit migration execution, healthy startup, deliberate disposable
+migration failure blocking API startup, recovery, and `git diff --check`.
+The full multi-service stack and existing development database were not tested;
+no human test rerun is claimed. See the [Compose migration-gating record](ai/usage-log.md#ai-20260929-003)
+for the exact prompt and verbatim response excerpts. Original message timestamps
+are unavailable; no redactions or header exceptions apply to this entry.
+
+For deployment documentation and the follow-up port correction, Codex (GPT-6)
+provided **Refactoring and documentation improvements** and **Debugging assistance**
+for `docs/migrations.md` and this README. The guide and README changes were
+retained and reviewed by Keith. Disposable checks verified fresh installation,
+grants, revision upgrade with surviving data, readiness/liveness failure and
+recovery, and failed-migration startup blocking. After correcting the test-only
+network setup, all 74 tests passed with no skips and one dependency warning.
+Shell syntax, links, and `git diff --check` passed. The later wording correction
+passed `git diff --check`; Docker checks were not rerun for it. Full-stack,
+AMD64, archived-image, and development/production deployments were not verified.
+See the [deployment documentation record](ai/usage-log.md#ai-20260929-004) for
+both exact prompts, verbatim response excerpts, initial test-setup failures,
+and verification limits. Original timestamps are unavailable; no redactions or
+header exceptions apply. No human test rerun is claimed.
