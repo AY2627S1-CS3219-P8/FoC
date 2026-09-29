@@ -1,17 +1,15 @@
-name: CI
+name: User Service CI
 
 on:
   push:
     branches: [main]
     paths:
       - "user-service/**"
-      - "compose.yaml"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/user-service.yml"
   pull_request:
     paths:
       - "user-service/**"
-      - "compose.yaml"
-      - ".github/workflows/ci.yml"
+      - ".github/workflows/user-service.yml"
 
 permissions:
   contents: read
@@ -19,6 +17,9 @@ permissions:
 jobs:
   user-service:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: foc_ci
+      POSTGRES_PASSWORD: "foc_ci:p@ss#with$special/slash?"
 
     steps:
       - name: Check out repository
@@ -39,8 +40,5 @@ jobs:
         run: python -m pytest -q
         working-directory: user-service
 
-      - name: Validate Compose configuration
-        run: docker compose config
-
       - name: Build user-service image
-        run: docker compose build user-service
+        run: docker build --tag foc-user-service:ci ./user-service
