@@ -113,5 +113,37 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   response excerpts are recorded; original timestamps are unavailable. No human
   test rerun is claimed.
 
+- [Creation validation](supplier-service/ai/usage-log.md#ai-20260930-001):
+  Codex (GPT-6) provided Writing implementation code for Pydantic client/result
+  types, aggregate creation validation, the shared parsing-error adapter, and
+  focused tests. The work remains in the working tree. Agent checks passed 112
+  creation tests and 97 domain tests, with one dependency warning per run and
+  no unavailable requested checks after correcting an initial test-file path.
+  Keith confirmed review of all four affected files; no human rerun is claimed.
+  The exact prompt and final
+  response are recorded; original timestamps are unavailable. No redactions or
+  header exceptions apply.
+
+- [PATCH validation](supplier-service/ai/usage-log.md#ai-20260930-002):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for shared schemas, pure merged-value validation,
+  update-service usage guidance, and focused tests. The work was retained and
+  all three affected files were reviewed by Keith. Agent checks passed 90 PATCH
+  tests and 209 creation/domain tests, with one dependency warning per run and
+  no unavailable requested checks. No human test rerun is claimed. The exact
+  prompt and final response are recorded; original timestamps are unavailable.
+  No redactions or header exceptions apply.
+
+- [HTTP validation integration](supplier-service/ai/usage-log.md#ai-20260930-003):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for shared 422 handlers, safe request-error
+  conversion, test-only routes, and future API/import guidance. All four affected
+  files were retained and reviewed by Keith. Agent checks passed 357 unit/API
+  tests, including health and readiness, with one existing dependency warning
+  and no unavailable requested checks. Coverage and final syntax/documentation
+  checks were reviewed; no human test rerun is claimed. The exact prompt and
+  final response are recorded; original timestamps are unavailable. No
+  redactions or header exceptions apply.
+
 No file header exceptions apply to these Supplier Service records. Disclosure-only
 updates do not establish human review or submission readiness.

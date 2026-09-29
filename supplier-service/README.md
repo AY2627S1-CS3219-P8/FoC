@@ -1,8 +1,9 @@
 <!-- AI Assistance Disclosure:
-Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-30
 Scope: Documentation — describe database migration, role setup, and observed verification. Refactoring and documentation improvements — update migration-gated deployment, readiness/liveness behavior, inspection, recovery, and verification guidance (2026-09-29).
+Scope: Refactoring and documentation improvements — document future API/import calls to aggregate validation, omission versus null, stored-time PATCH merging, caller-supplied category IDs, safe error responses, test commands, and coverage against the domain-input guide.
 Author review: Keith confirmed review of all affected changes.
-Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003
 -->
 
 # Supplier Service
@@ -99,6 +100,9 @@ They cover the health response, configuration defaults and validation,
 the required Psycopg driver scheme, rejection of invalid startup
 configuration, database engine initialization and disposal, revision matching,
 configuration/connection failures, connection release, and readiness recovery.
+They also cover standalone domain checks, creation and merged PATCH validation,
+and shared HTTP 422 handlers through routes registered only by tests. Supplier
+mutation endpoints and CSV import are not implemented.
 
 ### Integration-test database configuration
 
@@ -745,6 +749,108 @@ highlights the pair and displays the message once. Single-field issues also
 use a `fields` array. An optional frontend "Hours unknown" control may clear
 both times together; server validation remains mandatory.
 
+### Reusing validation in future API and import code
+
+`app/schemas.py` defines separate client inputs and cleaned results.
+`app/validation/suppliers.py` provides the entry points that collect parsing
+errors and all independently detectable domain issues:
+
+```python
+from app.validation.suppliers import (
+    validate_supplier_create,
+    validate_supplier_patch,
+)
+
+# The caller obtains category UUIDs; validation performs no database queries.
+created_values = validate_supplier_create(raw_create_body, existing_category_ids)
+updated_values = validate_supplier_patch(
+    raw_patch_body, stored_editable_values, existing_category_ids,
+)
+```
+
+These are usage examples for future callers, not implemented mutation routes.
+Callers must pass the existing category UUIDs as an iterable of `UUID` objects.
+Every supplied category is checked at its original zero-based position before
+valid duplicates are removed in first-seen order. A supplied PATCH category list
+replaces the stored selection. Category definitions remain migration-managed.
+Only successful validation returns cleaned values; any issue raises
+`DomainValidationError`, and the future caller must not save part of that input.
+
+Future create and update routes must call these aggregate-validation functions.
+Accept an unparsed JSON value, for example a FastAPI parameter
+`payload: Any = Body(...)`, then pass it to the appropriate function. Do not use
+`SupplierCreateInput` or `SupplierPatch` as an automatic route-body parser before
+calling the aggregate validator: an early parsing failure would stop category
+membership or schedule checks that could still find errors. Likewise, do not
+pre-validate individual business fields and return on the first issue. Invalid
+JSON cannot reach domain validation because no usable input object exists.
+
+Creation validates complete input. PATCH must merge with a snapshot of stored
+editable values first: name, area, category UUIDs, optional text, and both times.
+The update service should build that mapping explicitly from the stored record;
+do not pass an ORM object with server-managed fields through the creation schema.
+`validate_supplier_patch` copies editable values, applies the raw patch, validates
+the merged result, and recalculates the closing-day offset. It does not mutate
+the supplied mapping or category list. Persistence, concurrency checks, and
+version increments (including for empty patches) belong to the future service.
+
+Omitted PATCH fields retain stored values. Explicit null clears nullable fields;
+null required text or category lists is invalid. Blank optional text becomes
+null; required text must remain nonblank after trimming. Floor values remain
+strings, including `01` and `B1`. For callers using the patch model to inspect
+presence, `SupplierPatch().model_dump(exclude_unset=True)` is empty, whereas
+`SupplierPatch(description=None).model_dump(exclude_unset=True)` includes
+`description: None`. Preserve that distinction when passing data onward.
+
+Changing only one time uses the other stored time. Later closing means offset 0;
+earlier or equal closing means offset 1 (equal times represent 24 hours). Both
+times missing or null on creation mean unknown hours. Clearing a known PATCH
+schedule requires both times to be null; clearing just one produces one
+`INCOMPLETE_SCHEDULE` issue naming both fields. An invalid time is reported as a
+parsing/time issue without also being called an incomplete schedule. Clients
+cannot supply the derived offset, supplier ID, or other server-managed fields;
+PATCH also forbids coordinates and `expected_version` in its body.
+
+The application factory registers handlers for `DomainValidationError` and
+FastAPI `RequestValidationError`. Both return HTTP 422 using
+`DomainValidationError.to_dict()` and the envelope above. Request body paths
+omit `body.` (for example `location.latitude` and `category_ids.1`), while query
+paths retain `query.`. Malformed JSON returns `INVALID_JSON` with an empty
+`fields` array. Responses contain only issue `fields`, `code`, and safe `message`
+values; raw bodies, rejected values, exception context, and internal messages
+are not copied into the response. This handler unifies request-error formatting;
+it does not replace calling aggregate validation in future mutation routes.
+
+The future CSV importer should parse source rows and apply reviewed source
+mappings separately, then call `validate_supplier_create` with normalized row
+data and caller-supplied category UUIDs before any writes. It can catch
+`DomainValidationError`, inspect `.errors`, and use `.to_dict()` for the same
+error envelope without starting FastAPI or connecting validation to a database.
+No CSV parsing, seed corrections, or persistence are implemented by validation.
+
+### Validation tests and coverage
+
+Run all unit and API checks from `supplier-service/`:
+
+```bash
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Coverage reviewed against [the domain-input guide](reference/08-validate-supplier-input.md):
+
+| Coverage | Tests |
+| --- | --- |
+| Finite coordinates, inclusive boundaries, precision, approved slash-combined areas, and daily offsets/unknown hours | `tests/unit/test_domain_validation.py` |
+| Whitespace, optional nulls, string floor labels, unknown areas, empty/malformed/unknown categories, forbidden fields, and aggregate creation failures | `tests/unit/test_supplier_create_validation.py` |
+| Missing versus null, stored-time merging, transitions from either time, category replacement, immutable fields, aggregate failures, and unchanged inputs | `tests/unit/test_supplier_patch_validation.py` |
+| Both 422 handlers, body/query paths, invalid JSON, safe messages, original category positions, and multiple issues including a single schedule-pair issue | `tests/api/test_validation_errors.py` |
+| Existing liveness and readiness behavior | `tests/api/test_health.py`, `tests/api/test_readiness.py` |
+
+Observed agent verification: 357 unit/API tests passed with one existing
+Starlette/AnyIO dependency deprecation warning. No requested checks were
+unavailable. These checks require neither a live database nor User Service;
+database integration and real mutation/import workflows were not exercised.
+
 ## Initial Data Import
 
 Import the [existing supplier CSV](../data/csv/supplier-seed-data.csv)
@@ -920,3 +1026,44 @@ See the [deployment documentation record](ai/usage-log.md#ai-20260929-004) for
 both exact prompts, verbatim response excerpts, initial test-setup failures,
 and verification limits. Original timestamps are unavailable; no redactions or
 header exceptions apply. No human test rerun is claimed.
+
+
+For creation validation, Codex (GPT-6) provided **Writing implementation code**
+for `app/schemas.py`, `app/validation/suppliers.py`, the parsing-error adapter in
+`app/validation/errors.py`, and `tests/unit/test_supplier_create_validation.py`.
+The work remains in the working tree. Agent verification: 112 creation tests and
+97 existing domain tests passed, with one dependency deprecation warning per run;
+no requested checks remained unavailable. The initial test-file path error was
+corrected. Keith confirmed review of all four affected files; no human test rerun
+is claimed. The
+[creation validation record](ai/usage-log.md#ai-20260930-001) contains the exact
+prompt and verbatim final response. Original timestamps are unavailable; no
+redactions or header exceptions apply to this entry.
+
+
+For PATCH validation, Codex (GPT-6) provided **Writing implementation code** and
+**Refactoring and documentation improvements** for `app/schemas.py` and
+`app/validation/suppliers.py`, plus **Writing implementation code** for
+`tests/unit/test_supplier_patch_validation.py`. The retained work tracks supplied
+fields, validates merged editable values without mutating inputs, and documents
+future update-service usage. Keith confirmed review of all three affected files.
+Agent checks passed 90 PATCH tests and 209 creation/domain regression tests, with
+one existing dependency warning per run and no unavailable requested checks.
+No human test rerun is claimed. The [PATCH validation record](ai/usage-log.md#ai-20260930-002)
+contains the exact prompt and verbatim final response. Original timestamps are
+unavailable; no redactions or header exceptions apply to this entry.
+
+
+For HTTP validation integration, Codex (GPT-6) provided **Writing implementation
+code** for `app/main.py`, `app/validation/errors.py`, and
+`tests/api/test_validation_errors.py`, plus **Refactoring and documentation
+improvements** for error conversion and this README's future API/import guidance.
+The handlers, safe error conversion, test-only routes, and documentation were
+retained and all four affected files were reviewed by Keith. Agent verification:
+357 unit/API tests passed, including health and readiness, with one existing
+dependency warning and no unavailable requested checks. Coverage was reviewed
+against the domain-input guide; final syntax, whitespace, and documentation
+checks passed. No human test rerun is claimed. The
+[HTTP validation record](ai/usage-log.md#ai-20260930-003) contains the exact prompt
+and verbatim final response. Original timestamps are unavailable; no redactions
+or header exceptions apply to this entry.

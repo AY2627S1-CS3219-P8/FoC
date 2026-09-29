@@ -446,3 +446,194 @@ curl --fail --max-time 5 "$CHECK_API/ready"
 ### Usage summary
 
 Codex documented the existing shared-image migration-job architecture and rehearsed deployment/recovery against disposable PostGIS data. The guide separates administrator bootstrap, migrator execution, and runtime grants; requires an explicit migration run for each new image; and explains the limits of Compose startup ordering. The user then identified that reusing the deployment sequence could probe the fixed development port before resolving the disposable port. Codex confirmed the issue and made that replacement explicit, preserving the production deployment probe while correcting the isolated rehearsal.
+
+## ai-20260930-001
+
+- Recorded at: 2026-09-30T00:45:21+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` and `apply_patch` for repository inspection, implementation, and verification.
+- Mode and scenario: Agentic implementation from the user's creation-validation requirements, existing pure validators, README error contract, and migration-managed category context.
+- Outcome: The four affected files remain in the working tree. Separate client/result types, aggregate errors, caller-supplied category membership checks, ordered deduplication, and schedule derivation were retained. The category migration was unchanged; no database queries, UUID generation, persistence, seed corrections, authentication, or routes were added.
+- Verification: The initial test-file write used an incorrect relative path and the first focused run reported file not found. After correcting the path, the focused suite passed 107 tests, then 112 after additional checks; the final requested command `./.venv/bin/python -m pytest tests/unit/test_supplier_create_validation.py -q` from `supplier-service/` passed 112 tests. The existing domain suite passed 97 tests. Each successful run reported one Starlette/AnyIO dependency deprecation warning. `git diff --check` passed for tracked changes. No requested checks remained unavailable; no human rerun is confirmed.
+- Author review: Keith confirmed review of all four affected files for this work on 2026-09-30. No human test rerun is claimed.
+- Missing evidence: Original message timestamps unavailable. The exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Add supplier creation input that uses Pydantic and the checks in `supplier-service/app/validation/`. Add a validation function in `supplier-service/app/validation/suppliers.py` that accepts raw creation data and the existing category UUIDs supplied by the caller. Return cleaned values and a calculated schedule offset only if all input is valid. Use separate types for client input and the cleaned result. Clients must not be able to set the offset or other values owned by the server.
+
+Report parsing errors and rule violations together. If one field is invalid, still check other fields that can be checked. Keep each category entry’s original position when checking it. Remove repeated valid IDs only after those checks. Read the README error contract and `supplier-service/migrations/versions/0002_initial_categories.py` for context without changing the category migration.
+
+Files to edit:
+
+- `supplier-service/app/schemas.py` (new)
+- `supplier-service/app/validation/suppliers.py` (new)
+- `supplier-service/app/validation/errors.py`
+- `supplier-service/tests/unit/test_supplier_create_validation.py` (new)
+
+Acceptance criteria:
+
+- Creation requires a nonblank `name`, an approved `area`, both coordinates in `location`, and at least one entry in `category_ids`. Allow the optional editable fields `description`, `building`, `floor`, `image_key`, `opening_time`, and `closing_time`.
+- Trim required and optional text. Reject blank required text. Convert absent, empty, or whitespace-only optional text to null. Keep the original spelling and keep floor labels as strings such as `1`, `01`, and `B1`. Reject floor values supplied as numbers.
+- Reject unknown fields in both the supplier input and its nested location. Reject `id`, timestamps, `deleted_at`, `version`, and `closing_day_offset`, including when supplied as null. Allow category UUIDs, but do not allow clients to set the supplier UUID.
+- Accept time strings without timezones and parsed time objects from internal callers. Reject invalid times and times with timezones. Hours are unknown when both times are missing or null. Calculate the offset only when both times can be checked. If a time cannot be parsed, report that error without also calling the schedule incomplete.
+- Check every category entry before removing repeats. Report each invalid or unknown UUID at its original position, counting from zero. For `[known_a, known_a, unknown_b, unknown_b]`, report unknown entries at `category_ids.2` and `category_ids.3`. A successful `[known_a, known_a, known_c]` returns each UUID once, in the order it first appeared.
+- A single invalid request can report blank name, unknown area, invalid coordinates, category errors, forbidden fields, and a schedule error together when each can be checked. If any check fails, do not return a successful result with only some fields cleaned.
+- Unit tests cover required and null fields, whitespace, optional values, unknown nested fields, fields clients cannot edit, malformed and repeated category entries, and combined failures. Run `./.venv/bin/python -m pytest tests/unit/test_supplier_create_validation.py -q` from `supplier-service/` and report the result.
+
+Do not implement (out of scope):
+
+- Database queries for categories, generating supplier UUIDs, saving data, corrections to seed records, authentication, or POST routes.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented separate Pydantic client and cleaned-result types plus `validate_supplier_create()`. Validation collects independent errors, preserves category positions, deduplicates valid IDs, and derives the schedule offset only on success.
+
+Tests: **112 creation tests passed**, plus **97 existing domain tests passed**. One dependency deprecation warning per run; no unavailable checks. Category migration unchanged.
+
+### Scope
+
+- `supplier-service/app/schemas.py`: Writing implementation code — define separate Pydantic client and cleaned-result types, strict trimmed text, forbidden extra fields, nested coordinate validation, daily-time parsing, and category membership checks at original entry positions.
+- `supplier-service/app/validation/suppliers.py`: Writing implementation code — combine parsing and independently detectable domain issues using caller-supplied category UUIDs, derive the schedule offset, and deduplicate valid IDs in first-seen order only after successful validation.
+- `supplier-service/app/validation/errors.py`: Writing implementation code — translate Pydantic parsing errors into shared field-path issues and stable codes without introducing a runtime Pydantic dependency into the shared error module.
+- `supplier-service/tests/unit/test_supplier_create_validation.py`: Writing implementation code — write requirement-based tests for required and null fields, text normalization, forbidden fields, malformed and repeated categories, schedule parsing, combined errors, and cleaned results.
+
+### Usage summary
+
+Codex implemented creation validation using the specified Pydantic architecture
+and existing domain checks. Parsing errors and independent rule violations share
+one error envelope. Category entries retain their original positions for errors,
+and successful results remove repeats in first-seen order. Invalid times do not
+produce a misleading incomplete-schedule issue. Only valid creation data returns
+a cleaned result with a derived offset. Agent checks passed; Keith confirmed review of the affected work.
+
+## ai-20260930-002
+
+- Recorded at: 2026-09-30T00:59:24+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` and `apply_patch` for repository inspection, implementation, and verification.
+- Mode and scenario: Agentic implementation of PATCH validation using the user's specified merge-before-validation architecture and existing Pydantic/domain checks.
+- Outcome: Retained SupplierPatch, SupplierPatchResult, shared mutable-field and complete-value validation, the pure merge function, its update-service usage docstring, and focused tests in the working tree. No persistence, database access, concurrency checks, version increments, or routes were implemented.
+- Verification: Agent ran `./.venv/bin/python -m pytest tests/unit/test_supplier_patch_validation.py -q` from `supplier-service/`: 90 passed. Regression command `./.venv/bin/python -m pytest tests/unit/test_supplier_create_validation.py tests/unit/test_domain_validation.py -q`: 209 passed. Each run reported one existing Starlette/AnyIO dependency deprecation warning. `git diff --check` passed for tracked changes. No requested checks were unavailable. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files for this work on 2026-09-30.
+- Missing evidence: Original per-message timestamps unavailable. The exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Add supplier PATCH input and a function that merges and checks it in `supplier-service/app/validation/suppliers.py`. Reuse the validation modules to clean input, collect errors, check categories, and calculate the schedule offset. The function takes the raw patch, a copy of the stored editable values, and the existing category UUIDs. It returns checked values for a future update service without changing the supplied stored values. It must not access the database or have other side effects.
+
+The future update service must call this function with stored values before saving. Explain how to call it in its docstring. A missing time is different from an explicit null. Do not pass a stored ORM object with server-managed fields through the public creation schema.
+
+Files to edit:
+
+- `supplier-service/app/schemas.py`
+- `supplier-service/app/validation/suppliers.py`
+- `supplier-service/tests/unit/test_supplier_patch_validation.py` (new)
+
+Acceptance criteria:
+
+- PATCH accepts only `name`, `description`, `area`, `building`, `floor`, `image_key`, `opening_time`, `closing_time`, and `category_ids`. Reject nested location, top-level coordinates, unknown fields, and all server-managed fields. `expected_version` is not a body field.
+- Track which fields the client supplied. `SupplierPatch().model_dump(exclude_unset=True)` is empty, while explicitly null `description` remains present. Accept an empty patch. The future update service will increase the version.
+- Keep stored values for fields left out of the patch. Reject null or blank required text. Reject null or empty category lists. Optional blank text becomes null. A supplied category list replaces the stored selection. Check unknown IDs at their original positions before removing repeats.
+- Check both times after merging the patch with stored values. Recalculate the offset when either time changes. Test changes between same-day, overnight, and equal-time schedules by editing only the opening time and only the closing time.
+- Setting both times to null clears a known schedule. Clearing only one time fails with one `INCOMPLETE_SCHEDULE` issue. Adding one time to unknown hours fails. Editing other fields leaves unknown hours and their null offset unchanged.
+- Report all errors that can be checked, including schedule, category, text, and forbidden-field errors. If any check fails, leave the supplied stored values and category list unchanged. Do not return a successful result.
+- Tests demonstrate why create validation can use its complete input while PATCH schedule validation needs stored values. Run `./.venv/bin/python -m pytest tests/unit/test_supplier_patch_validation.py -q` from `supplier-service/` and report the result.
+
+Do not implement (out of scope):
+
+- Saving updates, database access methods, checks for competing updates, increasing versions, or PATCH routes.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Added `SupplierPatch` and `validate_supplier_patch()` with omission tracking, validation after merging, category checks, error collection, and no mutation of stored values. The docstring explains future update-service usage.
+
+Tests: **90 PATCH tests passed**, plus **209 creation/domain tests passed**. One existing dependency warning per run; no unavailable checks.
+
+### Scope
+
+- `supplier-service/app/schemas.py`: Writing implementation code; Refactoring and documentation improvements — share mutable-field validators between creation and PATCH, add SupplierPatch presence tracking and a separate cleaned PATCH result, and document omission versus explicit null.
+- `supplier-service/app/validation/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — add pure merge-and-validate PATCH handling, share complete-value validation with creation, preserve input mappings and category lists, and document how a future update service supplies stored editable values before saving.
+- `supplier-service/tests/unit/test_supplier_patch_validation.py`: Writing implementation code — write tests for the specified PATCH allowlist, presence tracking, text and category rules, schedule transitions from either time, combined failures, input preservation, and the difference between complete creation input and merged PATCH schedules.
+
+### Usage summary
+
+Codex added PATCH input that distinguishes omitted fields from explicit nulls and
+validates only the allowed client fields. The merge function copies stored editable
+values, overlays supplied fields, checks the complete schedule and category entries,
+and returns a separately typed result only after all checks succeed. Shared code
+keeps creation and PATCH validation consistent without passing stored ORM rows
+through the public creation schema. Tests covered schedule transitions, aggregate
+errors, unchanged inputs, and existing creation/domain behavior. Keith reviewed
+all affected work; no human test rerun is claimed.
+
+## ai-20260930-003
+
+- Recorded at: 2026-09-30T01:10:08+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` and `apply_patch` for inspection, implementation, documentation, and verification.
+- Mode and scenario: Agentic HTTP validation integration and caller documentation using the specified existing application factory, shared errors, and create/PATCH aggregate validators.
+- Outcome: Retained two HTTP 422 handlers, safe request-error conversion, factory-based test-only routes, and README usage/coverage guidance. No real supplier mutation endpoints or CSV importer were added.
+- Verification: Agent ran `./.venv/bin/python -m pytest tests/unit tests/api -q` from `supplier-service/`: 357 passed, including health and readiness, with one existing Starlette/AnyIO dependency deprecation warning. No requested checks were unavailable. After final typing/documentation edits, Python syntax and whitespace, the reference link, and final README summary placement were checked; `git diff --check` passed for tracked changes. Coverage was reviewed against `supplier-service/reference/08-validate-supplier-input.md`. Tests required neither a live database nor User Service; database integration and real mutation/import workflows were not exercised. No human test rerun is claimed.
+- Author review: Keith confirmed review of all four affected files for this work on 2026-09-30.
+- Missing evidence: Original per-message timestamps unavailable. The exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Make FastAPI return the shared validation errors as HTTP 422 responses. Document how future import and API code should call validation. Use the validation exception and response formatter in `supplier-service/app/validation/errors.py`, and the create and PATCH validation functions in `supplier-service/app/validation/suppliers.py`. Convert FastAPI request-validation errors to the same format. Do not expose raw request bodies or internal exception details.
+
+Test the handlers with routes added only in tests, using the existing application factory. Leave real supplier endpoints for their own implementation work. Explain that future create and update routes must call the functions that collect validation errors. Automatic model parsing must not stop other checks that could still find errors.
+
+Files to edit:
+
+- `supplier-service/app/validation/errors.py`
+- `supplier-service/app/main.py`
+- `supplier-service/tests/api/test_validation_errors.py` (new)
+- `supplier-service/README.md`
+
+Acceptance criteria:
+
+- Register handlers for shared validation errors and FastAPI request-validation errors. Both return HTTP 422 with `error.code` equal to `VALIDATION_ERROR` and a `details` array containing only the documented issue fields.
+- Map nested body paths to names such as `location.latitude` and `category_ids.1`, without a `body.` prefix. Preserve query locations such as `query.expected_version`. Invalid JSON returns a safe error response without crashing the request handler.
+- Test-only create and PATCH routes call validation with test categories and stored values. The HTTP response includes all collected errors and keeps the original category positions. An incomplete schedule appears once with both time fields.
+- Existing `/health` and `/ready` behavior remains covered by the API suite. Validation tests need neither a live database nor User Service.
+- Update the README to describe the validation code and how to test it. Explain the difference between a missing field and null, how PATCH uses stored times, how callers supply existing category IDs, and how the future importer will reuse validation. Do not claim supplier mutation endpoints or CSV import already exist.
+- Run `./.venv/bin/python -m pytest tests/unit tests/api -q` from `supplier-service/`. Report results and any checks that could not run. Review coverage against `supplier-service/reference/08-validate-supplier-input.md`, including whitespace, areas, fields clients cannot edit, unknown hours, calculated offsets, and multiple errors in one response.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Registered both validation handlers to return safe, shared HTTP 422 envelopes. Added test-only routes and README guidance for future API/import callers, including merged PATCH validation and error aggregation.
+
+**357 unit/API tests passed**, including health and readiness. One existing dependency warning; no unavailable checks. Coverage reviewed against the reference guide. No supplier endpoints added.
+
+### Scope
+
+- `supplier-service/app/validation/errors.py`: Writing implementation code; Refactoring and documentation improvements — share parsing-error conversion, map FastAPI body/query paths, handle invalid JSON, and use approved messages without copying raw input, context, or internal exception text.
+- `supplier-service/app/main.py`: Writing implementation code — register shared-domain and FastAPI request-validation exception handlers in the existing application factory, returning HTTP 422 through the shared formatter.
+- `supplier-service/tests/api/test_validation_errors.py`: Writing implementation code — add factory-based test-only routes covering aggregate create/PATCH failures, original category positions, single schedule-pair issues, safe request errors, invalid JSON, and unchanged stored values without live services.
+- `supplier-service/README.md`: Refactoring and documentation improvements — document future API/import calls to aggregate validation, omission versus null, stored-time PATCH merging, caller-supplied category IDs, safe error responses, test commands, and coverage against the domain-input guide.
+
+### Usage summary
+
+Codex connected shared domain and FastAPI request errors to the same HTTP 422
+envelope. Request conversion preserves useful field locations and excludes raw
+bodies, parser context, and internal messages. Tests exercise combined failures
+through routes registered only in tests. Documentation explains why future
+mutation routes must call aggregate validation before saving, how PATCH uses
+stored editable values, and how a future importer can reuse the same checks.
+Keith reviewed all affected files; no human test rerun is claimed.
