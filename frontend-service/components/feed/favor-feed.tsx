@@ -3,15 +3,18 @@
 import { useMemo, useState } from 'react';
 import { Bell } from 'lucide-react';
 
-import { FavorCard } from '@/components/feed/favor-card';
+import { EXPIRY_MINUTES, FavorCard } from '@/components/feed/favor-card';
 import { PageContainer, PageHeader } from '@/components/page-header';
 import { favors } from '@/lib/mock-data';
 import { cn } from '@/lib/utils';
 
+// Only OPEN, unexpired favors are listed (FR12.1.2, FR13.5.1).
+const openFavors = favors.filter((f) => f.minutesAgo < EXPIRY_MINUTES);
+
 type SortKey = 'nearby' | 'reward' | 'newest';
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'nearby', label: `Nearby (${favors.length})` },
+  { key: 'nearby', label: `Nearby (${openFavors.length})` },
   { key: 'reward', label: 'Highest Reward' },
   { key: 'newest', label: 'Newest First' },
 ];
@@ -21,7 +24,7 @@ export function FavorFeed() {
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
 
   const sorted = useMemo(() => {
-    const list = [...favors];
+    const list = [...openFavors];
     if (sort === 'nearby')
       list.sort((a, b) => a.distanceMeters - b.distanceMeters);
     if (sort === 'reward') list.sort((a, b) => b.credits - a.credits);

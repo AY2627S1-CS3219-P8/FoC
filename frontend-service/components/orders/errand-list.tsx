@@ -16,16 +16,18 @@ const STATUS_STYLES: Record<
   ErrandStatus,
   { label: string; className: string }
 > = {
-  pending: { label: 'Pending', className: 'bg-amber-50 text-amber-700' },
-  'in-progress': {
-    label: 'In Progress',
+  open: { label: 'Open', className: 'bg-amber-50 text-amber-700' },
+  accepted: {
+    label: 'Accepted',
     className: 'bg-courier-soft text-courier',
   },
+  picked_up: { label: 'Picked Up', className: 'bg-sky-50 text-sky-700' },
   completed: {
     label: 'Completed',
     className: 'bg-emerald-50 text-emerald-700',
   },
   cancelled: { label: 'Cancelled', className: 'bg-red-50 text-red-600' },
+  expired: { label: 'Expired', className: 'bg-slate-100 text-slate-500' },
 };
 
 const ROLE_TABS: { role: ErrandRole; label: string }[] = [

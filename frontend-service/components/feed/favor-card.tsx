@@ -13,8 +13,10 @@ const AVATAR_COLOURS = [
   'bg-amber-100 text-amber-700',
 ];
 
-// Favors waiting longer than this are flagged as stale.
-const STALE_MINUTES = 30;
+// Orders still OPEN after this long expire (FR13.5.1).
+export const EXPIRY_MINUTES = 60;
+// Visual hint only, not a lifecycle state
+const STALE_MINUTES = EXPIRY_MINUTES / 2;
 
 function initials(name: string) {
   return name
@@ -96,9 +98,7 @@ export function FavorCard({ favor, accepted, onAccept }: FavorCardProps) {
         <span
           className={cn(
             'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold',
-            stale
-              ? 'bg-red-50 text-red-600'
-              : 'bg-emerald-50 text-emerald-700',
+            stale ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700',
           )}
         >
           <Clock className='size-3.5' aria-hidden />

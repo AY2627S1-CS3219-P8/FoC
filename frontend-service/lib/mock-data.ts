@@ -24,11 +24,14 @@ export type Favor = {
 };
 
 export type ErrandRole = 'requester' | 'courier';
+
 export type ErrandStatus =
-  | 'pending'
-  | 'in-progress'
+  | 'open'
+  | 'accepted'
+  | 'picked_up'
   | 'completed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'expired';
 
 export type Errand = {
   id: number;
@@ -152,7 +155,7 @@ export const errands: Errand[] = [
   {
     id: 101,
     role: 'requester',
-    status: 'in-progress',
+    status: 'picked_up',
     title: 'MacBook Charger (65W USB-C)',
     store: 'NUS Co-op @ Central Library',
     date: 'Today, 2:30 PM',
@@ -184,5 +187,32 @@ export const errands: Errand[] = [
     store: 'NUS Co-op @ Central Library',
     date: '12 Oct',
     credits: 8,
+  },
+  {
+    id: 105,
+    role: 'requester',
+    status: 'open',
+    title: 'Iced Latte + Blueberry Muffin',
+    store: 'The Coffee Roaster @ AS8',
+    date: 'Today, 3:10 PM',
+    credits: 8,
+  },
+  {
+    id: 106,
+    role: 'requester',
+    status: 'expired',
+    title: 'A4 Grid Notebook',
+    store: 'NUS Co-op @ Central Library',
+    date: '10 Oct',
+    credits: 6,
+  },
+  {
+    id: 107,
+    role: 'courier',
+    status: 'accepted',
+    title: 'Print CS3219 lecture notes (24 pgs)',
+    store: 'Printer @ Com 2',
+    date: 'Today, 1:45 PM',
+    credits: 5,
   },
 ];
