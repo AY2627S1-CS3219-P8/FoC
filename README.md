@@ -327,4 +327,52 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   redactions or header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Synchronous Supplier User Service client](supplier-service/ai/usage-log.md#ai-20260930-019):
+  Codex (GPT-6) provided Writing implementation code for the client and mock
+  tests, and Boilerplate generation for the client package and HTTPX dependency
+  relocation. All five files were retained; Keith approved the original
+  implementation. During that exchange, 71 focused tests and all 655 unit/API
+  tests passed with one existing dependency warning; scoped whitespace checks
+  passed. Live-service and database integration checks were not run; no human
+  test rerun is claimed. The exact prompt and final response are recorded;
+  original timestamp unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier User Service client lifecycle](supplier-service/ai/usage-log.md#ai-20260930-020):
+  Codex (GPT-6) provided Writing implementation code for the application factory
+  and startup tests. Retained changes share one client per lifespan and clean up
+  client/database resources on shutdown and startup failures. Agent checks passed
+  10 startup tests and all 666 unit/API tests with one existing dependency warning;
+  scoped whitespace checks passed. Live-service and database integration checks
+  were not run. Keith subsequently confirmed review of both affected files; no
+  human test rerun is claimed. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier authentication and administrator dependencies](supplier-service/ai/usage-log.md#ai-20260930-021):
+  Codex (GPT-6) provided Writing implementation code for authentication
+  dependencies, the dedicated error handler, and isolated API tests. All three
+  files were retained and reviewed by Keith for this implementation. Agent checks
+  passed 47 combined authentication/validation-error tests and all 695 unit/API
+  tests, including 29 new tests, with one existing dependency warning; scoped
+  whitespace checks passed. An initial test-file path error was corrected.
+  Live-service and database integration checks were not run; no human test rerun
+  is claimed. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Public Supplier and reference-data reads](supplier-service/ai/usage-log.md#ai-20260930-022):
+  Codex (GPT-6) provided Writing implementation code for router registration and
+  read/probe regression tests, plus Refactoring and documentation improvements
+  for router descriptions and verification guidance. All eight affected files
+  were retained and reviewed by Keith, including the additional validation-test
+  correction. Agent checks passed 121 focused tests and all 723 unit/API tests
+  after correcting the stale route-exclusion assertion, with one dependency
+  warning; syntax and scoped whitespace checks passed. No Compose services were
+  running, so live login/logout checks were not performed; database integration
+  tests were not run. No human test rerun is claimed. The exact prompt and final
+  response are recorded; original timestamp unavailable, with no redactions or
+  header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.

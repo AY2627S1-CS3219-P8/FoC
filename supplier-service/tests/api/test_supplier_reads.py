@@ -3,8 +3,9 @@
 # Scope: Writing implementation code — write detached-value serialization tests for complete and nullable suppliers, ordered categories/pages, coordinates, schedules, timestamps, version, and stored-value preservation.
 # Scope: Writing implementation code — extend isolated HTTP tests for supplier reads, query/path validation, safe errors, session cleanup, and production route exclusion. (ai-20260930-017)
 # Scope: Writing implementation code — extend isolated HTTP coverage for controlled choices, database-free areas, category failures and cleanup, all four adapters, and production exclusion. (ai-20260930-018)
-# Author review: Keith confirmed review of the response serialization tests (ai-20260930-016). Keith also confirmed review of the supplier HTTP tests (ai-20260930-017). Keith also confirmed review of the reference-data HTTP tests (ai-20260930-018).
-# Details: ../../ai/usage-log.md; ai-20260930-016; ai-20260930-017; ai-20260930-018
+# Scope: Writing implementation code — adapt tests to production router registration without duplicate mounting and add recording MockTransport coverage for credential-independent public responses, authentication outages, database-free areas, and public OpenAPI declarations. (ai-20260930-022)
+# Author review: Keith confirmed review of the response serialization tests (ai-20260930-016). Keith also confirmed review of the supplier HTTP tests (ai-20260930-017). Keith also confirmed review of the reference-data HTTP tests (ai-20260930-018). Keith confirmed review of public-read registration changes (ai-20260930-022).
+# Details: ../../ai/usage-log.md; ai-20260930-016; ai-20260930-017; ai-20260930-018; ai-20260930-022
 
 """Detached response serialization and isolated supplier HTTP reads."""
 
@@ -15,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
 
+import httpx
 import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
@@ -22,8 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.main import create_app
-from app.routes.reference_data import router as reference_router
-from app.routes.suppliers import router as supplier_router
+from app.clients.user_service import UserServiceClient
 from app.services import suppliers as supplier_service
 
 from app.repositories.suppliers import CategoryRead, SupplierPage, SupplierRead
@@ -130,7 +131,7 @@ def test_empty_page(total, offset):
 
 
 @pytest.fixture
-def read_client(settings, monkeypatch, supplier):
+def read_client(settings, monkeypatch, supplier, auth_boundary):
     engine = MagicMock()
     session = MagicMock(spec=Session)
     opened = []
@@ -153,8 +154,6 @@ def read_client(settings, monkeypatch, supplier):
     monkeypatch.setattr(supplier_service, "get_supplier", detail)
     monkeypatch.setattr(supplier_service, "list_suppliers", listing)
     application = create_app(settings)
-    application.include_router(supplier_router)
-    application.include_router(reference_router)
     original = application.dependency_overrides.copy()
     application.dependency_overrides[get_db] = override_db
     try:
@@ -311,11 +310,14 @@ def test_programming_defects_propagate(read_client, path):
     session.close.assert_called_once_with()
 
 
-def test_fresh_production_app_has_no_read_routes(settings):
+def test_production_reads_and_probes_are_public_and_registered_once(settings):
     application = create_app(settings)
-    hidden = {"/suppliers", "/suppliers/{id}", "/categories", "/areas"}
-    assert hidden.isdisjoint(route.path for route in application.routes)
-    assert hidden.isdisjoint(application.openapi()["paths"])
+    public = {"/suppliers", "/suppliers/{id}", "/categories", "/areas", "/health", "/ready"}
+    paths = application.openapi()["paths"]
+    assert "security" not in application.openapi()
+    for path in public:
+        assert sum(route.path == path for route in application.routes) == 1
+        assert "security" not in paths[path]["get"]
 
 
 @pytest.mark.parametrize("empty", [False, True])
@@ -365,7 +367,8 @@ def test_category_programming_error_propagates(read_client, monkeypatch):
     session.close.assert_called_once_with()
 
 
-def test_areas_http_works_without_any_database_access(read_client, monkeypatch):
+@pytest.mark.parametrize("authorization", [None, "Bearer revoked", "Basic malformed"])
+def test_areas_http_works_without_any_database_access(read_client, monkeypatch, authorization):
     client, session, detail, listing = read_client
 
     def forbidden_db():
@@ -385,7 +388,8 @@ def test_areas_http_works_without_any_database_access(read_client, monkeypatch):
     session.execute.side_effect = AssertionError("SQL must not execute")
     read = MagicMock(wraps=supplier_service.list_areas)
     monkeypatch.setattr(supplier_service, "list_areas", read)
-    response = client.get("/areas")
+    headers = {} if authorization is None else {"Authorization": authorization}
+    response = client.get("/areas", headers=headers)
     assert response.status_code == 200
     assert response.json() == [
         "Engineering", "FASS", "SoC", "BIZ", "PGP", "Science", "USC/UHC",
@@ -412,3 +416,54 @@ def test_all_four_read_adapters_share_isolated_app(read_client, monkeypatch, sup
     assert {"/suppliers", "/suppliers/{id}", "/categories", "/areas"} <= set(
         client.app.openapi()["paths"]
     )
+
+
+@pytest.fixture
+def auth_boundary(settings, monkeypatch):
+    requests = []
+    profile = {"id": str(UUID(int=42)), "role": "admin", "status": "active"}
+
+    def reply(request):
+        requests.append(request)
+        return httpx.Response(200, json=profile)
+
+    transport_handler = MagicMock(side_effect=reply)
+    upstream = UserServiceClient(settings, transport=httpx.MockTransport(transport_handler))
+    resolve = MagicMock(wraps=upstream.resolve_identity)
+    monkeypatch.setattr(upstream, "resolve_identity", resolve)
+    monkeypatch.setattr("app.main.UserServiceClient", lambda settings: upstream)
+    try:
+        yield transport_handler
+    finally:
+        upstream.close()
+        resolve.assert_not_called()
+        transport_handler.assert_not_called()
+        assert requests == []
+
+
+@pytest.mark.parametrize("authorization", [
+    None, "Bearer valid-user", "Bearer valid-admin", "Basic malformed",
+    "Bearer ", "Bearer expired", "Bearer revoked",
+])
+@pytest.mark.parametrize("outage", [False, True])
+def test_public_read_contracts_ignore_session_state(
+    read_client, auth_boundary, monkeypatch, supplier, authorization, outage,
+):
+    client, session, _, _ = read_client
+    if outage:
+        auth_boundary.side_effect = httpx.ConnectError("User Service unavailable")
+    categories = MagicMock(return_value=supplier.categories)
+    monkeypatch.setattr(supplier_service, "list_categories", categories)
+    headers = {} if authorization is None else {"Authorization": authorization}
+    expected = {
+        "/suppliers": {"items": [serialize(supplier)], "total": 1, "limit": 20, "offset": 0},
+        f"/suppliers/{supplier.id}": serialize(supplier),
+        "/categories": [{"id": str(item.id), "name": item.name} for item in supplier.categories],
+        "/areas": ["Engineering", "FASS", "SoC", "BIZ", "PGP", "Science", "USC/UHC",
+                   "UTown", "YIH", "YST", "KR/NUH"],
+    }
+    for path, body in expected.items():
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == body
+    assert session.close.call_count == 3

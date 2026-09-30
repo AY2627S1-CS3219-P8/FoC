@@ -4,8 +4,9 @@ Scope: Documentation — describe database migration, role setup, and observed v
 Scope: Refactoring and documentation improvements — document future API/import calls to aggregate validation, omission versus null, stored-time PATCH merging, caller-supplied category IDs, safe error responses, test commands, and coverage against the domain-input guide.
 Scope: Refactoring and documentation improvements — document the executable seed dry run, JSON diagnostics, exit behavior, daily schedules, identity-preserving review, and future persistence classification.
 Scope: Refactoring and documentation improvements — replace source-only dry-run instructions with configuration, bootstrap/migration/grant prerequisites, explicit preview/import commands, JSON outcomes, identity and lock behavior, and isolated verification guidance. (ai-20260930-012)
-Author review: Keith confirmed review of all affected changes, including the dry-run documentation (ai-20260930-008). Keith confirmed review of the packaging changes (ai-20260930-012).
-Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012
+Scope: Refactoring and documentation improvements — document mounted public reads, protected administrator dependencies, the verified identity contract, lifecycle and error mappings, verification commands, and a test-only live login/logout and simulated-outage smoke harness with prerequisites and observed limits. (ai-20260930-022)
+Author review: Keith confirmed review of all affected changes, including the dry-run documentation (ai-20260930-008). Keith confirmed review of the packaging changes (ai-20260930-012). Keith confirmed review of public-read registration changes (ai-20260930-022).
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012; ai-20260930-022
 -->
 
 # Supplier Service
@@ -29,7 +30,9 @@ Compose. A separate migration job shares the application image and applies
 Alembic revisions before a newly created API starts. Migrations create the schema
 and four controlled categories; startup and probes do not create tables.
 See [schema operations](docs/migrations.md) for ordered installation, deployment
-to an existing volume, role grants, recovery rehearsals, and integration tests. The supplier business API remains future work.
+to an existing volume, role grants, recovery rehearsals, and integration tests.
+Public supplier and reference-data reads are mounted; administrator mutations
+and administrative reads remain future work.
 
 ## Local Development
 
@@ -260,7 +263,9 @@ verification.
 
 The administrator bootstrap enables PostGIS; migrations create the schema.
 The API initializes its database engine and gates readiness on connectivity and
-installed migration revisions; it does not yet authenticate through User Service.
+installed migration revisions. Public reads do not authenticate; reusable
+User Service authentication dependencies are covered through test-only protected
+routes until production administrator operations are implemented.
 Compose gates new API startup on database health and successful migration completion.
 
 Deployment verification on disposable data covered fresh bootstrap and grants,
@@ -668,19 +673,59 @@ Cross-service references are not database foreign keys.
 
 ## Authentication and HTTP Contract
 
-Browsing requires authentication; supplier mutations and administrative reads
-require a verified `admin` role. Forward opaque bearer tokens to User Service
-`GET /users/me`; do not decode JWTs or query its database. Use bounded timeouts
-and no authentication caching initially. Administrator mode changes only the
-frontend controls: the account role and session remain unchanged, and the
-backend checks the verified role on each request. Never trust a mode/role header.
+Ordinary browsing is public. `GET /suppliers`, `GET /suppliers/{id}`,
+`GET /categories`, and `GET /areas` require no session and never contact User
+Service. They ignore Authorization headers, including invalid or expired
+credentials. Ordinary supplier reads expose active suppliers only.
 
-Return `401` for missing/invalid sessions, `403` for insufficient permissions,
+Supplier creation, updates, deletion, and administrative reads require an
+authenticated account with a verified `admin` role. For those operations,
+forward opaque bearer tokens to User Service `GET /users/me`. Do not decode
+JWTs or query its database. Use bounded timeouts and no authentication caching
+initially. Administrator mode changes only frontend controls. Check the
+verified account role on every protected request and never trust a mode/role header.
+
+The contract was verified on `main` at
+`f27533c16ad57f8fa9df0fdc72aef8c5cbf34e77`. Extract UUID `id`, `role` (`user`
+or `admin`), and `status` (`active`) from the successful profile response and
+ignore unrelated fields. User Service checks revocation, expiry, and account
+status and refreshes the session inactivity deadline.
+
+Public browsing must remain available independently of User Service
+availability, subject to Supplier Service's own database dependencies. Client
+construction and application startup must not contact User Service. Neither
+`/health` nor `/ready` includes a User Service check. Protected operations
+still depend on User Service and fail closed during an authentication outage.
+All four public read adapters are mounted in the production application, with
+no authentication dependencies or OpenAPI security requirements. Administrator
+CRUD and administrative reads remain unimplemented; `get_current_user` and
+`require_admin` are exercised on test-only protected routes, which declare
+HTTP bearer security.
+
+Each application lifespan creates one reusable synchronous `UserServiceClient`
+from the existing settings and stores it at `app.state.user_service_client`.
+Synchronous dependencies run its blocking HTTP work in worker threads. The client
+uses bounded timeouts, strips URL credentials, and never follows redirects.
+Identity resolution is shared within a protected request through dependency
+composition, but every new protected request checks User Service again.
+Shutdown closes the client and disposes the database engine; partial startup
+failures release resources already created. Client construction makes no network
+request. No tokens, profile payloads, or upstream error bodies are logged.
+
+On protected routes, return `401` for missing/invalid sessions and `403` for
+insufficient permissions. Across the API, return
 `404` for unavailable records, `409` for stale active versions or duplicates,
 `422` for invalid input, and `503` for unavailable database/authentication
-dependencies. An authentication outage does not establish that the user has
-logged out. The exact `/users/me` response remains deferred pending verification
-against PR #6 before implementing the authentication integration.
+dependencies. Authentication failures apply only to protected routes and do
+not interrupt public browsing. An authentication outage does not establish
+that the user has logged out. Map upstream 401 to 401. Map every other non-200
+response, transport failure, timeout, or malformed success response to 503.
+An unknown role or non-active status in a success response violates the
+verified contract and also produces 503. Do not follow redirects carrying tokens.
+Use the `error.code` and `error.message` envelope with
+`AUTHENTICATION_REQUIRED`, `FORBIDDEN`, and `AUTHENTICATION_UNAVAILABLE` for
+401, 403, and authentication-related 503 respectively. Include
+`WWW-Authenticate: Bearer` on 401.
 
 POST returns `201 Created`; PATCH returns `200 OK`. Both return the complete
 saved supplier using the same representation as detail reads: all supplier
@@ -691,6 +736,143 @@ returns `204 No Content` with no body.
 The [read example](#read) shows the complete supplier response shape.
 The mutation rules above define editable inputs, version checks, and deletion
 behaviour; error response examples appear below.
+
+### Public-read and authentication verification
+
+From `supplier-service/`, with Python 3.12 and `requirements-dev.txt` installed
+in `.venv`, run these database-independent checks:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_supplier_reads.py tests/api/test_health.py tests/api/test_readiness.py -q
+./.venv/bin/python -m pytest tests/unit/test_user_service_client.py tests/api/test_auth.py tests/api/test_startup.py tests/api/test_validation_errors.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+The public-read tests use the real application factory, controlled supplier
+services, and a recording User Service mock transport. They assert unchanged
+responses for absent, user, administrator, malformed, expired, and revoked
+credentials, including an authentication outage, with zero identity-resolution
+or transport calls. Probe tests run with an unavailable authentication transport;
+readiness still depends only on Supplier database/revision health. `/areas`
+remains independent of both database access and session validation.
+
+To recheck active-only database filtering and deleted-supplier exclusion, run:
+
+```bash
+./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py -q
+```
+
+This requires an explicitly configured `TEST_DATABASE_URL` using
+`postgresql+psycopg`, a reachable isolated PostGIS database with a name ending
+in `_test` and different from `DATABASE_URL`, and migration permissions.
+
+### Live session smoke check
+
+Run the following from `supplier-service/` with the same Python environment.
+Prerequisites: exported `DATABASE_URL` for a migrated disposable Supplier database
+with at least one active supplier, exported `USER_SERVICE_URL` reachable from
+this process, and an existing active administrator account in User Service.
+Set `ADMIN_STUDENT_NUMBER` to that account's student number; the script prompts
+for its password without echoing it. Do not put passwords or tokens in command
+arguments, logs, or committed files. Compose does not publish User Service's port
+by default: use a reachable development instance or run in a configured network
+environment; see [User Service setup](../user-service/README.md).
+
+The harness adds a protected route only to an in-process test application. It
+uses live User Service login/profile/logout calls, confirms public browsing
+before login and after revocation, and simulates a User Service connection outage
+without stopping shared services. Keep supplier data unchanged during the check
+so before/after response comparisons are meaningful.
+
+```bash
+./.venv/bin/python - <<'PYSMOKE'
+import os
+from getpass import getpass
+from typing import Annotated
+
+import httpx
+from fastapi import Depends
+from fastapi.testclient import TestClient
+
+from app.auth import require_admin
+from app.clients.user_service import TrustedIdentity, UserServiceClient
+from app.config import Settings
+from app.main import create_app
+
+settings = Settings()
+app = create_app(settings)
+
+@app.get("/test-only/admin")
+def check_admin(user: Annotated[TrustedIdentity, Depends(require_admin)]):
+    return {"id": str(user.id), "role": user.role}
+
+with TestClient(app) as supplier, httpx.Client(
+    base_url=str(settings.user_service_url),
+    timeout=settings.auth_timeout_seconds,
+    follow_redirects=False,
+    trust_env=False,
+) as users:
+    assert supplier.get("/ready").status_code == 200
+    listing = supplier.get("/suppliers")
+    assert listing.status_code == 200
+    assert listing.json()["items"], "Seed an active supplier first"
+    identity = listing.json()["items"][0]["id"]
+    paths = ["/suppliers", f"/suppliers/{identity}", "/categories", "/areas"]
+    baseline = {}
+    for path in paths:
+        response = supplier.get(path)
+        assert response.status_code == 200
+        baseline[path] = response.json()
+
+    def browse(headers):
+        for path in paths:
+            response = supplier.get(path, headers=headers)
+            assert response.status_code == 200
+            assert response.json() == baseline[path]
+
+    login = users.post("/login", json={
+        "nus_student_number": os.environ["ADMIN_STUDENT_NUMBER"],
+        "password": getpass("Administrator password: "),
+    })
+    assert login.status_code == 200, "Administrator login failed"
+    payload = login.json()
+    headers = {"Authorization": "Bearer " + payload["access_token"]}
+    try:
+        assert payload["user"]["role"] == "admin", "Use an administrator account"
+        assert supplier.get("/test-only/admin", headers=headers).status_code == 200
+        browse(headers)
+    finally:
+        assert users.post("/logout", headers=headers).status_code == 204
+
+    rejected = supplier.get("/test-only/admin", headers=headers)
+    assert rejected.status_code == 401
+    assert rejected.headers["WWW-Authenticate"] == "Bearer"
+    browse({})
+    browse(headers)  # The revoked token must not interrupt public browsing.
+
+    def unavailable(request):
+        raise httpx.ConnectError("Simulated outage", request=request)
+
+    original = app.state.user_service_client
+    outage = UserServiceClient(settings, transport=httpx.MockTransport(unavailable))
+    app.state.user_service_client = outage
+    try:
+        browse({})
+        browse(headers)
+        assert supplier.get("/health").status_code == 200
+        assert supplier.get("/ready").status_code == 200
+        assert supplier.get("/test-only/admin", headers=headers).status_code == 503
+    finally:
+        app.state.user_service_client = original
+        outage.close()
+print("Public browsing, administrator authorization, revocation, and outage checks passed.")
+PYSMOKE
+```
+
+The live login/logout check was not performed during this increment: no services
+were running in this checkout's Compose project. The mock-backed public-read,
+protected-route, and probe tests were run; they do not establish live deployment
+or database integration behavior.
 
 ### Administrative listings
 
@@ -1430,3 +1612,63 @@ scoped whitespace checks passed. Database integration tests were not run. Keith 
 review of both affected files; no human test rerun is claimed. The exact prompt
 and verbatim final response are recorded; original timestamp unavailable. No
 redactions or header exceptions apply. Production mounting awaits authentication.
+
+
+For the [synchronous User Service client](ai/usage-log.md#ai-20260930-019),
+Codex (GPT-6) provided **Writing implementation code** for
+`app/clients/user_service.py` and `tests/unit/test_user_service_client.py`, and
+**Boilerplate generation** for `app/clients/__init__.py`, `requirements.txt`,
+and `requirements-dev.txt`. Retained work resolves opaque sessions through the
+fixed profile endpoint, validates minimal trusted identities, maps failures to
+explicit exceptions, closes the reusable client, and moves HTTPX into runtime
+dependencies. During the implementation exchange, agent checks passed 71 focused
+tests and all 655 unit/API tests with one existing dependency warning; scoped
+whitespace checks passed. Live-service and database integration checks were not
+run. Keith approved the original implementation across all five files; no human
+test rerun is claimed. The exact prompt and verbatim final response are recorded;
+original timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [User Service client lifecycle management](ai/usage-log.md#ai-20260930-020),
+Codex (GPT-6) provided **Writing implementation code** for `app/main.py` and
+`tests/api/test_startup.py`. Retained changes construct and share one client per
+lifespan using existing settings, and clean up client and database resources on
+shutdown or partial startup failure. Agent checks passed 10 startup tests and
+all 666 unit/API tests with one existing dependency warning; scoped whitespace
+checks passed. Live User Service and database integration checks were not run.
+Keith subsequently confirmed review of both affected files; no human test rerun is claimed.
+The exact prompt and verbatim final response are recorded; original timestamp
+unavailable. No redactions or header exceptions apply.
+
+
+For [composable authentication and administrator dependencies](ai/usage-log.md#ai-20260930-021),
+Codex (GPT-6) provided **Writing implementation code** for `app/auth.py`,
+`app/main.py`, and `tests/api/test_auth.py`. Retained changes resolve trusted
+identities through the shared client, authorize administrators, and return safe
+401/403/503 envelopes through a dedicated handler. Protection remains opt-in.
+Agent checks passed 47 combined authentication/validation-error tests and all
+695 unit/API tests, including 29 new authentication tests, with one existing
+dependency warning; scoped whitespace checks passed. An initial test-file path
+error was corrected before successful verification. Live-service and database
+integration checks were not run. Keith confirmed review of all three files for
+this implementation; no human test rerun is claimed. The exact prompt and
+verbatim final response are recorded; original timestamp unavailable.
+No redactions or header exceptions apply.
+
+
+For [public supplier and reference-data reads](ai/usage-log.md#ai-20260930-022),
+Codex (GPT-6) provided **Writing implementation code** for `app/main.py`,
+`tests/api/test_supplier_reads.py`, `tests/api/test_health.py`,
+`tests/api/test_readiness.py`, and the additional stale assertion correction in
+`tests/api/test_validation_errors.py`; **Refactoring and documentation improvements**
+updated both read-router docstrings and this README. Retained work mounts public
+reads, proves authentication-outage independence with recording mock transports,
+and documents a test-only login/logout and simulated-outage smoke harness.
+Agent checks passed 121 focused tests and all 723 unit/API tests after the stale
+exclusion assertion was corrected, with one existing dependency warning.
+Python and smoke-harness syntax and scoped whitespace checks passed. No Compose
+services were running, so live login/logout checks were not performed; database
+integration tests were not run. Keith confirmed review of all eight affected
+files; no human test rerun is claimed. The exact prompt and verbatim final
+response are recorded; original timestamp unavailable. No redactions or header
+exceptions apply.

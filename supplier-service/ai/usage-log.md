@@ -1742,3 +1742,291 @@ These require `TEST_DATABASE_URL` using `postgresql+psycopg`, an isolated PostGI
 ### Usage summary
 
 Retained controlled reference-data GET adapters over existing services and response models. Categories preserve complete service choices and order; areas preserve approved combined labels and declared order without database access. All four read adapters work together in isolated tests and remain unavailable in production pending authentication. Agent verification passed 584 unit/API tests and collected 97 combined read tests. Keith confirmed review of both affected files; no human test rerun is claimed.
+
+
+## ai-20260930-019
+
+- Recorded at: 2026-09-30T22:27:31+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Boilerplate generation for a synchronous User Service client using the supplied opaque-session contract, existing Settings, and HTTPX MockTransport verification.
+- Outcome: Retained the client package, trusted identity and exception types, close method, dependency relocation, and focused unit tests. No router registration, JWT decoding, database access, caching, or retries were introduced.
+- Verification: During this implementation exchange, agent checks passed 71 focused tests and all 655 unit/API tests, with one existing dependency deprecation warning. Scoped whitespace checks passed. No live User Service or database integration checks were run; no human test rerun is claimed.
+- Author review: Keith approved the original implementation assistance across the five affected files.
+- Missing evidence: Original message timestamp unavailable. The exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Implement a synchronous User Service client for protected administrator operations that resolves an opaque bearer token through `GET /users/me`. Read the User Service contract files named above and the authentication sections of `supplier-service/README.md`. Create `UserServiceClient` with a `resolve_identity(token)` method, a minimal trusted identity model, explicit invalid-session and unavailable-authentication exceptions, and a `close()` method. Allow an HTTPX mock transport to be injected for verification.
+
+Files to edit:
+
+- `supplier-service/app/clients/__init__.py` (new)
+- `supplier-service/app/clients/user_service.py` (new)
+- `supplier-service/requirements.txt`
+- `supplier-service/requirements-dev.txt`
+- `supplier-service/tests/unit/test_user_service_client.py` (new)
+
+Acceptance criteria:
+
+- Move the existing HTTPX 0.28.1 dependency into runtime requirements without retaining a duplicate development pin.
+- Configure one reusable `httpx.Client` from the existing settings, with bounded timeouts and `follow_redirects=False`. Resolve the fixed `/users/me` endpoint on the configured User Service. No request input can select a destination.
+- Forward the exact bearer credential in the Authorization header. Never log tokens, full profile payloads, or upstream error bodies.
+- Accept only HTTP 200 with a JSON object containing a valid UUID `id`, `role` equal to `user` or `admin`, and `status` equal to `active`. Ignore unrelated profile fields and retain only the trusted identity fields.
+- Translate upstream 401 to the invalid-session exception. Translate transport failures, timeouts, all other HTTP statuses, malformed JSON, missing fields, invalid field types, unknown roles, and non-active success responses to the unavailable-authentication exception.
+- Use `httpx.MockTransport` to verify the destination and forwarded header, valid user and admin profiles, ignored extra fields, error mappings, and refusal to follow redirects. Verify repeated resolutions make fresh requests and that closing the wrapper closes its HTTP client.
+- In your answer, recommend verification commands based on the completed implementation and project configuration. Include the working directory and prerequisites.
+
+Do not implement (out of scope):
+
+- Local JWT decoding, User Service database access, authentication caching, retries, or production router registration.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented `UserServiceClient`, immutable `TrustedIdentity`, explicit authentication exceptions, mock transport injection, and cleanup. HTTPX 0.28.1 now resides only in runtime requirements.
+
+Verification: **71 focused tests and all 655 unit/API tests passed**, with one existing dependency deprecation warning.
+
+To verify locally, use Python 3.12 from `supplier-service/`. No running database or User Service is required:
+
+```bash
+# Create .venv if needed:
+python3.12 -m venv .venv
+./.venv/bin/python -m pip install -r requirements-dev.txt
+
+./.venv/bin/python -m pytest tests/unit/test_user_service_client.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+### Scope
+
+- `supplier-service/app/clients/__init__.py`: Boilerplate generation — scaffold the service-client package.
+- `supplier-service/app/clients/user_service.py`: Writing implementation code — write the synchronous reusable HTTPX client, minimal immutable trusted identity, explicit session and availability exceptions, fixed endpoint resolution, response validation, and cleanup from the supplied User Service contract.
+- `supplier-service/requirements.txt`: Boilerplate generation — configure HTTPX 0.28.1 as a runtime dependency.
+- `supplier-service/requirements-dev.txt`: Boilerplate generation — remove the duplicate development HTTPX pin while retaining runtime requirements inclusion.
+- `supplier-service/tests/unit/test_user_service_client.py`: Writing implementation code — write MockTransport unit tests for trusted profiles, exact credential forwarding, destination and timeout configuration, error mappings, redirect refusal, fresh requests, safe diagnostics, and client closure.
+
+### Usage summary
+
+Retained a synchronous authentication boundary that forwards opaque bearer credentials to the configured User Service and retains only validated UUID, role, and active status. Explicit exceptions distinguish invalid sessions from unavailable authentication. HTTPX moved into runtime requirements; mock tests verify the specified contract and reusable-client lifecycle. Keith approved the original implementation. The verification results above describe this implementation exchange; no human test rerun is claimed.
+
+
+## ai-20260930-020
+
+- Recorded at: 2026-09-30T22:41:53+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code for the requested application-scoped User Service client lifecycle using the existing synchronous client and database initialization stack.
+- Outcome: Retained lifecycle integration and startup tests in the two requested files. Client creation uses the existing settings; cleanup closes the client and disposes the database engine. Production read-route registration and readiness authentication checks were not introduced.
+- Verification: Agent checks passed 10 startup tests and all 666 unit/API tests, with one existing dependency deprecation warning. Scoped whitespace checks passed. No live User Service or database integration checks were run. No human test rerun is claimed.
+- Author review: Keith subsequently confirmed review of the lifecycle implementation in both affected files; earlier review confirmations remain unchanged.
+- Missing evidence: Original message timestamp unavailable. Exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Manage the User Service client's lifecycle in the Supplier Service application factory. Use `UserServiceClient` in `supplier-service/app/clients/user_service.py`, whose `resolve_identity` method returns a validated identity or raises explicit authentication exceptions. Read the existing lifespan and database cleanup code before extending it.
+
+Files to edit:
+
+- `supplier-service/app/main.py`
+- `supplier-service/tests/api/test_startup.py`
+
+Acceptance criteria:
+
+- Construct one client per application lifespan from `app.state.settings` and expose it as `app.state.user_service_client` for request dependencies.
+- Reuse that client across requests. Do not contact User Service during application construction or startup.
+- Close the client on shutdown and preserve database engine disposal. Clean up resources already created when later startup initialization fails.
+- Preserve both injected Settings and environment-based configuration. Reuse existing URL and timeout settings without introducing duplicate configuration.
+- Verify creation, reuse, shutdown cleanup, and partial startup failure cleanup with controlled test doubles. Tests must not require a running User Service.
+- In your answer, recommend the appropriate lifecycle and startup regression verification commands, including the working directory and prerequisites.
+
+Do not implement (out of scope):
+
+- User Service availability checks in readiness probes or production read-route registration.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented one `UserServiceClient` per lifespan at `app.state.user_service_client`, using injected or environment-loaded settings. Cleanup closes the client and disposes the engine, including partial startup failures. Startup makes no authentication requests.
+
+**666 unit/API tests passed**, including 10 startup tests, with one existing dependency warning. Scoped whitespace checks passed.
+
+To verify from `supplier-service/`, with Python 3.12 and `requirements-dev.txt` installed in `.venv`:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_startup.py tests/api/test_health.py tests/api/test_readiness.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+No running database or User Service is required.
+
+### Scope
+
+- `supplier-service/app/main.py`: Writing implementation code — write application-lifespan client construction from existing Settings, expose the shared client on app.state, and register client and database cleanup with ExitStack for shutdown and partial startup failures.
+- `supplier-service/tests/api/test_startup.py`: Writing implementation code — write controlled-double lifecycle tests for deferred creation, injected and environment settings, request reuse, separate lifespans, partial initialization failures, cleanup exceptions, and no upstream startup or liveness requests.
+
+### Usage summary
+
+Retained one User Service client per application lifespan, shared through app.state and configured from injected or environment-loaded Settings. ExitStack registers cleanup immediately after each resource is created and preserves engine disposal even if client cleanup fails. Controlled doubles and MockTransport verify reuse, lifecycle boundaries, initialization failures, cleanup, and absence of startup authentication requests. Agent tests passed; Keith subsequently confirmed review of both affected files. No human test rerun is claimed.
+
+
+## ai-20260930-021
+
+- Recorded at: 2026-09-30T22:55:45+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code for composable protected-route dependencies using the specified application-scoped User Service client, trusted identity model, HTTPBearer extraction, and established error envelope.
+- Outcome: Retained synchronous authentication and administrator dependencies, a dedicated exception handler, and isolated API tests. Protection remains opt-in; no production mutation routes, login endpoint, global authentication, or public read-router authentication were added.
+- Verification: Agent checks passed 47 combined authentication/validation-error tests and all 695 unit/API tests, including 29 new authentication tests, with one existing dependency deprecation warning. Scoped whitespace checks passed. An initial test-file creation command used an incorrect relative path and failed before creating the file; the path was corrected before the successful runs. No live User Service or database integration checks were run; no human test rerun is claimed.
+- Author review: Keith confirmed review of the authentication-dependency implementation across all three affected files. Keith subsequently also confirmed review of the earlier lifecycle implementation, recorded in ai-20260930-020.
+- Missing evidence: Original message timestamp unavailable. Exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Implement composable authentication and administrator dependencies in `supplier-service/app/auth.py`. Use the application-scoped `UserServiceClient` on `app.state.user_service_client` and its trusted identity and exception types. Build `get_current_user` on `HTTPBearer(auto_error=False)` and `require_admin` on `get_current_user`. These dependencies are for protected routes only. Do not attach them globally or to public read routers. Keep blocking HTTPX calls inside synchronous dependencies.
+
+Files to edit:
+
+- `supplier-service/app/auth.py` (new)
+- `supplier-service/app/main.py`
+- `supplier-service/tests/api/test_auth.py` (new)
+
+Acceptance criteria:
+
+- Extract bearer credentials and resolve them through the injected client. Missing, empty, or malformed bearer input and invalid-session exceptions produce 401 with `WWW-Authenticate: Bearer`.
+- Unavailable-authentication exceptions produce 503. A verified regular user produces 403 when evaluated by `require_admin`, while a verified administrator is accepted.
+- Add narrowly scoped exception handling where needed to return the agreed `error.code` and `error.message` envelope. Preserve existing domain-validation and request-validation handlers.
+- Client-provided role headers, user identifiers, query parameters, and administrator-mode flags cannot alter the trusted identity or grant administrator access.
+- Use test-only administrator routes to verify dependency composition, status codes, safe error envelopes, and the challenge header. Cover a valid user, a valid admin, invalid credentials, upstream failure, and attempted role spoofing.
+- Verify missing credentials do not call User Service and that composing authentication and administrator checks resolves identity only once within a request. Do not cache identity across requests. A token accepted on one protected request but rejected upstream on the next must return 401 on the second request. Authentication or authorization failures must prevent the protected handler from accessing supplier data.
+- In your answer, recommend commands to verify the completed dependencies and existing error-handler regressions, including the working directory and prerequisites.
+
+Do not implement (out of scope):
+
+- Production mutation routes or a new login endpoint in Supplier Service.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented synchronous `get_current_user` and `require_admin` dependencies with safe 401/403/503 envelopes and bearer challenges. Protection remains opt-in.
+
+Tests cover malformed credentials, role spoofing, request-local reuse, revocation between requests, upstream failures, and blocked handler access.
+
+**695 unit/API tests passed**, including 29 new authentication tests, with one existing dependency warning. Scoped whitespace checks passed.
+
+From `supplier-service/`, with Python 3.12 and `requirements-dev.txt` installed in `.venv`:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_auth.py tests/api/test_validation_errors.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+No running database or User Service is required.
+
+### Scope
+
+- `supplier-service/app/auth.py`: Writing implementation code — write synchronous HTTPBearer-based identity and administrator dependencies using the application-scoped UserServiceClient, validate bearer syntax, reject duplicate authorization headers, and translate trusted client failures into safe protected-route errors.
+- `supplier-service/app/main.py`: Writing implementation code — register a narrowly scoped ProtectedRouteError handler returning the agreed error envelope and bearer challenge while preserving existing validation and unrelated HTTP exception handling.
+- `supplier-service/tests/api/test_auth.py`: Writing implementation code — write test-only protected routes and controlled-client/MockTransport tests for credential rejection, trusted roles, spoof resistance, dependency composition, request-local reuse, revocation, safe errors, blocked data access, opt-in protection, OpenAPI security, and worker-thread HTTP execution.
+
+### Usage summary
+
+Retained composable authentication and administrator checks that trust only the identity resolved by User Service. The dedicated handler returns safe 401/403/503 envelopes without replacing existing validation or general HTTP exception behavior. Isolated tests verify one resolution within a request, fresh checks between requests, rejection of revoked sessions and spoofed roles, and no protected handler data access after failed checks. Keith confirmed review of these three files for this implementation; no human test rerun is claimed.
+
+
+## ai-20260930-022
+
+- Recorded at: 2026-09-30T23:18:07+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for requested public read-router registration, authentication-outage independence, probe regression coverage, and operational verification guidance.
+- Outcome: Retained public registration of all four read endpoints, updated router descriptions and tests, and README guidance. An additional stale exclusion assertion in tests/api/test_validation_errors.py was corrected to allow GET routes while preserving mutation/test-route exclusion. No production protected endpoints, administrator CRUD, schema changes, or seed-import changes were introduced.
+- Verification: Agent checks passed 121 focused read/probe/authentication tests and, after correcting the stale exclusion assertion, all 723 unit/API tests, with one existing dependency deprecation warning. The initial full run had 722 passes and one failure at that stale assertion. Python files and the documented smoke harness parsed successfully; scoped whitespace checks passed. Initial Docker inspection was sandbox-blocked; the permitted read-only retry showed no running services in this checkout's Compose project. Live login/logout smoke checks and database integration tests were not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of the public-read implementation and documentation across all eight affected files, including the additional regression-test correction.
+- Missing evidence: Original message timestamp unavailable. Exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Mount the existing supplier and reference-data read routers as public endpoints without authentication dependencies. Read the current router adapters and tests before replacing the intentional production-route exclusion with public registration. Public reads must remain independent of the User Service client and session state. The administrator dependencies in `supplier-service/app/auth.py` are reserved for protected routes, with their behavior covered through test-only routes until production protected operations are implemented.
+
+Files to edit:
+
+- `supplier-service/app/main.py`
+- `supplier-service/app/routes/suppliers.py`
+- `supplier-service/app/routes/reference_data.py`
+- `supplier-service/tests/api/test_supplier_reads.py`
+- `supplier-service/tests/api/test_health.py`
+- `supplier-service/tests/api/test_readiness.py`
+- `supplier-service/README.md`
+
+Acceptance criteria:
+
+- Register `/suppliers`, `/suppliers/{id}`, `/categories`, and `/areas` without authentication dependencies. Anonymous callers, regular users, and administrators receive the same ordinary read access. Continue excluding deleted suppliers. Keep `/health` and `/ready` outside authentication dependencies.
+- Update stale router descriptions and tests asserting that production read routes are absent. Avoid duplicate router registration in test fixtures and preserve serialization, filtering, pagination, validation, 404, and database-error coverage.
+- Exercise the real application factory with a mock User Service transport that records unexpected calls. Verify all four public routes preserve their response contracts without credentials and with valid, malformed, expired, or revoked credentials. Assert that none of these reads invokes the authentication client or User Service transport.
+- Simulate an unavailable User Service and verify public browsing retains its normal behavior while Supplier Service data dependencies are healthy. Keep authentication timeout and malformed-response 503 checks confined to test-only protected routes.
+- Verify `/areas` still avoids Supplier Service database access and session validation. Verify health and readiness retain their existing probe behavior without credentials or User Service calls, including during a User Service outage.
+- Ensure generated OpenAPI exposes the mounted read routes without security requirements and leaves probes without security requirements. Test-only protected routes must declare bearer security.
+- Update the README authentication section with public browsing, administrator-only protected operations, the verified `GET /users/me` contract, trusted fields, status mappings, client lifecycle, and current mounted-route behavior. Remove claims that contract verification or read-route mounting is still pending without rewriting historical disclosure entries.
+- Document a smoke-check procedure that browses anonymously, logs in as an administrator through User Service, checks a test-only protected route, logs out, and confirms the same token is rejected on that protected route. Public browsing must succeed before login and after logout, including with the revoked token attached. Also verify browsing during a User Service outage. Do not add a production test endpoint. Perform the checks if the services and test harness are available and report any environmental blocker honestly.
+- In your answer, recommend verification commands for public reads and outage independence, protected client and dependency behavior, lifecycle cleanup, and existing read/probe regressions. Ground recommendations in the completed implementation and available project scripts, including working directories, prerequisites, and checks not performed.
+
+Do not implement (out of scope):
+
+- Administrator CRUD, administrative read endpoints, frontend mode controls, or changes to seed imports and database schema.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Mounted all four public read routes without authentication dependencies. Tests verify unchanged responses across credential states and User Service outages, database-free `/areas`, public probes, and OpenAPI security declarations. README now includes lifecycle details and a test-only login/logout smoke procedure.
+
+Also corrected a stale route-exclusion assertion in `test_validation_errors.py`.
+
+**723 unit/API tests passed**, with one existing dependency warning. Syntax and scoped whitespace checks passed.
+
+From `supplier-service/`, with Python 3.12 and `requirements-dev.txt` installed in `.venv`:
+
+```bash
+# Public reads and probes
+./.venv/bin/python -m pytest tests/api/test_supplier_reads.py tests/api/test_health.py tests/api/test_readiness.py -q
+
+# Protected authentication, lifecycle, and error handlers
+./.venv/bin/python -m pytest tests/unit/test_user_service_client.py tests/api/test_auth.py tests/api/test_startup.py tests/api/test_validation_errors.py -q
+
+# Full database-independent regressions
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Live login/logout smoke checks were not run: no Compose services were running. Database integration tests were not run; they require an isolated, migrated PostGIS test database configured through `TEST_DATABASE_URL`.
+
+### Scope
+
+- `supplier-service/app/main.py`: Writing implementation code — register supplier and reference-data routers as public endpoints without authentication dependencies, preserving protected-route error handling and lifecycle cleanup.
+- `supplier-service/app/routes/suppliers.py`: Refactoring and documentation improvements — replace the stale unregistered-router docstring with the public active-only read description.
+- `supplier-service/app/routes/reference_data.py`: Refactoring and documentation improvements — replace the stale unregistered-router docstring with the public controlled-choice description.
+- `supplier-service/tests/api/test_supplier_reads.py`: Writing implementation code — adapt tests to production router registration without duplicate mounting and add recording MockTransport coverage for credential-independent public responses, authentication outages, database-free areas, and public OpenAPI declarations.
+- `supplier-service/tests/api/test_health.py`: Writing implementation code — run liveness tests against an unavailable authentication transport and verify anonymous and credential-bearing probes never resolve sessions or contact User Service.
+- `supplier-service/tests/api/test_readiness.py`: Writing implementation code — run readiness tests against an unavailable authentication transport and verify credential-independent ready/not-ready results based only on database and migration state.
+- `supplier-service/tests/api/test_validation_errors.py`: Writing implementation code — correct the stale route-exclusion regression assertion to permit supplier GET routes while continuing to reject supplier mutation and test-only routes.
+- `supplier-service/README.md`: Refactoring and documentation improvements — document mounted public reads, protected administrator dependencies, the verified identity contract, lifecycle and error mappings, verification commands, and a test-only live login/logout and simulated-outage smoke harness with prerequisites and observed limits.
+
+### Usage summary
+
+Retained public supplier and reference-data reads through the real application factory, preserving existing active-only read services and keeping authentication dependencies reserved for protected operations. Mock-backed tests establish zero User Service calls for public browsing and probes across credential states and outages. Documentation supplies a test-only live session harness and records that live-service and database integration behavior was not verified in this increment. Keith confirmed review of all eight affected files; no human test rerun is claimed.

@@ -1,10 +1,11 @@
 # AI Assistance Disclosure:
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — write unregistered supplier GET adapters with parsed UUIDs and pagination, explicit response conversion, session injection, and safe 404/503 envelopes.
-# Author review: Keith confirmed review of the supplier GET adapters.
-# Details: ../../ai/usage-log.md; ai-20260930-017
+# Scope: Refactoring and documentation improvements — replace the stale unregistered-router docstring with the public active-only read description. (ai-20260930-022)
+# Author review: Keith confirmed review of the supplier GET adapters. Keith confirmed review of public-read registration changes (ai-20260930-022).
+# Details: ../../ai/usage-log.md; ai-20260930-017; ai-20260930-022
 
-"""Supplier read adapters; remain unregistered until authentication is added."""
+"""Public active-only supplier read endpoints."""
 
 from typing import Annotated
 from uuid import UUID
