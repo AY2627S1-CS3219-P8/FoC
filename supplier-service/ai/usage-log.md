@@ -637,3 +637,340 @@ through routes registered only in tests. Documentation explains why future
 mutation routes must call aggregate validation before saving, how PATCH uses
 stored editable values, and how a future importer can reuse the same checks.
 Keith reviewed all affected files; no human test rerun is claimed.
+
+
+## ai-20260930-004
+
+- Recorded at: 2026-09-30T02:12:56+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec`, Python authoring, and `apply_patch`.
+- Mode and scenario: Agentic authoring of permanent seed data and unit tests from the specified JSON shapes, reviewed mapping document, and CP1252 source CSV.
+- Outcome: Retained all three new files: 21 opaque permanent seed labels and one-time UUIDv4 values, normalized source associations, five correction flags, 15 reviewed building assignments, and empty overrides. No database writes, asset copies, or runtime identity generation were added.
+- Verification: Agent ran `./.venv/bin/python -m pytest tests/unit/test_seed_mapping.py -q` from `supplier-service/`: 12 passed with one Starlette/AnyIO dependency deprecation warning. CSV SHA-256 before and after matched `356a04138e972d1c0d2ca088796cd4fb9601e77bdfaaf195e67415703b773e9c`. `git diff --check` passed for tracked changes. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files.
+- Missing evidence: Original per-message timestamps unavailable. Exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: `supplier-service/seed/manifest.json` and `supplier-service/seed/area_mapping.json` are strict JSON and cannot contain comments.
+
+### Prompt 1
+
+```text
+Create the permanent supplier manifest and reviewed area mapping from `supplier-service/docs/seed-mapping.md` and the CP1252 source CSV. Give each of the 21 suppliers a permanent seed key and a random UUID generated once while authoring the file. Use a JSON array for the manifest. Each entry contains `seed_key`, `supplier_id`, and `source_match` with `Name` and `Building`. Add a boolean `correct_24_hours` field, true only for the five reviewed exceptions. Use an area-mapping object with `buildings` and `seed_overrides` dictionaries. Populate all reviewed normalized buildings and leave the override dictionary empty for this dataset.
+
+Files to edit:
+
+- `supplier-service/seed/manifest.json` (new)
+- `supplier-service/seed/area_mapping.json` (new)
+- `supplier-service/tests/unit/test_seed_mapping.py` (new)
+
+Acceptance criteria:
+
+- The manifest contains 21 distinct nonblank seed keys and 21 distinct valid random UUIDs. Keys are permanent labels, never recalculated from row position, name, or coordinates.
+- Every CSV row has exactly one association by trimmed, case-preserving name and normalized building, and every manifest entry has exactly one source row.
+- Normalize `Com 2` and `Com2` to `COM2`, and `Prince George’s Park` to `Prince George's Park`. Preserve other building labels after trimming. All reviewed area assignments match the mapping document and the existing approved area vocabulary.
+- Only Printer @ Com 2, InstaChef, Cafe+ Robot Cafe, Octobox, and Cheers Unmanned Convenience Store have `correct_24_hours` set to true.
+- Tests verify mapping coverage, unique identities, the exact correction set, and reviewed areas. They do not generate replacement UUIDs. Run `./.venv/bin/python -m pytest tests/unit/test_seed_mapping.py -q` from `supplier-service/`.
+- The source CSV remains byte-for-byte unchanged.
+
+Do not implement (out of scope):
+
+- Database writes, asset copies, or runtime UUID generation.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Created all three files with 21 permanent seed keys, one-time UUIDv4 values, the exact five corrections, and 15 reviewed building mappings with empty overrides.
+
+The requested tests passed: **12 passed**. Verified the source CSV’s SHA-256 is unchanged. No database writes, asset copies, or runtime UUID generation added.
+
+### Scope
+
+- `supplier-service/seed/manifest.json`: Requirements work — interpreting and formatting the reviewed supplier associations and five exceptions in the requested JSON structure; data authoring of opaque permanent labels and random UUIDv4 values generated once.
+- `supplier-service/seed/area_mapping.json`: Requirements work — interpreting and formatting all reviewed normalized building-to-area assignments and the empty seed override dictionary.
+- `supplier-service/tests/unit/test_seed_mapping.py`: Writing implementation code — writing unit tests based on the specified manifest schema and reviewed mapping requirements, covering unique identities, CP1252 source coverage, exact corrections, normalization, and approved areas without generating UUIDs.
+
+### Usage summary
+
+Codex authored the permanent manifest and reviewed area mapping, then tested the
+static files against independent reviewed expectations and the unchanged CSV.
+Opaque labels and UUIDs are stored values, separate from normalized source matching.
+The final building count is 15; an earlier progress update incorrectly said 14.
+Keith reviewed all three affected files; no human test rerun is claimed.
+
+
+## ai-20260930-005
+
+- Recorded at: 2026-09-30T04:11:59+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec`, Python fixture authoring, and `apply_patch`.
+- Mode and scenario: Agentic implementation and refinement of reusable CSV loading and manifest matching using the specified permanent JSON data and reviewed aliases.
+- Outcome: Retained four new files, including a CP1252 fixture. Final behavior counts identifiable wrong-width rows in association diagnostics while excluding them from usable matches, and reports the actual starting line for syntax errors after blank lines. No database access, CLI, or field normalization beyond matching was added. The permanent JSON files were available before implementation but were reported as untracked by Git at that time.
+- Verification: Agent ran `./.venv/bin/python -m pytest tests/unit/test_seed_source.py tests/unit/test_seed_mapping.py -q` from `supplier-service/`: initially 52 passed, then 55 passed after the final regressions, with one existing Starlette/AnyIO dependency deprecation warning per run. An initial command from the repository root could not locate the service virtual environment and was rerun from the correct directory. Tests verify all 21 real associations survive CSV reordering. Source CSV SHA-256 was verified unchanged during implementation; syntax and whitespace checks passed before the final refinements. No human test rerun is claimed.
+- Author review: Keith confirmed review of all four affected files, including the final refinements.
+- Missing evidence: Original per-message timestamps unavailable. The exact original implementation prompt is preserved below; the work and its refinements are recorded as one task. No redactions.
+- Header exceptions: `supplier-service/tests/fixtures/seed_source.csv` is CSV data in CP1252; comments would alter the source fixture and its parsing.
+
+### Prompt 1
+
+```text
+Implement CSV loading and one-to-one manifest matching in `supplier-service/app/commands/seed_parsing.py`. Use the permanent identities and area-mapping structure in `supplier-service/seed/manifest.json` and `supplier-service/seed/area_mapping.json`. These checked-in files must be available before implementing this loader. Provide reusable functions that accept paths or loaded mappings so unit tests can supply small fixtures without modifying production data. Return matched source records and structured issues for later normalization.
+
+Files to edit:
+
+- `supplier-service/app/commands/__init__.py` (new)
+- `supplier-service/app/commands/seed_parsing.py` (new)
+- `supplier-service/tests/unit/test_seed_source.py` (new)
+- `supplier-service/tests/fixtures/seed_source.csv` (new)
+
+Acceptance criteria:
+
+- Open CSV files with `encoding="cp1252"` and `newline=""`, and use `csv.DictReader`. Require the ten source headers: `Name`, `Type`, `Building`, `Floor`, `Location Description`, `Latitude`, `Longitude`, `StartingTime`, `ClosingTime`, and `ImageURL`. Report missing or duplicate headers and malformed row widths instead of silently dropping values.
+- Use one building-normalization function for source matching and area-map lookup. Trim names without lowercasing or changing their spelling. Never use coordinates or ordinal position to match identities.
+- Validate JSON structure, UUID syntax, duplicate seed keys, duplicate UUIDs, and duplicate normalized source associations before accepting the batch. Require exactly one source row for each manifest entry and exactly one entry for each source row. Report unmatched entries, unmatched rows, repeated rows, and ambiguous matches.
+- Issues carry source row number when available, source name/building, matched seed key when unambiguous, affected fields, a stable code, and a readable reason. File-level failures have file context. Collect independently detectable issues rather than stopping at the first bad row.
+- Tests cover the CP1252 curly apostrophe, quoted CSV content, missing headers, malformed rows, unreadable files, malformed JSON, invalid and duplicate identities, ambiguous matches, and missing rows. Reordering the real CSV preserves every name/building-to-UUID association.
+- Store a small CP1252 source fixture with representative quoted content and an apostrophe. Build mutated inputs under pytest temporary paths. Run `./.venv/bin/python -m pytest tests/unit/test_seed_source.py tests/unit/test_seed_mapping.py -q` from `supplier-service/`.
+
+Do not implement (out of scope):
+
+- Field normalization beyond source matching, database access, or a command-line entry point.
+```
+
+### Key response 1
+
+Verbatim initial implementation response:
+
+Implemented reusable CP1252 CSV loading and one-to-one manifest matching, with structured issues, JSON validation, shared building normalization, and a representative fixture.
+
+**52 tests passed**, with one existing dependency warning. Reordering preserves all 21 identities; the source CSV remains unchanged.
+
+No database access, CLI, or field normalization beyond matching was added.
+
+Verbatim final refinement response:
+
+Fixed both issues:
+
+- Identifiable malformed rows now count toward duplicate and ambiguous-match detection but cannot become usable matches.
+- Syntax errors after blank lines now report the actual record start.
+
+Added regression tests. **55 tests passed**, with one existing dependency warning.
+
+### Scope
+
+- `supplier-service/app/commands/__init__.py`: Boilerplate generation — scaffold the reusable command-support package without a CLI entry point.
+- `supplier-service/app/commands/seed_parsing.py`: Writing implementation code; Refactoring and documentation improvements — implement CSV and JSON loading, structured issue and match records, identity and mapping validation, shared building aliases, and one-to-one associations from the supplied requirements; document invalid-batch handling and preserve malformed-row association counts and accurate physical line context.
+- `supplier-service/tests/unit/test_seed_source.py`: Writing implementation code — write unit tests for the specified source-loading and matching contract, malformed input and issue context, area lookup, unchanged loaded mappings, reordered real CSV identities, malformed duplicates, and syntax errors after blank lines.
+- `supplier-service/tests/fixtures/seed_source.csv`: Boilerplate generation — create representative CP1252 test data with a curly apostrophe, quoted comma and quote characters, and multiline content.
+
+### Usage summary
+
+Codex implemented a reusable loader that accepts JSON paths or loaded values,
+retains raw CSV fields, and returns structured issues and diagnostic matches.
+A batch with any issue is invalid. Identifiable malformed rows participate in
+association counts but cannot yield usable matches; syntax failures use consumed
+physical lines to locate records after blank lines. The final focused suite passed
+55 tests. Keith confirmed review of all four affected files, including the final
+refinements; no human test rerun is claimed.
+
+
+## ai-20260930-006
+
+- Recorded at: 2026-09-30T04:37:59+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` and `apply_patch` for inspection, refactoring, test authoring, and verification.
+- Mode and scenario: Agentic implementation of the specified shared supplier scalar validation for seed inputs while preserving create and PATCH validation contracts.
+- Outcome: Retained a shared scalar schema, separate seed input/result types, pure validate_supplier_seed_values entry point, and 61 seed tests. Category-name validation remains with the importer; category UUID membership and deduplication remain in API validation. No CSV parsing, database lookups, or HTTP endpoints were added.
+- Verification: Agent ran `./.venv/bin/python -m pytest tests/unit tests/api -q` from `supplier-service/`: final result 473 passed, including 61 new seed tests, with one existing Starlette/AnyIO dependency deprecation warning. An initial test-file write used the wrong relative path; the existing 412 tests passed before the new file was correctly created. The complete 473-test suite passed again after the final shared-validator adjustment. `git diff --check` passed. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files.
+- Missing evidence: Original per-message timestamps unavailable. Exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Expose shared supplier scalar validation so seed rows can reuse API rules while keeping category names unresolved. Refactor `supplier-service/app/schemas.py` and `supplier-service/app/validation/suppliers.py` to share required and optional text, approved areas, locations, and schedule validation. Add a pure `validate_supplier_seed_values(data)` entry point accepting name, area, optional text, nested location, and both times. Its validated result includes the derived closing-day offset but no category fields or supplier identity. Keep category-name validation in the importer. Preserve the existing create and PATCH contracts and their error aggregation.
+
+Files to edit:
+
+- `supplier-service/app/schemas.py`
+- `supplier-service/app/validation/suppliers.py`
+- `supplier-service/tests/unit/test_supplier_seed_validation.py` (new)
+
+Acceptance criteria:
+
+- The seed validator shares the existing text and area validators, `LocationInput`, and `derive_offset` behavior. It preserves decimal coordinate precision and returns independently detectable issues through `DomainValidationError`.
+- Empty optional text becomes null, required text is trimmed and nonblank, and areas use the approved spelling. Coordinates are finite and within inclusive latitude/longitude bounds.
+- Two absent times yield null offset, one absent time is invalid, later closing derives 0, and earlier or equal closing derives 1. Reject caller-supplied offsets, category fields, identities, and other unexpected fields in this scalar input.
+- API creation still requires category UUIDs and checks membership against caller-supplied IDs. PATCH still preserves omitted fields, validates the merged schedule, rejects immutable fields, and preserves original category error positions. The refactor must not weaken either API contract.
+- Tests exercise seed validation without settings, database sessions, or category UUID placeholders. Run `./.venv/bin/python -m pytest tests/unit tests/api -q` from `supplier-service/` to check the shared validation and existing API behavior.
+
+Do not implement (out of scope):
+
+- CSV parsing in the domain validator, category database lookups, or new HTTP endpoints.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Added `validate_supplier_seed_values(data)` with shared scalar rules, precise decimal coordinates, derived schedule offsets, and aggregated errors. Category and identity fields are rejected; create and PATCH contracts remain covered.
+
+**473 unit/API tests passed**, including 61 new seed tests. One existing dependency warning; `git diff --check` passed.
+
+### Scope
+
+- `supplier-service/app/schemas.py`: Writing implementation code; Refactoring and documentation improvements — extract shared required/optional text, area, and daily-time fields into SupplierScalarValues; add seed input/result types using LocationInput and derived-offset output while retaining API category requirements and PATCH presence tracking.
+- `supplier-service/app/validation/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — add and document the pure scalar seed entry point, reuse complete-value validation and independent schedule-error aggregation, and limit category deduplication to API editable values.
+- `supplier-service/tests/unit/test_supplier_seed_validation.py`: Writing implementation code — write tests for scalar seed validation, strict allowed fields, trimming/null rules, approved areas, coordinate precision and bounds, schedule offsets, aggregated issues, and input preservation without category placeholders or database sessions.
+
+### Usage summary
+
+Codex shared the existing supplier scalar rules across seed, creation, and PATCH
+validation. Seed input excludes category and identity fields; its result includes
+the derived closing-day offset. Independent scalar and schedule issues use the
+existing domain error type. The final unit/API suite passed 473 tests, covering
+both the new seed path and existing API behavior. Keith reviewed all three files;
+no human test rerun is claimed.
+
+
+## ai-20260930-007
+
+- Recorded at: 2026-09-30T04:56:31+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` and `apply_patch` for inspection, implementation, and tests.
+- Mode and scenario: Agentic normalization of matched seed records using the reviewed mapping, existing source loader, and shared scalar validator.
+- Outcome: Retained typed parsed records and a whole-batch result, controlled category-name deduplication, exact image URL mapping, strict source-time parsing, and identity-based reviewed corrections. Invalid batches return issues and no parsed records. No category UUIDs, image fetching, database writes, or identity generation were added.
+- Verification: Agent ran the four-file pytest command shown below from `supplier-service/`: final result 163 passed with one existing Starlette/AnyIO dependency deprecation warning. The initial attempt from the repository root could not locate the service virtual environment; the command was rerun from the correct directory. The final run followed additional tests for invalid overrides, whole-batch rejection, and exact supplier/image assignments. Tests confirmed all 21 real records, five reviewed corrections, Supersnacks overnight hours, 26 category assignments, and six images. The production CSV bytes were unchanged. `git diff --check` passed. No human test rerun is claimed.
+- Author review: Keith confirmed review of both affected files.
+- Missing evidence: Original per-message timestamps unavailable. The exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Normalize matched CSV records in `supplier-service/app/commands/seed_parsing.py`. Use its source loader and building normalizer, the checked-in seed mappings, and `validate_supplier_seed_values` in `supplier-service/app/validation/suppliers.py`, which validates supplier scalars without category IDs or database access. Produce typed parsed records containing the permanent seed key and supplier UUID, validated scalar values, and deduplicated controlled category names. Retain record context for reporting and reject the complete batch if any issue exists.
+
+Files to edit:
+
+- `supplier-service/app/commands/seed_parsing.py`
+- `supplier-service/tests/unit/test_seed_normalization.py` (new)
+
+Acceptance criteria:
+
+- Map source fields according to the reviewed seed-mapping document. Preserve display-name spelling and floor text, trim optional text, and turn blanks into null. Preserve coordinates without rounding or guessed corrections.
+- Resolve area by permanent seed-key override first, otherwise normalized building. Reject missing mappings and unapproved areas rather than guessing from coordinates. Validate mapping keys and reject collisions caused by building normalization.
+- Split `Type` on `/`, trim each label, and accept only Food, Coffee, Shopping, and Printing. Reject blank or unknown labels and deduplicate repeated valid labels. Keep names in the parsed output. Do not fabricate or resolve category UUIDs.
+- After trimming, accept nonblank times only as four digits followed by lowercase `hrs`: two digits for the hour (00–23) and two for the minute (00–59). For example, `0000hrs` becomes 00:00, `0930hrs` becomes 09:30, and `2359hrs` becomes 23:59. Construct `datetime.time` values. Reject `900hrs`, `2500hrs`, `1299hrs`, `24:00`, and `0930hrs extra`. Treat blank times as absent and pass schedule completeness checks to shared validation.
+- Apply `correct_24_hours` only through the matched permanent seed identity after source-time parsing. Require the reviewed `0000hrs`/`2359hrs` source pair for flagged entries and report changed pairs for review. Convert that pair to 00:00/00:00, then derive the offset through shared validation. An unflagged 23:59 closing time remains unchanged.
+- Supersnacks retains 11:00/02:00 with offset 1. Equal times represent 24 hours. Interpret all schedules as daily local times in Asia/Singapore.
+- Map the six exact nonblank GitHub blob URLs from the source to ANNA.jpeg, NUS_COOP.jpeg, PRINTER_COM2.jpeg, COOL_SPOT.jpeg, INSTACHEF.jpeg, and ROBOT_CAFE.jpeg. Blank image fields become null. Reject unknown nonblank URLs, including unrelated URLs with a familiar filename. Do not fetch images.
+- Collect independent category, image, time, scalar, and mapping issues across records. A malformed time must not be silently treated as an absent time or produce a fabricated correction.
+- Tests cover aliases, missing and invalid areas, override precedence, blank text/images, unknown categories/images, malformed and incomplete times, equal and overnight times, all five corrections, and an unflagged 23:59 schedule. In your answer, recommend the test command to run and specify its working directory.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented typed seed normalization with controlled category names, exact image mapping, strict time parsing, reviewed corrections, and whole-batch rejection on any issue.
+
+**163 tests passed**, with one existing dependency warning. The source CSV remains unchanged.
+
+Recommended command, from `supplier-service/`:
+
+```sh
+./.venv/bin/python -m pytest tests/unit/test_seed_normalization.py tests/unit/test_seed_source.py tests/unit/test_seed_mapping.py tests/unit/test_supplier_seed_validation.py -q
+```
+
+### Scope
+
+- `supplier-service/app/commands/seed_parsing.py`: Writing implementation code; Refactoring and documentation improvements — add typed parsed records and batch results, normalize matched source fields through shared scalar validation, preserve controlled category names and permanent identities, parse strict daily times, apply reviewed corrections, map exact image URLs, and document complete-batch rejection while collecting independent issues.
+- `supplier-service/tests/unit/test_seed_normalization.py`: Writing implementation code — write tests for reviewed aliases and areas, override precedence and invalid mappings, text and coordinate preservation, controlled categories, exact image URLs, malformed and incomplete times, reviewed corrections, daily schedules, contextual issue aggregation, and whole-batch rejection using temporary source inputs and the real dataset.
+
+### Usage summary
+
+Codex added normalization above the existing source matcher. Parsed records retain
+source context, permanent identity, validated scalar values, and category names.
+Strict source-time failures remain invalid during shared validation, and correction
+flags apply only after matching and parsing the reviewed source pair. Exact URL
+mapping avoids accepting unrelated images with familiar filenames. Any issue
+withholds all parsed records. The final focused suite passed 163 tests. Keith
+reviewed both affected files; no human test rerun is claimed.
+
+
+## ai-20260930-008
+
+- Recorded at: 2026-09-30T11:51:03+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` for inspection, implementation, documentation, and verification.
+- Mode and scenario: Agentic implementation of the specified read-only argparse command using the existing loader and normalizer, with subprocess tests and usage documentation.
+- Outcome: Retained the command, eight command tests, and README usage updates. JSON reports expose diagnostic validated records and counts while explicitly rejecting any invalid batch. No persistence, existence classification, transactions, startup reseeding, frontend integration, or Git commits were implemented.
+- Verification: Agent ran the real-source dry run from `supplier-service/`: 21 validated suppliers, 26 assignments (Food 16, Coffee 5, Shopping 3, Printing 2), five reviewed corrections, and zero issues. Eight command tests passed; the final `./.venv/bin/python -m pytest tests/unit tests/api -q` run passed 528 tests with one existing Starlette/AnyIO dependency deprecation warning. Subprocess tests removed database configuration, blocked database/application imports, checked inert import, and verified stable UUIDs/counts for repeated and reordered input plus unchanged CSV/mapping bytes. Final checks covered source SHA-256, source-data diff, Python syntax/whitespace, README summary placement, and `git diff --check`. No requested checks were unavailable. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files.
+- Missing evidence: Original per-message timestamps unavailable. Exact underlying prompt and verbatim final response are available below without redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Add the dry-run command in `supplier-service/app/commands/seed_suppliers.py` using the complete parsing and normalization pipeline in `supplier-service/app/commands/seed_parsing.py`. That pipeline must supply stable identities, validated values, category names, correction details, and contextual issues without database access. Document the executable command and verify it against the real source CSV.
+
+Files to edit:
+
+- `supplier-service/app/commands/seed_suppliers.py` (new)
+- `supplier-service/tests/unit/test_seed_command.py` (new)
+- `supplier-service/README.md`
+
+Acceptance criteria:
+
+- Provide required `--file` and boolean `--dry-run` arguments using argparse. Resolve the checked-in mapping files relative to the command module, independently of the input-file location. Put execution behind `main()` and an `if __name__ == "__main__"` guard.
+- Emit a JSON report containing source count, parsed/validated supplier count, category counts, total category assignments, reviewed corrections identified by seed key, and contextual validation issues. Count assignments from successfully validated records and make batch rejection explicit when any issues exist.
+- Exit 0 only for a valid dry run. Invalid data, unreadable inputs/mappings, and invocation without `--dry-run` return nonzero with an actionable message. Missing CLI arguments show argparse usage. Expected input failures do not expose a traceback.
+- In your answer, provide the dry-run command to verify the real source CSV and specify its working directory. The expected result is 21 validated suppliers, 26 assignments, category counts Food 16, Coffee 5, Shopping 3, Printing 2, exactly five reviewed corrections, and no validation issues.
+- Subprocess tests run with database configuration absent. Verify that importing the command does not execute it, the command does not initialize a database connection, and the CSV and mapping files remain byte-for-byte unchanged. Repeated and reordered inputs retain every supplier UUID and the same summary counts.
+- A fixture with multiple independent failures reports those failures and rejects the batch. No partial success is presented as an accepted import.
+- Update README usage to describe the available parser, report fields, exit behavior, daily schedule assumption, and review process for unmatched source associations that preserves existing seed keys and UUIDs. State that insert/skip/conflict classification will arrive with persistence.
+- In your answer, recommend the test command to run to verify the complete pipeline and existing API behavior, specify its working directory, and report any unavailable checks. Review the final diff for accidental source-data changes.
+
+Do not implement (out of scope):
+
+- Database existence classification, persistence, transactions, reseeding on startup, frontend asset integration, or Git commits.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Added the dry-run CLI, subprocess tests, and README documentation.
+
+Verified: **21 suppliers, 26 assignments** (Food 16, Coffee 5, Shopping 3, Printing 2), **five corrections, zero issues**. Source and mappings remain unchanged.
+
+From `supplier-service/`, run:
+
+```sh
+./.venv/bin/python -m app.commands.seed_suppliers --file ../data/csv/supplier-seed-data.csv --dry-run
+```
+
+Recommended full verification, from the same directory:
+
+```sh
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+**528 tests passed**, with one existing dependency warning. No requested checks were unavailable.
+
+### Scope
+
+- `supplier-service/app/commands/seed_suppliers.py`: Writing implementation code — implement the specified guarded argparse entry point, module-relative mapping resolution, read-only JSON report with per-record validated counts and reviewed corrections, explicit batch rejection, and actionable nonzero exits.
+- `supplier-service/tests/unit/test_seed_command.py`: Writing implementation code — write subprocess tests for real-source summaries, stable permanent identities under repetition/reordering, absent database configuration, inert import, blocked database imports, unchanged source/mapping bytes, multiple independent failures, and CLI/input failure behavior.
+- `supplier-service/README.md`: Refactoring and documentation improvements — document executable dry-run usage, parser availability, report fields and diagnostic counts, exit behavior, daily Asia/Singapore schedules, identity-preserving association review, test commands, and persistence-only future classification.
+
+### Usage summary
+
+Codex added a dry-run command that reuses the complete loader and normalizer for
+unambiguous matches without database access. It reports successful per-record
+validation diagnostically while rejecting the entire batch if any issue exists.
+The real dataset produced the expected supplier, category, and correction counts.
+The full unit/API suite passed 528 tests. Keith reviewed all three affected files;
+no human test rerun is claimed.

@@ -2,10 +2,11 @@
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — define separate Pydantic client and cleaned-result types, strict trimmed text, forbidden extra fields, nested coordinate validation, daily-time parsing, and category membership checks at original entry positions.
 # Scope: Writing implementation code; Refactoring and documentation improvements — share mutable-field validators between creation and PATCH, add SupplierPatch presence tracking and a separate cleaned PATCH result, and document omission versus explicit null.
-# Author review: Keith confirmed review of the creation-validation and PATCH-validation changes (ai-20260930-001; ai-20260930-002).
-# Details: ../ai/usage-log.md; ai-20260930-001; ai-20260930-002
+# Scope: Writing implementation code; Refactoring and documentation improvements — extract shared scalar fields and add category-free seed input/result schemas using the existing location and daily-time rules.
+# Author review: Keith confirmed review of the creation-validation and PATCH-validation changes (ai-20260930-001; ai-20260930-002). Keith also confirmed review of the shared seed scalar validation changes (ai-20260930-006).
+# Details: ../ai/usage-log.md; ai-20260930-001; ai-20260930-002; ai-20260930-006
 
-"""Client creation/PATCH input and separately typed, cleaned results."""
+"""Shared supplier scalars, seed/API inputs, and separately typed results."""
 
 from datetime import time
 from decimal import Decimal
@@ -62,14 +63,13 @@ def _known_category(value: UUID, info: ValidationInfo) -> UUID:
 CategoryId = Annotated[UUID, AfterValidator(_known_category)]
 
 
-class SupplierEditableValues(BaseModel):
-    """Complete mutable values, without location or server-managed fields."""
+class SupplierScalarValues(BaseModel):
+    """Shared text and schedule values, without categories or identity."""
 
     model_config = ConfigDict(extra="forbid", revalidate_instances="always")
 
     name: StrictStr
     area: StrictStr
-    category_ids: list[CategoryId]
     description: StrictStr | None = None
     building: StrictStr | None = None
     floor: StrictStr | None = None
@@ -99,12 +99,30 @@ class SupplierEditableValues(BaseModel):
             return None
         return value.strip() or None
 
+
+class SupplierEditableValues(SupplierScalarValues):
+    """Complete mutable API values, without location or server-managed fields."""
+
+    category_ids: list[CategoryId]
+
     @field_validator("category_ids")
     @classmethod
     def nonempty_categories(cls, value: list[UUID]) -> list[UUID]:
         if not value:
             raise PydanticCustomError("EMPTY_CATEGORIES", "Select at least one category.")
         return value
+
+
+class SupplierSeedInput(SupplierScalarValues):
+    """Scalar seed input; category names remain the importer's responsibility."""
+
+    location: LocationInput
+
+
+class SupplierSeedResult(SupplierSeedInput):
+    """Checked scalar seed values with the derived daily schedule offset."""
+
+    closing_day_offset: Literal[0, 1] | None
 
 
 class _SupplierFields(SupplierEditableValues):

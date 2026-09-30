@@ -145,5 +145,62 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   final response are recorded; original timestamps are unavailable. No
   redactions or header exceptions apply.
 
-No file header exceptions apply to these Supplier Service records. Disclosure-only
-updates do not establish human review or submission readiness.
+- [Permanent seed mapping](supplier-service/ai/usage-log.md#ai-20260930-004):
+  Codex (GPT-6) provided Requirements work for the reviewed JSON data, authored
+  permanent labels and one-time UUIDv4 values, and provided Writing implementation
+  code for mapping tests. All three files were retained and reviewed by Keith.
+  Agent verification: 12 tests passed with one dependency warning and the source
+  CSV SHA-256 remained unchanged. No human test rerun is claimed. The exact prompt
+  and final response are recorded; original timestamps are unavailable.
+  Header exceptions: `supplier-service/seed/manifest.json` and
+  `supplier-service/seed/area_mapping.json` are strict JSON and cannot contain comments.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [CSV source loading](supplier-service/ai/usage-log.md#ai-20260930-005):
+  Codex (GPT-6) provided Writing implementation code, Refactoring and documentation
+  improvements, and Boilerplate generation for the Supplier command-support package,
+  loader, tests, and CP1252 fixture. Retained refinements count malformed duplicate
+  rows and report syntax-error line numbers after blank lines correctly. Agent
+  verification: 55 tests passed with one dependency warning, including stability
+  of all 21 real associations after reordering. Keith confirmed review of all four
+  affected files, including the final refinements. No human test rerun is claimed.
+  The original exact prompt and response excerpts are recorded as one task;
+  original timestamps are unavailable. Header exception:
+  `supplier-service/tests/fixtures/seed_source.csv` is CP1252 CSV data that cannot
+  safely contain attribution comments. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Shared seed scalar validation](supplier-service/ai/usage-log.md#ai-20260930-006):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for shared supplier schemas, pure seed scalar
+  validation, and 61 new tests. The changes were retained and all three files
+  were reviewed by Keith. Agent verification: 473 unit/API tests passed with one
+  dependency warning; `git diff --check` passed. No human test rerun is claimed.
+  The exact prompt and final response are recorded; original timestamps are
+  unavailable. No redactions or header exceptions apply to this entry. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Seed normalization](supplier-service/ai/usage-log.md#ai-20260930-007):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for typed seed normalization and its tests. Retained
+  behavior includes controlled category names, reviewed schedule corrections,
+  exact image references, and whole-batch rejection. Keith reviewed both files.
+  Agent verification: 163 focused tests passed with one dependency warning;
+  real-data checks and `git diff --check` passed, and source CSV bytes were unchanged.
+  No human test rerun is claimed. The exact prompt and final response are recorded;
+  original timestamps are unavailable. No redactions or header exceptions apply.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Seed dry-run command](supplier-service/ai/usage-log.md#ai-20260930-008):
+  Codex (GPT-6) provided Writing implementation code for the CLI and subprocess
+  tests, and Refactoring and documentation improvements for usage guidance.
+  All three affected files were retained and reviewed by Keith. Agent verification:
+  the real CSV produced 21 suppliers, 26 assignments, five corrections, and no
+  issues; 528 unit/API tests passed with one dependency warning. Checks covered
+  inert import, absent database access, stable identities/counts, unchanged data,
+  and final syntax/whitespace. No requested checks were unavailable; no human test
+  rerun is claimed. The exact prompt and final response are recorded; original
+  timestamps are unavailable. No redactions or header exceptions apply. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+Disclosure-only updates do not establish submission readiness.

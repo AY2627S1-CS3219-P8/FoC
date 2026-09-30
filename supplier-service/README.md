@@ -2,8 +2,9 @@
 Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-30
 Scope: Documentation — describe database migration, role setup, and observed verification. Refactoring and documentation improvements — update migration-gated deployment, readiness/liveness behavior, inspection, recovery, and verification guidance (2026-09-29).
 Scope: Refactoring and documentation improvements — document future API/import calls to aggregate validation, omission versus null, stored-time PATCH merging, caller-supplied category IDs, safe error responses, test commands, and coverage against the domain-input guide.
-Author review: Keith confirmed review of all affected changes.
-Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003
+Scope: Refactoring and documentation improvements — document the executable seed dry run, JSON diagnostics, exit behavior, daily schedules, identity-preserving review, and future persistence classification.
+Author review: Keith confirmed review of all affected changes, including the dry-run documentation (ai-20260930-008).
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008
 -->
 
 # Supplier Service
@@ -821,12 +822,11 @@ values; raw bodies, rejected values, exception context, and internal messages
 are not copied into the response. This handler unifies request-error formatting;
 it does not replace calling aggregate validation in future mutation routes.
 
-The future CSV importer should parse source rows and apply reviewed source
-mappings separately, then call `validate_supplier_create` with normalized row
-data and caller-supplied category UUIDs before any writes. It can catch
-`DomainValidationError`, inspect `.errors`, and use `.to_dict()` for the same
-error envelope without starting FastAPI or connecting validation to a database.
-No CSV parsing, seed corrections, or persistence are implemented by validation.
+The seed parser applies reviewed source mappings and calls
+`validate_supplier_seed_values` for shared scalar rules without category UUIDs.
+It translates `DomainValidationError` into contextual source issues. Controlled
+category names remain unresolved until persistence is implemented. Domain
+validation itself performs no CSV parsing, seed corrections, or database access.
 
 ### Validation tests and coverage
 
@@ -850,6 +850,72 @@ Observed agent verification: 357 unit/API tests passed with one existing
 Starlette/AnyIO dependency deprecation warning. No requested checks were
 unavailable. These checks require neither a live database nor User Service;
 database integration and real mutation/import workflows were not exercised.
+
+## Seed dry run
+
+From `supplier-service/`, validate the real CP1252 source without database
+configuration or a running API:
+
+```bash
+./.venv/bin/python -m app.commands.seed_suppliers --file ../data/csv/supplier-seed-data.csv --dry-run
+```
+
+`--file` is required and `--dry-run` is a boolean flag. The command resolves
+`seed/manifest.json` and `seed/area_mapping.json` relative to its module, so
+moving the input CSV does not change the mappings used. It never initializes a
+database connection, fetches images, or writes source, mapping, or database data.
+
+The JSON report contains:
+
+- `source_count`: CSV records read with unique headers, including wrong-width
+  records; unreadable files, duplicate headers, or syntax failures can prevent a
+  complete count.
+- `validated_supplier_count`, `category_counts`, and
+  `total_category_assignments`: counts from individually matched and successfully
+  normalized records only; category names are not database UUIDs.
+- `reviewed_corrections`: applied 24-hour corrections with permanent seed key,
+  supplier UUID, source row/name, original times, normalized times, and offset.
+- `validated_records`: diagnostic identities, raw source context, validated scalar
+  values, and category names. Decimal coordinates serialize as strings without
+  rounding. These records are not an accepted partial import.
+- `issues`: file, row number when available, source name/building, unambiguous
+  seed key, affected fields, stable code, and readable reason.
+- `valid`, `batch_rejected`, `dry_run`, and `message`: explicit batch outcome.
+  Any issue rejects the whole batch even if diagnostic counts are nonzero.
+
+The real source should report 21 validated suppliers, 26 category assignments
+(Food 16, Coffee 5, Shopping 3, Printing 2), exactly five reviewed corrections,
+and no issues. All schedules apply daily, Monday–Sunday, as local wall-clock
+times in Asia/Singapore. The five flagged midnight-to-23:59 source pairs are
+reviewed 24-hour schedules; unflagged 23:59 closings remain literal. Supersnacks
+retains 11:00–02:00 with closing-day offset 1.
+
+Exit status is 0 only for a valid dry run, 1 for reported input/mapping validation
+failures, and 2 for CLI usage errors (including omission of `--dry-run`). Expected
+input failures produce contextual JSON issues rather than a traceback. Missing
+arguments show argparse usage. Review issues and correct source data or reviewed
+mappings before retrying; never regenerate permanent IDs to make a row match.
+
+The reusable parser is `app.commands.seed_parsing.parse_seed_source`; it accepts
+CSV and mapping paths or loaded JSON mappings, returning typed normalized records
+only when the entire batch is valid. The command uses the same loader and
+normalizer per unambiguous match to retain diagnostic counts for rejected batches.
+For unmatched or ambiguous name/building associations, review the source change
+against [the mapping document](docs/seed-mapping.md). When it is confirmed to be
+the same supplier, update only its `source_match` association while preserving
+its existing `seed_key` and `supplier_id`. Coordinates and row order are never
+identity evidence. Changed flagged source-time pairs also require review.
+
+Insert/skip/conflict classification will arrive with persistence. This command
+does not check database existence, insert suppliers, start transactions, reseed
+on startup, or integrate frontend assets.
+
+Verify the complete parser/command pipeline and existing API behavior from
+`supplier-service/`:
+
+```bash
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
 
 ## Initial Data Import
 
@@ -1065,5 +1131,78 @@ dependency warning and no unavailable requested checks. Coverage was reviewed
 against the domain-input guide; final syntax, whitespace, and documentation
 checks passed. No human test rerun is claimed. The
 [HTTP validation record](ai/usage-log.md#ai-20260930-003) contains the exact prompt
+and verbatim final response. Original timestamps are unavailable; no redactions
+or header exceptions apply to this entry.
+
+
+For permanent seed data, Codex (GPT-6) provided **Requirements work** interpreting
+and formatting `seed/manifest.json` and `seed/area_mapping.json`, authored fixed
+seed labels and one-time UUIDv4 values, and provided **Writing implementation code**
+for `tests/unit/test_seed_mapping.py`. All three files were retained and reviewed
+by Keith. Agent verification: 12 focused tests passed with one dependency warning;
+the source CSV SHA-256 was unchanged. No human test rerun is claimed. The
+[permanent seed mapping record](ai/usage-log.md#ai-20260930-004) contains the exact
+prompt and verbatim final response. Original timestamps are unavailable; no
+redactions apply. Header exceptions: `supplier-service/seed/manifest.json` and
+`supplier-service/seed/area_mapping.json` are strict JSON, which cannot contain
+comments.
+
+
+For CSV source loading, Codex (GPT-6) provided **Writing implementation code** and
+**Refactoring and documentation improvements** for `app/commands/seed_parsing.py`,
+**Writing implementation code** for `tests/unit/test_seed_source.py`, and
+**Boilerplate generation** for `app/commands/__init__.py` and the CP1252 fixture.
+The retained implementation validates source and JSON structures, matches permanent
+identities, and collects structured issues. Final refinements retain malformed rows
+for duplicate detection and correct syntax-error line numbers after blank lines.
+Agent verification: 55 focused tests passed with one existing dependency warning;
+all 21 real associations survive reordering. The production CSV hash was verified
+unchanged during implementation. Keith confirmed review of all four affected files,
+including the final refinements. No human test rerun is claimed.
+The [CSV source-loading record](ai/usage-log.md#ai-20260930-005) records the original
+exact prompt and response excerpts for the combined task. Original timestamps are
+unavailable. Header exception: `supplier-service/tests/fixtures/seed_source.csv`
+is CP1252 CSV data; comments would alter its contents and parsing.
+
+
+For shared seed scalar validation, Codex (GPT-6) provided **Writing implementation
+code** and **Refactoring and documentation improvements** for `app/schemas.py` and
+`app/validation/suppliers.py`, plus **Writing implementation code** for
+`tests/unit/test_supplier_seed_validation.py`. The retained work shares text, area,
+location, and schedule rules while keeping category names with the importer and
+preserving API create/PATCH contracts. Keith confirmed review of all three files.
+Agent verification: 473 unit/API tests passed, including 61 new seed tests, with
+one existing dependency warning; `git diff --check` passed. No human test rerun is
+claimed. The [shared scalar validation record](ai/usage-log.md#ai-20260930-006)
+contains the exact prompt and verbatim final response. Original timestamps are
+unavailable; no redactions or header exceptions apply to this entry.
+
+
+For seed normalization, Codex (GPT-6) provided **Writing implementation code** and
+**Refactoring and documentation improvements** for `app/commands/seed_parsing.py`,
+and **Writing implementation code** for `tests/unit/test_seed_normalization.py`.
+The retained implementation returns typed scalar values and controlled category
+names, applies identity-based reviewed schedule corrections, maps exact image URLs,
+and withholds every parsed record when any issue exists. Keith confirmed review
+of both files. Agent verification: 163 focused tests passed with one existing
+dependency warning; real-dataset checks covered all 21 records, five corrections,
+Supersnacks, category totals, image assignments, and unchanged CSV bytes.
+`git diff --check` passed; no human test rerun is claimed. The
+[seed normalization record](ai/usage-log.md#ai-20260930-007) contains the exact prompt
+and verbatim final response. Original timestamps are unavailable; no redactions
+or header exceptions apply to this entry.
+
+
+For the seed dry-run command, Codex (GPT-6) provided **Writing implementation
+code** for `app/commands/seed_suppliers.py` and `tests/unit/test_seed_command.py`,
+and **Refactoring and documentation improvements** for this README. The command,
+subprocess tests, and usage guidance were retained and reviewed by Keith.
+Agent verification: the real CSV produced 21 suppliers, 26 category assignments,
+five corrections, and no issues; 528 unit/API tests passed with one existing
+dependency warning. Subprocess checks verified absent database configuration,
+inert import, no database imports, stable UUIDs/counts, and unchanged source/mapping
+bytes. Final source-data, syntax, whitespace, and README checks passed. No requested
+checks were unavailable; no human test rerun is claimed. The
+[dry-run command record](ai/usage-log.md#ai-20260930-008) contains the exact prompt
 and verbatim final response. Original timestamps are unavailable; no redactions
 or header exceptions apply to this entry.

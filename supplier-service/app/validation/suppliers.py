@@ -2,10 +2,11 @@
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — combine parsing and independently detectable domain issues using caller-supplied category UUIDs, derive the schedule offset, and deduplicate valid IDs in first-seen order only after successful validation.
 # Scope: Writing implementation code; Refactoring and documentation improvements — add pure merge-and-validate PATCH handling, share complete-value validation with creation, preserve input mappings and category lists, and document how a future update service supplies stored editable values before saving.
-# Author review: Keith confirmed review of the creation-validation and PATCH-validation changes (ai-20260930-001; ai-20260930-002).
-# Details: ../../ai/usage-log.md; ai-20260930-001; ai-20260930-002
+# Scope: Writing implementation code; Refactoring and documentation improvements — expose pure seed scalar validation with shared error aggregation and schedule derivation while retaining API category validation.
+# Author review: Keith confirmed review of the creation-validation and PATCH-validation changes (ai-20260930-001; ai-20260930-002). Keith also confirmed review of the shared seed scalar validation changes (ai-20260930-006).
+# Details: ../../ai/usage-log.md; ai-20260930-001; ai-20260930-002; ai-20260930-006
 
-"""Validate creation and merged PATCH data without persistence or side effects."""
+"""Validate seed scalars, creation, and merged PATCH without persistence."""
 
 from collections.abc import Iterable, Mapping
 from uuid import UUID
@@ -15,11 +16,25 @@ from pydantic import TypeAdapter, ValidationError
 from app.schemas import (
     DailyTime, SupplierCreateInput, SupplierCreateResult, SupplierEditableValues,
     SupplierPatch, SupplierPatchResult,
+    SupplierScalarValues, SupplierSeedInput, SupplierSeedResult,
 )
 from app.validation.errors import DomainValidationError, parsing_issues
 from app.validation.opening_hours import derive_offset
 
 _daily_time = TypeAdapter(DailyTime)
+
+
+def validate_supplier_seed_values(data: object) -> SupplierSeedResult:
+    """Validate scalar seed values independently of categories and persistence.
+
+    Input accepts the shared text fields, nested location, and daily times.
+    Identity, category fields, and caller-derived offsets are forbidden. Category
+    names must be checked separately by the importer. Independent scalar errors
+    are collected using the same rules as complete API creation and merged PATCH.
+    """
+    if isinstance(data, SupplierSeedInput):
+        data = data.model_dump()
+    return SupplierSeedResult(**_validate_complete(data, SupplierSeedInput))
 
 
 def validate_supplier_create(
@@ -74,8 +89,8 @@ def validate_supplier_patch(
 
 def _validate_complete(
     data: object,
-    schema: type[SupplierEditableValues],
-    existing_category_ids: Iterable[UUID],
+    schema: type[SupplierScalarValues],
+    existing_category_ids: Iterable[UUID] = (),
 ) -> dict[str, object]:
     """Collect parsing and independent domain errors before returning any values.
 
@@ -86,9 +101,8 @@ def _validate_complete(
     errors = []
     parsed = None
     try:
-        parsed = schema.model_validate(
-            data, context={"category_ids": frozenset(existing_category_ids)}
-        )
+        context = {"category_ids": frozenset(existing_category_ids)}
+        parsed = schema.model_validate(data, context=context)
     except ValidationError as error:
         errors.extend(parsing_issues(error))
 
@@ -116,6 +130,7 @@ def _validate_complete(
         raise DomainValidationError(errors)
 
     values = parsed.model_dump()
-    values["category_ids"] = list(dict.fromkeys(parsed.category_ids))
+    if isinstance(parsed, SupplierEditableValues):
+        values["category_ids"] = list(dict.fromkeys(parsed.category_ids))
     values["closing_day_offset"] = offset
     return values
