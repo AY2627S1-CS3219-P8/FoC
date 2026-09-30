@@ -3,6 +3,7 @@
 import pytest
 from uuid import uuid4
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from app.db import Base, get_db
 from app.main import app
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
 from app.schemas import UserCreate
+from app.service_auth import require_internal_service
 from app.services.users import register_user
 
 
@@ -173,3 +175,17 @@ def test_internal_status_check_requires_the_service_token(client, database, head
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid internal service credentials"
+
+
+def test_internal_check_rejects_non_ascii_service_token_without_server_error(
+    monkeypatch,
+):
+    """Malformed Unicode credentials receive 401 instead of raising TypeError."""
+
+    monkeypatch.setenv("USER_SERVICE_INTERNAL_TOKEN", INTERNAL_TOKEN)
+
+    with pytest.raises(HTTPException) as error:
+        require_internal_service("é")
+
+    assert error.value.status_code == 401
+    assert error.value.detail == "Invalid internal service credentials"

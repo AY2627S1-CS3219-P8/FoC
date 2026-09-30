@@ -25,7 +25,19 @@ def require_internal_service(
             detail="Internal service authorization is not configured",
         )
 
-    if service_token is None or not hmac.compare_digest(service_token, expected_token):
+    if service_token is None:
+        token_matches = False
+    else:
+        try:
+            token_matches = hmac.compare_digest(
+                service_token.encode("utf-8"),
+                expected_token.encode("utf-8"),
+            )
+        except UnicodeEncodeError:
+            # Treat malformed header/configuration text as invalid credentials.
+            token_matches = False
+
+    if not token_matches:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid internal service credentials",
