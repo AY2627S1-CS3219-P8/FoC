@@ -8,25 +8,55 @@ from sqlalchemy.orm import Session
 from app.auth import AuthContext, get_current_session, revoke_session
 from app.db import get_db
 from app.schemas import (
+    AdminCheckResponse,
     BasicProfileResponse,
     LoginResponse,
     UserCreate,
     UserLogin,
     UserResponse,
+    UserStatusResponse,
     UserUpdate,
 )
+from app.service_auth import require_internal_service
 from app.services.users import (
     deactivate_user,
+    get_user_status,
     get_user_profile,
+    is_user_admin,
     login_user,
     reactivate_user,
     register_user,
+    revoke_admin_rights,
+    suspend_user,
+    unsuspend_user,
     update_user_profile,
 )
 from app.services.profiles import own_profile_response
 
 
 router = APIRouter()
+
+
+@router.get("/internal/users/{user_id}/admin", response_model=AdminCheckResponse)
+def check_user_admin(
+    user_id: UUID,
+    _: None = Depends(require_internal_service),
+    db: Session = Depends(get_db),
+):
+    """Return an active user's admin status to a trusted internal service."""
+
+    return AdminCheckResponse(is_admin=is_user_admin(user_id, db))
+
+
+@router.get("/internal/users/{user_id}/status", response_model=UserStatusResponse)
+def check_user_status(
+    user_id: UUID,
+    _: None = Depends(require_internal_service),
+    db: Session = Depends(get_db),
+):
+    """Return an account's status to a trusted internal service."""
+
+    return UserStatusResponse(status=get_user_status(user_id, db))
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -54,6 +84,39 @@ def get_current_user(auth: AuthContext = Depends(get_current_session)):
     """Return the authenticated user's profile."""
 
     return own_profile_response(auth.user)
+
+
+@router.post("/admin/users/{user_id}/suspend", response_model=UserResponse)
+def suspend_account(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Suspend a user account as an active administrator."""
+
+    return suspend_user(auth.user_id, user_id, db)
+
+
+@router.post("/admin/users/{user_id}/unsuspend", response_model=UserResponse)
+def unsuspend_account(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Restore another suspended account to active status."""
+
+    return unsuspend_user(auth.user_id, user_id, db)
+
+
+@router.post("/admin/users/{user_id}/revoke-admin", response_model=UserResponse)
+def revoke_admin(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Revoke administrator rights from another administrator."""
+
+    return revoke_admin_rights(auth.user_id, user_id, db)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)
