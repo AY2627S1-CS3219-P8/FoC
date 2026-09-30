@@ -5,12 +5,21 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-jakarta-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* FoC brand palette */
+  --color-brand: #f6a444;
+  --color-brand-strong: #e98a1c;
+  --color-brand-soft: #fdefd0;
+  --color-brand-tint: #fff7e6;
+  --color-courier: #1f4fd8;
+  --color-courier-soft: #e3ebfd;
+  --color-surface: #f6f8f7;
 }
 
 :root {
-  --background: oklch(1 0 0);
+  --background: #f6f8f7;
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
