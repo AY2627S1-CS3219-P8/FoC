@@ -93,7 +93,9 @@ export function StoreDirectory({
                   </span>
                   <span className='mt-1 flex items-center gap-1 text-xs text-slate-500'>
                     <MapPin className='size-3.5 shrink-0' aria-hidden />
-                    <span className='truncate'>{formatStoreLocation(store)}</span>
+                    <span className='truncate'>
+                      {formatStoreLocation(store)}
+                    </span>
                   </span>
                 </span>
                 {selected && (

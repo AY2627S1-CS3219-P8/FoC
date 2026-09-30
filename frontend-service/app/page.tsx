@@ -1,5 +1,14 @@
-import { redirect } from 'next/navigation';
+import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
-export default function RootPage() {
-  redirect('/home');
+import { LoginForm } from '@/components/auth/login-form';
+
+export const metadata: Metadata = { title: 'Log In · Friend on Campus' };
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
 }
