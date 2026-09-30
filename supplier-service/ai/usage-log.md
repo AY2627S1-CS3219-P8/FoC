@@ -974,3 +974,350 @@ validation diagnostically while rejecting the entire batch if any issue exists.
 The real dataset produced the expected supplier, category, and correction counts.
 The full unit/API suite passed 528 tests. Keith reviewed all three affected files;
 no human test rerun is claimed.
+
+## ai-20260930-009
+
+- Recorded at: 2026-09-30T12:28:49+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` for inspection, implementation, documentation, and verification.
+- Mode and scenario: Agentic implementation using the specified ParsedSeedRecord, SQLAlchemy repository/service architecture, caller-owned session, and documented duplicate policy.
+- Outcome: Retained all six requested files, including read-only classification and 17 integration tests. Supplier writes, new migrations, API endpoints, and CLI wiring were not implemented. The disposable PostGIS container was removed after verification.
+- Verification: Agent ran 17 classification integration tests plus 528 existing unit/API tests: 545 passed with one existing Starlette/AnyIO dependency deprecation warning. Integration fixtures applied migrations on an isolated PostgreSQL/PostGIS database; snapshots checked all supplier, category, and assignment values remained unchanged. Tests also checked pending ORM edits were not flushed. Initial execution used an incorrect working-directory-relative path, then local database connections were blocked by the sandbox; both were resolved before the successful final run. The scoped seed-mapping whitespace check passed; the repository-wide check reported pre-existing trailing whitespace in supplier-service/ai/usage-log.md, which was left unchanged. No human test rerun is claimed.
+- Author review: Keith confirmed review of the recent implementation and all six affected files.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Implement database classification for validated supplier seed records. Use `ParsedSeedRecord` from `supplier-service/app/commands/seed_parsing.py` and the existing SQLAlchemy models. Put reusable category resolution, identity lookup, and active-duplicate queries in `supplier-service/app/repositories/suppliers.py`. Put seed classification in `supplier-service/app/services/seed_import.py`. Accept a caller-owned session and return per-record insert, skip, or conflict decisions without modifying the database. Read the duplicate policy in `supplier-service/docs/decisions.md` and record the confirmed identity-check policy in `supplier-service/docs/seed-mapping.md`.
+
+Files to edit:
+
+- `supplier-service/app/repositories/__init__.py` (new)
+- `supplier-service/app/repositories/suppliers.py` (new)
+- `supplier-service/app/services/__init__.py` (new)
+- `supplier-service/app/services/seed_import.py` (new)
+- `supplier-service/tests/integration/test_seed_import.py` (new)
+- `supplier-service/docs/seed-mapping.md`
+
+Acceptance criteria:
+
+- Resolve controlled category names to existing migrated category IDs. Missing definitions produce contextual issues. Never create categories or import migration constants as runtime data.
+- Look up manifest UUIDs across active and deleted suppliers. Skip an existing UUID only when its immutable latitude and longitude match exactly. Report a coordinate mismatch for review without updating the record. Changes to any editable fields or category assignments do not turn an expected identity into a conflict.
+- For missing UUIDs, detect active duplicates using the same database expressions as `uq_supplier_active_name_location`: lowercased, trimmed name and exact longitude and latitude. Deleted matches do not block a new identity. Different names at one point and equal names at different points remain valid.
+- Detect duplicate candidates within the proposed batch as well as against persisted active records. Return deterministic contextual decisions with seed key, UUID, source row, and reason. Collect independently detectable conflicts before rejecting the batch.
+- Verify classification on an isolated migrated PostgreSQL/PostGIS database, including missing categories, edited and deleted seed identities, coordinate conflicts, active duplicates, deleted duplicates, and duplicates within a batch. Classification leaves all database values unchanged.
+- In your answer, recommend the appropriate test commands based on the completed implementation and project scripts. Include the working directory and prerequisites.
+
+Do not implement (out of scope):
+
+- Supplier writes, new schema migrations, API endpoints, or command-line wiring.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented read-only classification, reusable repository queries, contextual conflict reporting, and the confirmed identity policy documentation. Caller sessions remain unmodified.
+
+Verified: **545 tests passed**, including 17 new tests against isolated migrated PostgreSQL/PostGIS.
+
+Recommended commands from `supplier-service/`:
+
+```sh
+.venv/bin/python -m pytest tests/integration/test_seed_import.py -q
+.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Prerequisites: Python 3.12, `requirements-dev.txt` installed, and `TEST_DATABASE_URL` using `postgresql+psycopg` for a disposable PostGIS database ending in `_test`, separate from development. Integration fixtures apply migrations automatically.
+
+No writes, migrations, endpoints, or CLI wiring were added.
+
+### Scope
+
+- `supplier-service/app/repositories/__init__.py`: Boilerplate generation — scaffold the reusable supplier repository package.
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code — implement category resolution, active/deleted UUID lookup, and PostgreSQL index-aligned active-duplicate queries with autoflush disabled.
+- `supplier-service/app/services/__init__.py`: Boilerplate generation — scaffold the application service package for caller-owned sessions.
+- `supplier-service/app/services/seed_import.py`: Writing implementation code — classify validated ParsedSeedRecord batches into contextual insert, skip, or conflict decisions, compare immutable coordinates, and collect persisted and proposed duplicate conflicts without writes.
+- `supplier-service/tests/integration/test_seed_import.py`: Writing implementation code — test classification against isolated migrated PostgreSQL/PostGIS, including edited/deleted identities, exact coordinate conflicts, category resolution, duplicate policies, aggregate issues, and unchanged database and pending caller state.
+- `supplier-service/docs/seed-mapping.md`: Refactoring and documentation improvements — document the confirmed coordinate-only identity check, controlled category lookup, duplicate expressions, whole-batch rejection, and read-only session contract.
+
+### Usage summary
+
+Codex implemented database classification for validated seed records using the
+specified repository and service boundaries. Existing UUIDs, including deleted
+ones, are checked only against immutable coordinates at PostGIS storage precision.
+Missing identities are checked against active persisted suppliers and proposed
+batch candidates using database name normalization. Independent category and
+identity/duplicate issues are collected before rejecting a batch. All 545 tests
+passed; Keith reviewed the retained work. No human test rerun is claimed.
+
+
+## ai-20260930-010
+
+- Recorded at: 2026-09-30T13:07:36+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` for inspection, implementation, and verification.
+- Mode and scenario: Agentic implementation of the specified atomic import using the existing parsed-batch classifier, SQLAlchemy models, repository insertion helpers, and service-owned transaction.
+- Outcome: Retained changes to all three requested files. The importer takes an Engine and valid ParsedSeedBatch, owns a fresh session, acquires the shared advisory lock before classification, inserts only missing identities, and reports success after commit. No REST mutations, restoration, or updates to existing seed records were added.
+- Verification: Agent initially passed 28 seed integration tests, then added unrelated-uniqueness and pre-commit failure coverage. The final run passed 558 tests: 30 seed integration cases and 528 unit/API tests, with one existing Starlette/AnyIO dependency deprecation warning. Real-source first import and rerun each left 21 suppliers, four categories, and 26 assignments. Snapshot checks confirmed reruns preserved administrator edits, assignments, timestamps, versions, and soft deletion. Assignment FK/unique failures and an injected pre-commit error left zero committed batch inserts. Independent-connection tests observed actual PostgreSQL lock waits and covered first-import commit/rollback plus API active-duplicate and primary-key commit/rollback races. Tests created, migrated, and dropped disposable databases; the enclosing PostGIS container was removed afterward. An initial file-append path error and sandbox-blocked database connection were corrected before successful verification. Final Python syntax and whitespace checks passed for all three files. No human test rerun is claimed.
+- Author review: Keith confirmed review of the recent atomic import work and all three affected files.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Implement an atomic supplier import in `supplier-service/app/services/seed_import.py`. Use its database classifier and the shared queries in `supplier-service/app/repositories/suppliers.py`, which resolve migrated categories and distinguish inserts, expected identity skips, and conflicts. Accept only a fully valid batch produced by `parse_seed_source` in `supplier-service/app/commands/seed_parsing.py`. Keep transaction ownership in the service and insertion helpers in the repository.
+
+Files to edit:
+
+- `supplier-service/app/services/seed_import.py`
+- `supplier-service/app/repositories/suppliers.py`
+- `supplier-service/tests/integration/test_seed_import.py`
+
+Acceptance criteria:
+
+- Use one transaction for the entire import. Acquire PostgreSQL transaction-scoped advisory lock key `3219001` before database classification, and hold it through commit or rollback. Document the key in code so every importer uses the same lock. A waiting import reclassifies after acquiring the lock.
+- Insert only missing identities, with every category assignment in the same transaction. Construct bound PostGIS points with longitude first, latitude second, and SRID 4326. Save normalized values, timezone-aware creation and update timestamps, version 1, and null deletion time.
+- Preserve every field, timestamp, version, deletion marker, and category assignment on skipped identities. Never upsert or treat a primary-key collision as permission to overwrite or automatically skip a record.
+- Keep `uq_supplier_active_name_location` as the final concurrency guard against API-style writes that do not take the seed lock. Recognize only that named uniqueness violation as an active duplicate. Handle primary-key conflicts separately and let unrelated write errors fail the batch without mislabeling them.
+- Any classification conflict or write error leaves no new suppliers or assignments committed. Return successful inserted counts only after commit. A rolled-back batch reports zero committed inserts.
+- Verify the real CSV produces 21 suppliers, four existing categories, and 26 assignments after both the first and second import. Verify reruns preserve administrator edits, changed assignments, and soft deletion. Inject an assignment failure after an earlier insert and verify the whole batch rolls back.
+- Verify two imports using independent connections serialize safely. Verify a concurrent API-style duplicate insert is governed by the unique index, including committed and rolled-back competing writes. Use explicit synchronization and isolated committed test data with cleanup, rather than relying on the existing single-connection rollback fixture for concurrency tests.
+- In your answer, recommend test commands for repeatability, rollback, and concurrency based on the completed implementation and available project scripts. Include the working directory and database prerequisites.
+
+Do not implement (out of scope):
+
+- REST mutation endpoints, automatic restoration, or updates to existing seed records.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented `import_seed_batch(engine, batch)` with one transaction, advisory lock `3219001`, atomic supplier/category inserts, preserved skips, and distinct duplicate/UUID error handling. Successful counts return only after commit; failures report zero inserts.
+
+**558 tests passed**, including 30 seed integration tests covering repeatability, rollback, and synchronized concurrency.
+
+From `supplier-service/`:
+
+```sh
+.venv/bin/python -m pytest tests/integration/test_seed_import.py -q
+.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Prerequisites: Python 3.12, `requirements-dev.txt`, and `TEST_DATABASE_URL` pointing to isolated PostgreSQL/PostGIS via `postgresql+psycopg`, with a database name ending in `_test`. The test role needs database-creation and PostGIS-extension privileges; tests create, migrate, and remove disposable databases.
+
+### Scope
+
+- `supplier-service/app/services/seed_import.py`: Writing implementation code; Refactoring and documentation improvements — implement the specified engine-owned atomic import for valid ParsedSeedBatch input, acquire and document advisory lock 3219001 before classification, use READ COMMITTED isolation, preserve skips, return counts after commit, and distinguish named active-duplicate and UUID conflicts from unrelated database errors.
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — add supplier and category-assignment insertion helpers using bound longitude-first SRID 4326 points, normalized values, aware timestamps, version 1, and null deletion state while leaving transaction ownership in the service.
+- `supplier-service/tests/integration/test_seed_import.py`: Writing implementation code — add 13 atomic import cases using disposable migrated databases, real-source repeatability, administrator-edit and deletion preservation, invalid-input rejection, classification and assignment rollback, pre-commit failure, and explicitly synchronized independent-connection import/API races with cleanup.
+
+### Usage summary
+
+Codex extended the existing read-only classifier with atomic persistence under
+one service-owned transaction. The documented shared advisory lock serializes
+importers, while the named database unique index guards API-style concurrent
+writes. The implementation preserves existing identities without updates,
+retains original database errors as causes, and separates active duplicates
+from primary-key conflicts and unrelated failures. The final suite passed 558
+tests. Keith reviewed all retained changes; no human test rerun is claimed.
+
+
+## ai-20260930-011
+
+- Recorded at: 2026-09-30T14:30:58+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-09-30.
+- Source: Codex (model: GPT-6); `functions.exec` for inspection, implementation, and verification.
+- Mode and scenario: Agentic implementation and verification of the database-aware Supplier seed command and two follow-up bug-fix prompts.
+- Outcome: Retained database-aware import/preview modes, safe contextual JSON reports, migration gating, session-factory use, and unit/integration coverage. No API startup or migration seeding was added. Confirmed and fixed both reported bugs. Parsed batches retain their loaded source snapshot and source count; reports derive diagnostics from that snapshot without file rereads. Invalid batches still expose no accepted records. The CLI integration helper checks for password leaks only for nonempty passwords. Confirmed the rollback-reporting bug and retained explicit transaction outcome tracking. Failures after COMMIT begins are treated conservatively as unknown unless completion is acknowledged; successful rollback before COMMIT reports zero inserts. Uncertain connections are discarded, exception causes remain private, and CLI output supplies reconciliation/rerun guidance without claiming rejection or rollback.
+- Verification (Prompt 1): Agent passed 66 focused command/import tests, then 591 unit/API and seed integration tests with one existing Starlette/AnyIO dependency deprecation warning. Tests covered exact Alembic head gating, database-enforced read-only previews, first/repeat imports, reclassification after preview, invalid input, safe configuration/connectivity failures, rollback, resource disposal, module-relative mappings, unchanged source files, and existing concurrency behavior. An initial edit used an incorrect working-directory-relative path; it was corrected before successful verification. Syntax and whitespace checks passed. Disposable migrated databases and the PostGIS container were removed. No human test rerun is claimed.
+- Verification (Prompt 2): Agent passed 114 selected parser/command/helper tests, then 596 unit/API and seed integration tests with one existing dependency deprecation warning. The complete seed integration suite ran against an isolated passwordless PostGIS connection. Regressions changed CSV and mappings after parsing for both valid and rejected snapshots, checked report/import consistency and retained issues/corrections, and exercised absent, empty, and configured passwords including leaked output rejection. Scoped whitespace checks passed. The disposable test container was removed. No human test rerun is claimed.
+- Verification (Prompt 3): Agent initially observed one failure among eight selected commit/rollback tests: connection cleanup masked the original commit exception. After discarding uncertain connections without masking the original failure, all eight passed. The final unit/API and seed integration run passed 599 tests with one existing dependency deprecation warning. A real PostgreSQL COMMIT persisted 21 suppliers and 26 assignments before an injected lost acknowledgement; importer and CLI tests reported unknown outcomes, withheld committed counts, retained safe diagnostics, and verified unchanged state on idempotent rerun. Pre-commit and confirmed-rollback checks remained covered. Syntax and whitespace checks passed; disposable databases and the container were removed. No human test rerun is claimed.
+- Author review: Keith confirmed review of all affected work across Prompts 1–3 and all five affected files. No human test rerun is claimed.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Extend `supplier-service/app/commands/seed_suppliers.py` into the explicit database-aware import command. Use the classifier and transactional importer in `supplier-service/app/services/seed_import.py`, the typed parser in `supplier-service/app/commands/seed_parsing.py`, and the engine/session factories in `supplier-service/app/db.py`. Preserve useful source diagnostics and reviewed correction reporting from the existing JSON report. Ordinary invocation imports the batch, while `--dry-run` previews its database decisions without writing.
+
+Files to edit:
+
+- `supplier-service/app/commands/seed_suppliers.py`
+- `supplier-service/app/services/seed_import.py`
+- `supplier-service/tests/unit/test_seed_command.py`
+- `supplier-service/tests/integration/test_seed_import.py`
+
+Acceptance criteria:
+
+- Fully validate source and mappings before attempting writes. Invalid input retains independently detectable contextual issues and rejects the whole batch. Never reconstruct accepted records from diagnostic JSON or import only valid rows from a rejected batch.
+- Instantiate settings and database resources only during execution, and dispose of them on success and failure. Importing the command module remains inert. Update obsolete unit assertions that command execution can never access the database while preserving parser isolation.
+- Before classification or import, require installed Alembic heads to exactly match the nonempty packaged heads. Follow the readiness-check mechanism in `supplier-service/app/routes/health.py` without calling the HTTP route. Missing, behind, ahead, or divergent migration state fails with an actionable report. The command never applies migrations itself.
+- Dry run uses a read-only database transaction and performs no inserts, updates, deletes, or permanent UUID generation. Report proposed inserts, skips including deleted identities, and conflicts. Label results as a preview that may change before execution. Reclassify under the import lock during a real run rather than trusting a previous preview.
+- JSON output retains source and validated counts, category counts and assignment totals, reviewed corrections, and contextual issues. Distinguish proposed inserts from committed inserts and include final inserted, skipped, and conflict counts. Explain batch rejection and rollback without implying partial success.
+- Return zero only for a valid, conflict-free preview or successful committed import. Return nonzero for invalid input, conflicts, configuration errors, migration mismatch, connectivity failures, or write failures. Report safe diagnostics without exposing credentials or raw database exception details.
+- Verify CLI behavior for first import, repeat import, unchanged database after dry run, malformed source, missing configuration, migration mismatch, identity and duplicate conflicts, and rollback. Preserve module-relative metadata loading and unchanged CSV/manifest files.
+- In your answer, recommend unit and integration test commands based on the completed implementation and project scripts. Include the working directory and required configuration.
+
+Do not implement (out of scope):
+
+- Seeding from API lifespan, the ordinary API entrypoint, or migrations.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented database-aware CLI imports and read-only previews, migration-head checks, safe JSON failures, and separate proposed/committed counts.
+
+**591 tests passed**, with one existing dependency warning.
+
+From `supplier-service/`:
+
+```sh
+# Preview; omit --dry-run to import
+.venv/bin/python -m app.commands.seed_suppliers \
+  --file ../data/csv/supplier-seed-data.csv --dry-run
+
+# Verification
+.venv/bin/python -m pytest tests/unit tests/api -q
+.venv/bin/python -m pytest tests/integration/test_seed_import.py -q
+```
+
+CLI requires `DATABASE_URL`, `USER_SERVICE_URL`, and matching installed migrations; it never applies migrations.
+
+Tests require Python 3.12, `requirements-dev.txt`, and an isolated PostgreSQL/PostGIS `TEST_DATABASE_URL` ending in `_test`. The test role needs database-creation and PostGIS-extension privileges.
+
+### Prompt 2
+
+```text
+Verify these bugs and perform fixes if necessary:
+1. **Keep the imported data and JSON report consistent**
+
+   In `supplier-service/app/commands/seed_suppliers.py`, the command parses the accepted batch, then rereads the CSV and mappings to build the report. If a file changes between those reads, the report can describe different values from those actually imported. Update the command so validation, accepted records, and diagnostics all come from the same input snapshot. Preserve contextual issues and reviewed corrections, and add a regression test covering a source change between reads.
+2. **Support passwordless connections in the CLI integration tests**
+
+   In `supplier-service/tests/integration/test_seed_import.py`, `run_seed_cli()` assumes the database URL contains a password. The credential-leak assertion raises `TypeError` when the password is `None` and always fails when it is empty. Only run that assertion when the password is nonempty. Add coverage for passwordless URLs while preserving the check that configured passwords never appear in command output.
+```
+
+### Key response 2
+
+Verbatim final response:
+
+Confirmed and fixed both bugs:
+
+- Validation, import records, diagnostics, and corrections now use one retained input snapshot.
+- Credential-leak checks skip absent or empty passwords while still checking configured passwords.
+
+Added regressions for changed source/mapping files and optional passwords. **596 tests passed**, including seed integration tests against passwordless PostGIS; one existing dependency warning remains.
+
+### Prompt 3
+
+```text
+Verify this potential bug and perform fixes if needed:
+
+Handle uncertain commit outcomes accurately
+
+In `supplier-service/app/services/seed_import.py`, every SQLAlchemy failure reports that the entire batch was rolled back. That isn’t guaranteed if the database commits successfully but the connection drops before the command receives confirmation. The command currently reports `rolled_back=true` and zero committed inserts even though rows may have been saved.
+
+Update the importer and command reporting to distinguish a confirmed rollback from an unknown commit outcome. For uncertain outcomes, return nonzero, avoid claiming that nothing was committed, and provide safe guidance to reconcile the database state or rerun the idempotent import. Preserve credential-safe diagnostics.
+
+Add regression coverage that simulates a successful database commit followed by a lost acknowledgement, alongside the existing tests for failures before commit.
+```
+
+### Key response 3
+
+Verbatim final response:
+
+Confirmed and fixed.
+
+- Confirmed rollbacks report zero inserts.
+- Uncertain commits return nonzero with `COMMIT_OUTCOME_UNKNOWN` and null committed/inserted counts, plus safe reconciliation or rerun guidance.
+- Regression tests verify actual committed rows after a simulated lost acknowledgement and an unchanged idempotent rerun.
+
+**599 tests passed**, with one existing dependency warning.
+
+### Scope
+
+- `supplier-service/app/commands/seed_suppliers.py`: Prompt 1: Writing implementation code; Refactoring and documentation improvements — implement the specified execution-only settings/resources, database preview and import dispatch, contextual decision serialization, proposed/committed counts, safe failures, and CLI help. Prompt 2: Writing implementation code; Refactoring and documentation improvements — generate reports from the accepted parser snapshot instead of rereading CSV/mappings, preserving contextual issues and reviewed corrections. Prompt 3: Writing implementation code — report explicit commit outcomes, use null committed/rollback/rejection and inserted values for uncertain commits, retain nonzero exits, and preserve known committed counts after cleanup failures.
+- `supplier-service/app/services/seed_import.py`: Prompt 1: Writing implementation code; Refactoring and documentation improvements — add exact nonempty Alembic-head checks and read-only preview transactions, require migration checks before classification, and use the shared session factory for imports. Prompt 3: Writing implementation code; Refactoring and documentation improvements — distinguish pre-commit, confirmed rollback, unknown, and confirmed committed outcomes; flush before commit, discard uncertain connections, preserve private causes, and return safe reconciliation guidance with unknown inserted counts.
+- `supplier-service/tests/unit/test_seed_command.py`: Prompt 1: Writing implementation code — replace obsolete no-database execution assertions while preserving inert import and parser isolation; test safe configuration failures, resource disposal, source reports, and migration-head validation. Prompt 2: Writing implementation code — add valid/invalid snapshot regressions that change CSV and mappings after parsing and verify diagnostic values, issues, corrections, and typed importer input remain consistent.
+- `supplier-service/tests/integration/test_seed_import.py`: Prompt 1: Writing implementation code — add subprocess CLI tests for preview/import/rerun, schema mismatch, identity and duplicate decisions, malformed source, connectivity failures, rollback, database-enforced read-only behavior, and reclassification after preview. Prompt 2: Writing implementation code — guard credential-leak assertions for absent/empty passwords and test optional passwords while retaining rejection of configured passwords in stdout or stderr. Prompt 3: Writing implementation code; Debugging assistance — simulate successful database commit followed by lost acknowledgement through importer and CLI, verify safe output and idempotent reconciliation, update conservative commit-stage expectations, and test confirmed rollback before commit.
+- `supplier-service/app/commands/seed_parsing.py`: Prompt 2: Writing implementation code; Refactoring and documentation improvements — retain loaded source context and source count in typed results, documenting that only valid batch records are accepted import input.
+
+### Usage summary
+
+Retained database-aware import/preview modes, safe contextual JSON reports, migration gating, session-factory use, and unit/integration coverage. No API startup or migration seeding was added. Confirmed and fixed both reported bugs. Parsed batches retain their loaded source snapshot and source count; reports derive diagnostics from that snapshot without file rereads. Invalid batches still expose no accepted records. The CLI integration helper checks for password leaks only for nonempty passwords. Confirmed the rollback-reporting bug and retained explicit transaction outcome tracking. Failures after COMMIT begins are treated conservatively as unknown unless completion is acknowledged; successful rollback before COMMIT reports zero inserts. Uncertain connections are discarded, exception causes remain private, and CLI output supplies reconciliation/rerun guidance without claiming rejection or rollback. Keith confirmed review of all retained changes across these three exchanges. No human test rerun is claimed.
+
+
+## ai-20260930-012
+
+- Recorded at: 2026-09-30T16:11:48+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Boilerplate generation and Refactoring and documentation improvements for the explicitly requested Supplier image packaging and Compose tools-service workflow.
+- Outcome: Retained all four requested file changes; normal API startup remains independent of explicit seeding.
+- Verification: During this exchange, agent checks passed Compose configuration validation, Supplier application/database image builds on Linux/ARM64, and isolated administrator bootstrap, migrations, and runtime grants. Docker then stalled new containers in Created, including a no-mount probe. Seed execution, dependency-order execution, non-root metadata access, and 21/4/26 rerun totals were not verified in this exchange. Cleanup timed out and disposable resources could remain at its conclusion. Scoped whitespace checks passed. No application test rerun or human test rerun is claimed.
+- Author review: Keith confirmed review of the four affected files.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Package the explicit seed command in the existing Supplier Service image and add a `supplier-seed` tools service to root `compose.yaml`. Use `app.commands.seed_suppliers`, whose normal mode imports atomically and whose `--dry-run` mode previews database classification. Update service documentation to replace the temporary source-only dry-run instructions with the implemented workflow.
+
+Files to edit:
+
+- `supplier-service/Dockerfile`
+- `compose.yaml`
+- `supplier-service/README.md`
+- `supplier-service/docs/seed-mapping.md`
+
+Acceptance criteria:
+
+- Copy `supplier-service/seed/` into the image at the module-relative location expected by the command. Metadata is readable by the existing non-root user. Keep the existing packaged application and Alembic files.
+- Add `supplier-seed` with profile `tools`, image `foc-supplier-service:local`, and the existing service build context. Configure an entrypoint for Python module `app.commands.seed_suppliers` with `--file /seed/supplier-seed-data.csv`, and an empty command so appended `--dry-run` reaches Python.
+- Mount root `data/csv/supplier-seed-data.csv` read-only at `/seed/supplier-seed-data.csv`. Use the existing runtime database credentials and required settings, join `supplier-private`, and publish no ports. Disable the inherited API healthcheck for this one-shot service and disable automatic restart.
+- Require a healthy `supplier-db` and successful completion of `supplier-migrate`. Ordinary API startup never invokes the importer. Preserve existing service startup and migration behavior.
+- Verify Compose configuration and the built image support both import and appended dry-run mode. On an isolated database, verify the migration dependency completes before the seed command and that the second import preserves the 21 supplier and 26 assignment totals with four categories.
+- Document actual configuration prerequisites, migration and explicit seed invocations, JSON result meanings, dry-run preview limits, advisory-lock behavior, and the UUID/immutable-coordinate identity check. Explain that reruns preserve edits and deletion and that conflicts require review rather than overwrites. Do not claim container verification that was not performed.
+- In your answer, recommend the appropriate Compose validation, image build, and isolated end-to-end verification commands based on the completed configuration. Include the working directory, prerequisites, and any checks that could not be completed.
+
+Do not implement (out of scope):
+
+- Frontend asset copying, API features, CI expansion, or automatic seeding during normal startup.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Updated the four requested files: Dockerfile, root Compose configuration, Supplier README, and seed-mapping documentation.
+
+The tools service packages seed metadata, uses runtime credentials, waits for database health and migrations, and supports normal import plus appended `--dry-run`.
+
+Verified Compose configuration and image builds. Isolated bootstrap, migrations, and grants completed, but Docker then stalled new containers in `Created`. Seed execution and 21/4/26 rerun totals remain unverified; cleanup also timed out.
+
+From the repository root, with Docker running and credentials, roles, PostGIS, migrations, and grants configured:
+
+```bash
+docker compose --profile tools config --quiet
+docker compose build supplier-service
+docker compose --profile tools run --rm supplier-seed --dry-run
+docker compose --profile tools run --rm supplier-seed
+```
+
+Follow the [isolated verification instructions](/Users/keith/Documents/FoC/supplier-service/README.md#isolated-verification) for repeat-import checks. Disposable resources under project `foc-seed-packaging-check` may remain and need cleanup after Docker recovers.
+
+### Scope
+
+- `supplier-service/Dockerfile`: Boilerplate generation — configure the existing image to copy module-relative seed metadata with supplier ownership while retaining application and Alembic files.
+- `compose.yaml`: Boilerplate generation — configure the Supplier tools service with the Python module entrypoint, empty command, read-only CSV mount, runtime settings, private network, migration/health dependencies, disabled healthcheck, and no restart or published ports.
+- `supplier-service/README.md`: Refactoring and documentation improvements — replace source-only dry-run instructions with configuration, bootstrap/migration/grant prerequisites, explicit preview/import commands, JSON outcomes, identity and lock behavior, and isolated verification guidance.
+- `supplier-service/docs/seed-mapping.md`: Refactoring and documentation improvements — update future-import wording to the implemented workflow, document atomic and uncertain outcomes, shared advisory locking, preserved identities, and packaged command usage.
+
+### Usage summary
+
+Packaged seed metadata and retained an explicit runtime-role Compose tools service for atomic imports and database-aware previews. Updated operational and mapping documentation to explain setup, result meanings, preserved identities, conflicts, locking, and repeatable isolated verification. The exchange's verification was partial because Docker container startup stalled; no successful container import was claimed. Keith confirmed review of all four affected files. No human test rerun is claimed.

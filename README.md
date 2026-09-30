@@ -203,4 +203,59 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   timestamps are unavailable. No redactions or header exceptions apply. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Database seed classification](supplier-service/ai/usage-log.md#ai-20260930-009):
+  Codex (GPT-6) provided Boilerplate generation, Writing implementation code, and
+  Refactoring and documentation improvements for repository/service packages,
+  read-only classification, integration tests, and the confirmed identity policy.
+  All six files were retained and reviewed by Keith. Agent verification: 545 tests
+  passed, including 17 isolated migrated PostgreSQL/PostGIS tests, with one existing
+  dependency warning. Classification preserved database values and pending caller
+  state. The scoped whitespace check passed; the repository-wide check reported
+  pre-existing usage-log whitespace. No human test rerun is claimed. The exact
+  prompt and final response are recorded; original timestamps are unavailable.
+  No redactions or header exceptions apply. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Atomic supplier import](supplier-service/ai/usage-log.md#ai-20260930-010):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for service-owned transactions, repository insertion
+  helpers, and rollback/concurrency tests. All three files were retained and
+  reviewed by Keith. Agent verification: 558 tests passed, including 30 seed
+  integration cases against isolated migrated PostgreSQL/PostGIS, with one
+  existing dependency warning. Tests verified repeatability, preserved edits and
+  deletion, assignment/pre-commit rollback, and explicitly synchronized importer
+  and API races. Test databases and the container were removed; syntax and
+  whitespace checks passed. No human test rerun is claimed. The exact prompt and
+  final response are recorded; original timestamps are unavailable. No redactions
+  or header exceptions apply. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- Recent Supplier seed command work: Codex (GPT-6) provided Writing
+  implementation code, Refactoring and documentation improvements, and Debugging
+  assistance for the CLI, parser snapshot, importer outcome reporting, and tests.
+  Retained work and exact exchanges are consolidated as Prompts 1–3 for the
+  [database-aware CLI](supplier-service/ai/usage-log.md#ai-20260930-011),
+  [snapshot/passwordless fixes](supplier-service/ai/usage-log.md#ai-20260930-011),
+  and [uncertain commits](supplier-service/ai/usage-log.md#ai-20260930-011).
+  Agent verification passed 591, 596, and 599 tests respectively, each with one
+  existing dependency warning. Tests included passwordless PostGIS and a real
+  commit followed by simulated lost acknowledgement; test resources were removed.
+  Keith confirmed review of all five affected files across these exchanges.
+  No human test rerun is claimed.
+  Exact prompts and final responses are recorded; original timestamps are
+  unavailable. No redactions or header exceptions apply. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Explicit Supplier seed packaging](supplier-service/ai/usage-log.md#ai-20260930-012):
+  Codex (GPT-6) provided Boilerplate generation for the service Dockerfile and
+  root Compose tools service, and Refactoring and documentation improvements
+  for the service README and seed mapping guide. All four changes were retained
+  and reviewed by Keith. During this exchange, Compose validation, image builds,
+  bootstrap, migrations, and grants passed on Linux/ARM64; Docker startup stalled
+  before seed execution checks, and cleanup timed out. No successful container
+  import or human test rerun is claimed for this entry. The exact prompt and
+  final response are recorded; original timestamp unavailable, with no redactions
+  or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.

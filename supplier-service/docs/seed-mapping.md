@@ -1,9 +1,18 @@
+<!--
+AI Assistance Disclosure:
+Tool: Codex (model: GPT-6), date: 2026-09-30
+Scope: Refactoring and documentation improvements — document the confirmed coordinate-only identity check, controlled category lookup, duplicate expressions, whole-batch rejection, and read-only session contract.
+Scope: Refactoring and documentation improvements — update future-import wording to the implemented workflow, document atomic and uncertain outcomes, shared advisory locking, preserved identities, and packaged command usage. (ai-20260930-012)
+Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
+Details: ../ai/usage-log.md; ai-20260930-009; ai-20260930-012
+-->
+
 # Supplier seed mapping
 
-Reviewed with the user on 26 September 2026. This specifies the future importer;
-no CSV changes, generated manifest UUIDs, asset copies, or database writes are
-part of this documentation increment. The CSV is primarily a one-time initial
-source, but importing it again must remain safe.
+The source mapping was reviewed with the user on 26 September 2026. The
+implemented explicit importer follows this mapping and the confirmed database
+identity policy below. The CSV is primarily an initial source; reruns preserve
+existing identities and administrator changes.
 
 ## Source and field mapping
 
@@ -84,8 +93,7 @@ The user confirmed that these five source 0000hrs–2359hrs schedules mean
 - Octobox
 - Cheers Unmanned Convenience Store
 
-Represent these exceptions by permanent seed key in the future manifest or
-associated reviewed mapping. Do not globally convert every 23:59 closing time.
+These exceptions are recorded by permanent seed key in the packaged manifest. Do not globally convert every 23:59 closing time.
 The source CSV stays unchanged. Literal 00:00–23:59 is 23 hours 59 minutes;
 conversion is justified by this review, not inferred from the time format.
 
@@ -121,7 +129,7 @@ uploads and external object storage are outside the initial implementation.
 
 ## Permanent seed identities and explicit review
 
-When implementing parsing, author seed/manifest.json with a permanent seed_key,
+The packaged seed/manifest.json contains a permanent seed_key,
 a random supplier_id generated once, and source_match containing Name and
 Building. Use normalized name/building pairs to locate source rows: trim names
 while preserving case/spelling, and apply the reviewed building aliases. This
@@ -129,7 +137,7 @@ matching is separate from lowercase duplicate detection in the database.
 Require exactly one source row per manifest entry and one manifest entry per
 source row. Row order is never an identity; never generate new UUIDs each run.
 
-Illustrative shape (replace the UUID placeholder when authoring the manifest):
+Illustrative shape (the packaged manifest already contains permanent UUIDs):
 
 ```json
 {
@@ -153,15 +161,17 @@ deleted records, preserving later edits and category assignments.
 
 Validate the complete input and collect independently detectable issues before
 writing. Any invalid row rejects the entire batch; never import only valid rows.
-Insert missing identities and their categories in one transaction. Any database
-failure rolls back the batch. Apply the active-only duplicate policy and report
+Insert missing identities and their categories in one transaction. Failures
+before commit roll back the batch. A lost commit acknowledgement
+has an unknown outcome; reconcile UUIDs or rerun the same idempotent input rather
+than assuming no rows were saved. Apply the active-only duplicate policy and report
 unexpected identity conflicts rather than overwriting existing records.
 
-The future dry-run report should include source count, validated count, category
+The implemented JSON report includes source count, validated count, category
 counts/assignment total, reviewed hour corrections, and per-record issues with
 seed key when matched, source name/building, field, and reason. Row numbers may
-help diagnostics but are not identifiers. Once database access is implemented,
-report proposed inserts, existing-identity skips (including deleted), and
+help diagnostics but are not identifiers. Database classification reports
+proposed inserts, existing-identity skips (including deleted), and
 conflicts. Dry run writes nothing and generates no permanent UUIDs. Invalid
 input or conflicts produce a nonzero exit status.
 
@@ -171,12 +181,72 @@ seed keys/UUIDs, and database identity/active-duplicate conflicts. Existing
 seed identities are expected skips, not conflicts merely because later edits
 changed their values.
 
-Acceptance checks for later implementation:
+Import acceptance checks:
 
 - All 21 rows map to reviewed areas; six image references resolve to six files.
 - Fresh import produces 21 suppliers, four categories, and 26 assignments.
 - Exactly the five reviewed records become 24-hour schedules; Supersnacks is overnight.
 - Reordering source rows preserves identities; changed unmatched names fail review.
 - Reimport preserves administrator edits and deleted records and adds no duplicates.
-- One invalid row or failed database write leaves the whole batch unapplied.
-- The frontend container serves all six image paths and handles null with a placeholder.
+- One invalid row or a confirmed rollback leaves the whole batch unapplied;
+  an uncertain commit is reported explicitly with unknown committed counts.
+- Frontend asset delivery remains a separate integration task.
+
+## Confirmed database classification policy
+
+`app.services.seed_import.classify_seed_records(session, records)` accepts
+validated `ParsedSeedRecord` objects and a caller-owned SQLAlchemy session.
+It returns input-ordered insert, skip, or conflict decisions with seed key,
+manifest UUID, original source record (file and physical row), reason, resolved
+category IDs, and all independently detectable issues. If `result.valid` is
+false, all decisions are diagnostic: reject the entire batch.
+
+Resolve controlled category names from migrated database definitions. Missing
+names produce contextual issues even for existing identities. Never create
+categories or load migration constants as runtime IDs.
+
+Look up UUIDs across active and deleted suppliers. Skip only when both immutable
+coordinates match exactly at PostGIS point storage precision (double precision),
+without rounding or proximity tolerances. Coordinate mismatches require review.
+Editable fields and category assignments do not participate in the identity
+check: preserve later renames, schedules, categories, and deletion state.
+
+For missing UUIDs, compare `lower(btrim(name))` and exact longitude/latitude using
+the same PostgreSQL expressions as `uq_supplier_active_name_location`. Deleted
+matches do not block new identities. Different names at one point and equal
+names at different points remain valid. Normalize proposed names in PostgreSQL
+too, preserving its case and trimming rules. Mark every duplicate candidate in
+a batch as conflicting, including candidates with other issues. Existing UUIDs
+are not proposed inserts; their old seed values cannot cause phantom batch
+duplicates. Persisted active values still participate in duplicate queries.
+
+Classification only selects, disables autoflush, and never modifies ORM objects,
+commits, rolls back, or closes the session. Pending caller changes are neither
+flushed nor included in database classification. This preflight cannot prevent
+concurrent inserts: the implemented transactional importer retains the unique
+index and atomic transaction handling in decisions.md. Real imports acquire
+transaction-scoped advisory lock `3219001` before reclassification and hold it
+through commit or rollback. Waiting imports reclassify after acquiring the lock.
+
+## Running the packaged command
+
+Follow the [explicit import workflow](../README.md#explicit-seed-import) for
+configuration, administrator bootstrap, migrations, runtime grants, JSON outcome
+semantics, and isolated verification. From the repository root:
+
+```bash
+docker compose --profile tools config --quiet
+docker compose build supplier-service
+docker compose run --rm supplier-migrate
+docker compose --profile tools run --rm supplier-seed --dry-run
+docker compose --profile tools run --rm supplier-seed
+```
+
+The tools service mounts the root CSV read-only and uses packaged module-relative
+metadata as the non-root application user. It waits for healthy PostgreSQL and
+successful migrations, uses the runtime role, and publishes no ports. Both modes
+require exact installed/package Alembic heads. Dry run uses a read-only database
+transaction, generates no UUIDs, and is only a preview; imports reclassify under
+the shared lock. Neither ordinary API startup nor migrations invoke the importer.
+Reruns preserve administrator edits, assignments, timestamps, versions, and soft
+deletion when UUID and immutable coordinates agree. Conflicts require review.

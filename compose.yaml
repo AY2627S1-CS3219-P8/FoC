@@ -1,8 +1,9 @@
 # AI Assistance Disclosure:
-# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-30
 # Scope: Boilerplate generation — configure the Supplier API connection to use its restricted runtime database role. Configure the shared Supplier image, migration job settings and dependencies, and successful-migration gating for API startup (2026-09-29).
-# Author review: Keith confirmed review of all affected changes.
-# Details: supplier-service/ai/usage-log.md; ai-20260929-001; ai-20260929-003
+# Scope: Boilerplate generation — configure the Supplier tools service with the Python module entrypoint, empty command, read-only CSV mount, runtime settings, private network, migration/health dependencies, disabled healthcheck, and no restart or published ports. (ai-20260930-012)
+# Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
+# Details: supplier-service/ai/usage-log.md; ai-20260929-001; ai-20260929-003; ai-20260930-012
 
 services:
   user-db:
@@ -88,6 +89,31 @@ services:
     depends_on:
       supplier-db:
         condition: service_healthy
+    networks:
+      - supplier-private
+    healthcheck:
+      disable: true
+
+  supplier-seed:
+    profiles: [tools]
+    image: foc-supplier-service:local
+    build:
+      context: ./supplier-service
+    entrypoint: ["python", "-m", "app.commands.seed_suppliers", "--file", "/seed/supplier-seed-data.csv"]
+    command: []
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
+      USER_SERVICE_URL: http://user-service:8080
+      AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/csv/supplier-seed-data.csv:/seed/supplier-seed-data.csv:ro
+    depends_on:
+      supplier-db:
+        condition: service_healthy
+      supplier-migrate:
+        condition: service_completed_successfully
     networks:
       - supplier-private
     healthcheck:

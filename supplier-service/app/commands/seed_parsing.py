@@ -2,8 +2,9 @@
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement and document the specified CSV/JSON loader, structured issues, permanent-identity matching, malformed-row association counting, and physical line diagnostics.
 # Scope: Writing implementation code; Refactoring and documentation improvements — normalize matched seed records through shared scalar rules, controlled category names, strict source times, reviewed corrections, exact image URLs, and complete-batch rejection.
-# Author review: All affected work, including final refinements, reviewed by Keith. Keith also confirmed review of normalization work (ai-20260930-007).
-# Details: ../../ai/usage-log.md; ai-20260930-005; ai-20260930-007
+# Scope: Writing implementation code; Refactoring and documentation improvements — retain loaded source context and source count in typed results, documenting that only valid batch records are accepted import input. (ai-20260930-011, Prompt 2)
+# Author review: Keith confirmed review of earlier work (ai-20260930-005; ai-20260930-007). Keith also confirmed review of all affected changes under ai-20260930-011 (Prompts 1–3).
+# Details: ../../ai/usage-log.md; ai-20260930-005; ai-20260930-007; ai-20260930-011
 
 """Load, match, and normalize reviewed seed sources without creating identities.
 
@@ -100,6 +101,7 @@ class MatchedSource:
 class SeedSourceResult:
     matches: tuple[MatchedSource, ...]
     issues: tuple[SeedIssue, ...]
+    source_count: int = 0
 
     @property
     def valid(self) -> bool:
@@ -360,7 +362,7 @@ def load_seed_source(
             candidates = by_association.get(source_association(issue.source_name, issue.source_building), [])
             if len(candidates) == 1 and _nonblank(candidates[0][1].get("seed_key")):
                 issues[index] = replace(issue, seed_key=candidates[0][1]["seed_key"])
-    return SeedSourceResult(tuple(matches), tuple(issues))
+    return SeedSourceResult(tuple(matches), tuple(issues), len(source.records))
 
 
 # Exact reviewed references, not filename-based URL matching.
@@ -393,10 +395,15 @@ class ParsedSeedRecord:
 
 @dataclass(frozen=True)
 class ParsedSeedBatch:
-    """An invalid batch exposes issues but never partially accepted records."""
+    """An invalid batch exposes issues but never partially accepted records.
+
+    Retain the loaded source snapshot for diagnostic reports without rereading
+    CSV or mappings. Only records, when valid, are accepted import input.
+    """
 
     records: tuple[ParsedSeedRecord, ...]
     issues: tuple[SeedIssue, ...]
+    source: SeedSourceResult | None = None
 
     @property
     def valid(self) -> bool:
@@ -484,7 +491,7 @@ def normalize_seed_source(source: SeedSourceResult) -> ParsedSeedBatch:
         issues.extend(row_issues)
         if not row_issues and values is not None:
             records.append(ParsedSeedRecord(match.source, match.seed_key, match.supplier_id, values, tuple(categories)))
-    return ParsedSeedBatch(() if issues else tuple(records), tuple(issues))
+    return ParsedSeedBatch(() if issues else tuple(records), tuple(issues), source)
 
 
 def parse_seed_source(

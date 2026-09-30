@@ -1,10 +1,12 @@
 # AI Assistance Disclosure:
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — test command execution, real-source counts, stable identities, inert import, absent database access, unchanged files, and rejected invalid batches in subprocesses.
-# Author review: All affected work reviewed by Keith.
-# Details: ../../ai/usage-log.md; ai-20260930-008
+# Scope: Writing implementation code — replace obsolete no-database execution assertions while preserving inert import and parser isolation; test safe configuration failures, resource disposal, source reports, and migration-head validation. (ai-20260930-011, Prompt 1)
+# Scope: Writing implementation code — add valid/invalid snapshot regressions that change CSV and mappings after parsing and verify diagnostic values, issues, corrections, and typed importer input remain consistent. (ai-20260930-011, Prompt 2)
+# Author review: Keith confirmed review of earlier work (ai-20260930-008). Keith also confirmed review of all affected changes under ai-20260930-011 (Prompts 1–3).
+# Details: ../../ai/usage-log.md; ai-20260930-008; ai-20260930-011
 
-"""Subprocess contracts for the read-only seed command."""
+"""Pure source diagnostics, inert imports, and safe command failure contracts."""
 
 import csv
 import json
@@ -46,15 +48,14 @@ def write_source(path, mutate=None, reverse=False):
         writer.writerows(reversed(rows) if reverse else rows)
 
 
-def test_real_repeated_and_reordered_data_are_stable_and_read_only(tmp_path):
+def test_source_reports_remain_database_independent_and_stable(tmp_path):
+    from app.commands.seed_suppliers import dry_run_report
     before = {path: path.read_bytes() for path in [CSV, *MAPPINGS]}
     reordered = tmp_path / "reordered.csv"
     write_source(reordered, reverse=True)
     reports = []
     for path in (CSV, CSV, reordered):
-        completed = run("--file", path, "--dry-run", cwd=tmp_path)
-        assert completed.returncode == 0, completed.stderr
-        report = json.loads(completed.stdout)
+        report = dry_run_report(path)
         assert report["valid"] and not report["batch_rejected"]
         assert report["source_count"] == report["validated_supplier_count"] == 21
         assert report["category_counts"] == {"Food": 16, "Coffee": 5, "Shopping": 3, "Printing": 2}
@@ -90,13 +91,11 @@ def test_multiple_failures_reject_batch_but_count_only_validated_records(tmp_pat
     assert "Batch rejected" in report["message"]
 
 
-@pytest.mark.parametrize("args", [[], ["--dry-run"], ["--file", str(CSV)]])
-def test_usage_and_required_dry_run(args):
+@pytest.mark.parametrize("args", [[], ["--dry-run"]])
+def test_usage_requires_source(args):
     completed = run(*args)
     assert completed.returncode != 0
     assert "usage:" in completed.stderr and "Traceback" not in completed.stderr
-    if "--file" in args:
-        assert "Add --dry-run" in completed.stderr
 
 
 def test_unreadable_source(tmp_path):
@@ -122,7 +121,7 @@ raise SystemExit(seed_suppliers.main(['--file', {str(CSV)!r}, '--dry-run']))
     assert "JSON_READ_ERROR" in {issue["code"] for issue in report["issues"]}
 
 
-def test_import_is_inert_and_execution_never_imports_database_modules(tmp_path):
+def test_import_is_inert_and_parser_never_imports_database_modules(tmp_path):
     code = f"""
 import contextlib
 import importlib.abc
@@ -136,11 +135,181 @@ sys.meta_path.insert(0, RejectDatabase())
 sys.argv = ['test', '--invalid-import-argument']
 output = io.StringIO()
 with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-    from app.commands.seed_suppliers import main
+    from app.commands.seed_suppliers import dry_run_report
 assert output.getvalue() == ''
-raise SystemExit(main(['--file', {str(CSV)!r}, '--dry-run']))
+assert dry_run_report({str(CSV)!r})['valid']
 """
     completed = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=environment(),
                                capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout)["valid"]
+    assert completed.stdout == ""
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_valid_input_requires_configuration(dry_run, tmp_path):
+    args = ["--file", CSV] + (["--dry-run"] if dry_run else [])
+    completed = run(*args, cwd=tmp_path)
+    assert completed.returncode == 1 and "Traceback" not in completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["source_count"] == report["validated_supplier_count"] == 21
+    assert report["issues"][-1]["code"] == "CONFIGURATION_ERROR"
+    assert report["inserted_count"] == 0 and not report["committed"]
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_resources_disposed_and_database_errors_sanitized(monkeypatch, capsys, dry_run):
+    from sqlalchemy.exc import OperationalError
+    from app import db
+    from app.services import seed_import
+    from app.commands.seed_suppliers import main
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:secret@localhost/supplier_test")
+    monkeypatch.setenv("USER_SERVICE_URL", "http://localhost:8000")
+    disposed, closed = [], []
+
+    class Engine:
+        def dispose(self):
+            disposed.append(True)
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            closed.append(True)
+
+    def fail(*args):
+        raise OperationalError("secret sql", {}, RuntimeError("password=super-secret"))
+
+    monkeypatch.setattr(db, "create_db_engine", lambda settings: Engine())
+    monkeypatch.setattr(db, "create_session_factory", lambda engine: Session)
+    monkeypatch.setattr(seed_import, "preview_seed_batch", fail)
+    monkeypatch.setattr(seed_import, "import_seed_batch", fail)
+    assert main(["--file", str(CSV)] + (["--dry-run"] if dry_run else [])) == 1
+    output = capsys.readouterr()
+    assert "secret" not in output.out + output.err and "Traceback" not in output.err
+    assert json.loads(output.out)["issues"][-1]["code"] == "DATABASE_ERROR"
+    assert disposed == [True] and closed == ([True] if dry_run else [])
+
+
+@pytest.mark.parametrize("heads", [[], ["0001"], ["9999"], ["0002", "branch"]])
+def test_migration_gate_rejects_nonmatching_heads(monkeypatch, heads):
+    from unittest.mock import Mock
+    from app.services import seed_import
+
+    monkeypatch.setattr(seed_import.MigrationContext, "configure", lambda connection: Mock(get_current_heads=lambda: heads))
+    with pytest.raises(seed_import.SeedImportError) as caught:
+        seed_import.require_current_migrations(Mock())
+    assert caught.value.code == "MIGRATION_MISMATCH"
+
+
+def test_migration_gate_rejects_empty_packaged_heads(monkeypatch):
+    from unittest.mock import Mock
+    from app.services import seed_import
+
+    monkeypatch.setattr(seed_import.ScriptDirectory, "from_config", lambda config: Mock(get_heads=lambda: []))
+    session = Mock()
+    with pytest.raises(seed_import.SeedImportError) as caught:
+        seed_import.require_current_migrations(session)
+    assert caught.value.code == "MIGRATION_CONFIGURATION"
+    session.connection.assert_not_called()
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_resources_disposed_after_success(monkeypatch, capsys, dry_run):
+    from app import db
+    from app.services import seed_import
+    from app.commands.seed_suppliers import main
+
+    monkeypatch.setenv('DATABASE_URL', 'postgresql+psycopg://user:secret@localhost/supplier_test')
+    monkeypatch.setenv('USER_SERVICE_URL', 'http://localhost:8000')
+    disposed, closed = [], []
+
+    class Engine:
+        def dispose(self):
+            disposed.append(True)
+
+    class Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            closed.append(True)
+
+    classification = seed_import.SeedClassification(())
+    monkeypatch.setattr(db, 'create_db_engine', lambda settings: Engine())
+    monkeypatch.setattr(db, 'create_session_factory', lambda engine: Session)
+    monkeypatch.setattr(seed_import, 'preview_seed_batch', lambda *args: classification)
+    monkeypatch.setattr(seed_import, 'import_seed_batch', lambda *args: seed_import.SeedImportResult(classification, 0, 0))
+    assert main(['--file', str(CSV)] + (['--dry-run'] if dry_run else [])) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['valid'] and report['committed'] == (not dry_run)
+    assert disposed == [True] and closed == ([True] if dry_run else [])
+
+
+def test_missing_packaged_migrations_are_actionable(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+    from app.services import seed_import
+
+    monkeypatch.setattr(seed_import, 'ALEMBIC_CONFIG_PATH', tmp_path / 'absent.ini')
+    with pytest.raises(seed_import.SeedImportError) as caught:
+        seed_import.require_current_migrations(Mock())
+    assert caught.value.code == 'MIGRATION_CONFIGURATION'
+
+
+@pytest.mark.parametrize('invalid_snapshot', [False, True])
+def test_command_report_and_import_use_same_snapshot(tmp_path, monkeypatch, capsys, invalid_snapshot):
+    from app import db
+    from app.commands import seed_suppliers
+    from app.services import seed_import
+
+    source = tmp_path / 'source.csv'
+    write_source(source, (lambda rows: rows[0].update(Latitude='NaN')) if invalid_snapshot else None)
+    mappings = tmp_path / 'seed'
+    mappings.mkdir()
+    for path in MAPPINGS:
+        (mappings / path.name).write_bytes(path.read_bytes())
+    monkeypatch.setattr(seed_suppliers, 'SEED_ROOT', mappings)
+    monkeypatch.setenv('DATABASE_URL', 'postgresql+psycopg://localhost/supplier_test')
+    monkeypatch.setenv('USER_SERVICE_URL', 'http://localhost:8000')
+    original_parse = seed_suppliers.parse_seed_source
+    snapshots, imported = [], []
+
+    def parse_then_change_files(*args):
+        batch = original_parse(*args)
+        snapshots.append(batch)
+        # Replace input after acceptance but before report construction/import.
+        write_source(source, lambda rows: rows[0].update(Type='Coffee', Floor='changed-after-parse'))
+        (mappings / 'manifest.json').write_text('[]')
+        (mappings / 'area_mapping.json').write_text('{}')
+        return batch
+
+    class Engine:
+        def dispose(self):
+            pass
+
+    def capture_import(engine, batch):
+        imported.append(batch)
+        return seed_import.SeedImportResult(seed_import.SeedClassification(()), len(batch.records), 0)
+
+    monkeypatch.setattr(seed_suppliers, 'parse_seed_source', parse_then_change_files)
+    monkeypatch.setattr(db, 'create_db_engine', lambda settings: Engine())
+    monkeypatch.setattr(seed_import, 'import_seed_batch', capture_import)
+    assert seed_suppliers.main(['--file', str(source)]) == (1 if invalid_snapshot else 0)
+    report = json.loads(capsys.readouterr().out)
+    batch, = snapshots
+    assert report['source_count'] == 21
+    assert len(report['reviewed_corrections']) == 5
+    assert report['issues'] == [issue.to_dict() for issue in batch.issues]
+    if invalid_snapshot:
+        assert not imported and batch.records == ()
+        assert report['validated_supplier_count'] == 20 and report['inserted_count'] == 0
+        assert report['issues'][0]['row_number'] == 2 and report['issues'][0]['seed_key']
+    else:
+        assert imported == [batch] and imported[0] is batch
+        assert report['validated_supplier_count'] == report['inserted_count'] == 21
+        assert report['category_counts'] == {'Food': 16, 'Coffee': 5, 'Shopping': 3, 'Printing': 2}
+        for record, diagnostic in zip(batch.records, report['validated_records'], strict=True):
+            assert diagnostic['values'] == record.values.model_dump(mode='json')
+            assert diagnostic['supplier_id'] == str(record.supplier_id)
+            assert diagnostic['category_names'] == list(record.category_names)

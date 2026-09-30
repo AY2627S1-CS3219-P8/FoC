@@ -3,8 +3,9 @@ Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-30
 Scope: Documentation — describe database migration, role setup, and observed verification. Refactoring and documentation improvements — update migration-gated deployment, readiness/liveness behavior, inspection, recovery, and verification guidance (2026-09-29).
 Scope: Refactoring and documentation improvements — document future API/import calls to aggregate validation, omission versus null, stored-time PATCH merging, caller-supplied category IDs, safe error responses, test commands, and coverage against the domain-input guide.
 Scope: Refactoring and documentation improvements — document the executable seed dry run, JSON diagnostics, exit behavior, daily schedules, identity-preserving review, and future persistence classification.
-Author review: Keith confirmed review of all affected changes, including the dry-run documentation (ai-20260930-008).
-Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008
+Scope: Refactoring and documentation improvements — replace source-only dry-run instructions with configuration, bootstrap/migration/grant prerequisites, explicit preview/import commands, JSON outcomes, identity and lock behavior, and isolated verification guidance. (ai-20260930-012)
+Author review: Keith confirmed review of all affected changes, including the dry-run documentation (ai-20260930-008). Keith confirmed review of the packaging changes (ai-20260930-012).
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012
 -->
 
 # Supplier Service
@@ -103,7 +104,7 @@ configuration, database engine initialization and disposal, revision matching,
 configuration/connection failures, connection release, and readiness recovery.
 They also cover standalone domain checks, creation and merged PATCH validation,
 and shared HTTP 422 handlers through routes registered only by tests. Supplier
-mutation endpoints and CSV import are not implemented.
+mutation endpoints are not implemented; explicit CSV import is available below.
 
 ### Integration-test database configuration
 
@@ -851,103 +852,155 @@ Starlette/AnyIO dependency deprecation warning. No requested checks were
 unavailable. These checks require neither a live database nor User Service;
 database integration and real mutation/import workflows were not exercised.
 
-## Seed dry run
+## Explicit seed import
 
-From `supplier-service/`, validate the real CP1252 source without database
-configuration or a running API:
+The `supplier-seed` tools service imports the reviewed CSV explicitly; ordinary
+API startup never seeds. It shares `foc-supplier-service:local` with the API and
+migrator. The image packages `app/`, Alembic files, and module-relative
+`seed/manifest.json` and `seed/area_mapping.json`, readable by UID 10001.
+The root CSV is mounted read-only at `/seed/supplier-seed-data.csv`.
+The job joins only `supplier-private`, publishes no ports, disables the API
+healthcheck, and never automatically restarts. No User Service connection is made.
+
+Run from the repository root with Docker and Compose available. Configure the
+root `.env` as described in [fresh installation](docs/migrations.md#fresh-installation):
+`POSTGRES_USER` and `POSTGRES_PASSWORD` are needed for full Compose interpolation;
+set `SUPPLIER_POSTGRES_DB`, `SUPPLIER_POSTGRES_USER`,
+`SUPPLIER_POSTGRES_PASSWORD`, `SUPPLIER_MIGRATION_PASSWORD`, and
+`SUPPLIER_RUNTIME_PASSWORD`. Provision PostGIS and the migrator/runtime roles, apply migrations, and
+apply `database/runtime-grants.sql` before seeding. Use URL-safe passwords or
+correctly encode URL components. Compose supplies required `USER_SERVICE_URL`
+and optional timeout/log settings; local Python runs must export those settings
+and `DATABASE_URL` explicitly. The command does not load `.env` itself.
+
+```bash
+docker compose --profile tools config --quiet
+docker compose build supplier-service
+# After administrator bootstrap; stop if migration fails:
+docker compose run --rm supplier-migrate
+# Apply/review runtime grants using the linked installation guide.
+docker compose --profile tools run --rm supplier-seed --dry-run
+docker compose --profile tools run --rm supplier-seed
+```
+
+The empty Compose command lets appended `--dry-run` reach the Python entrypoint.
+Both modes wait for healthy `supplier-db` and successful `supplier-migrate`
+completion. A previous migration job is not a deployment scheduler: follow the
+[existing-volume sequence](docs/migrations.md#deploying-a-new-image-with-the-existing-volume)
+for a new image. The command independently requires installed Alembic heads to
+exactly match the nonempty packaged heads. It never applies migrations itself.
+
+From `supplier-service/`, the equivalent local commands are:
 
 ```bash
 ./.venv/bin/python -m app.commands.seed_suppliers --file ../data/csv/supplier-seed-data.csv --dry-run
+./.venv/bin/python -m app.commands.seed_suppliers --file ../data/csv/supplier-seed-data.csv
 ```
 
-`--file` is required and `--dry-run` is a boolean flag. The command resolves
-`seed/manifest.json` and `seed/area_mapping.json` relative to its module, so
-moving the input CSV does not change the mappings used. It never initializes a
-database connection, fetches images, or writes source, mapping, or database data.
+Validation, accepted records, and diagnostics use one loaded input snapshot.
+Any invalid input rejects the whole batch; diagnostic valid rows are never a
+partial import. Mappings resolve relative to the module, regardless of CSV
+location. No mode generates permanent UUIDs or changes the source or mappings.
 
-The JSON report contains:
+Dry run classifies in a read-only transaction. Its proposed inserts, existing
+identity skips (including deleted identities), and conflicts are a preview that
+may change before execution. Real imports acquire PostgreSQL transaction-scoped
+advisory lock `3219001`, then reclassify and insert suppliers and all assignments
+in one transaction. A waiting importer classifies after acquiring the lock.
+API-style writers do not take this lock; `uq_supplier_active_name_location`
+remains the final active-duplicate concurrency guard.
 
-- `source_count`: CSV records read with unique headers, including wrong-width
-  records; unreadable files, duplicate headers, or syntax failures can prevent a
-  complete count.
-- `validated_supplier_count`, `category_counts`, and
-  `total_category_assignments`: counts from individually matched and successfully
-  normalized records only; category names are not database UUIDs.
-- `reviewed_corrections`: applied 24-hour corrections with permanent seed key,
-  supplier UUID, source row/name, original times, normalized times, and offset.
-- `validated_records`: diagnostic identities, raw source context, validated scalar
-  values, and category names. Decimal coordinates serialize as strings without
-  rounding. These records are not an accepted partial import.
-- `issues`: file, row number when available, source name/building, unambiguous
-  seed key, affected fields, stable code, and readable reason.
-- `valid`, `batch_rejected`, `dry_run`, and `message`: explicit batch outcome.
-  Any issue rejects the whole batch even if diagnostic counts are nonzero.
+An existing manifest UUID is skipped only when immutable longitude and latitude
+match exactly at database point precision. All editable values, timestamps,
+versions, category assignments, and soft deletion are preserved. Coordinate
+mismatches require review, never overwrites or restoration. Missing UUIDs are
+checked for active duplicates using `lower(btrim(name))` and exact coordinates,
+including candidates within the batch. Deleted matches do not block a new UUID.
+Categories must already exist from migrations. See the
+[confirmed identity policy](docs/seed-mapping.md#confirmed-database-classification-policy).
 
-The real source should report 21 validated suppliers, 26 category assignments
-(Food 16, Coffee 5, Shopping 3, Printing 2), exactly five reviewed corrections,
-and no issues. All schedules apply daily, Monday–Sunday, as local wall-clock
-times in Asia/Singapore. The five flagged midnight-to-23:59 source pairs are
-reviewed 24-hour schedules; unflagged 23:59 closings remain literal. Supersnacks
-retains 11:00–02:00 with closing-day offset 1.
+The JSON report includes:
 
-Exit status is 0 only for a valid dry run, 1 for reported input/mapping validation
-failures, and 2 for CLI usage errors (including omission of `--dry-run`). Expected
-input failures produce contextual JSON issues rather than a traceback. Missing
-arguments show argparse usage. Review issues and correct source data or reviewed
-mappings before retrying; never regenerate permanent IDs to make a row match.
+- `source_count`, `validated_supplier_count`, `category_counts`, and
+  `total_category_assignments`: source/diagnostic totals, not committed row counts.
+- `reviewed_corrections` and `validated_records`: the reviewed corrections and
+  normalized diagnostic values with source context; never an accepted partial batch.
+- `decisions` and `issues`: seed key, UUID, source file/row, action and reason,
+  with independently detectable validation or classification issues retained.
+- `proposed_insert_count`, `inserted_count`, `skipped_count`, `conflict_count`:
+  distinguish classified candidates from confirmed committed inserts. A preview
+  has zero committed inserts; a rerun normally has 21 skips.
+- `valid`, `preview`, `dry_run`, `batch_rejected`, `committed`, `rolled_back`,
+  `commit_outcome`, and `message`: batch status. Confirmed rollback reports zero
+  inserts. `commit_outcome: "unknown"` means acknowledgement was lost: inserted
+  count, committed, rolled-back and rejection flags are null, not proof of no
+  writes. Reconcile manifest UUIDs or rerun the idempotent import with the same
+  source/mappings once connectivity returns. `not_attempted` / `not_committed`
+  do not claim a successful commit; `committed` confirms it.
 
-The reusable parser is `app.commands.seed_parsing.parse_seed_source`; it accepts
-CSV and mapping paths or loaded JSON mappings, returning typed normalized records
-only when the entire batch is valid. The command uses the same loader and
-normalizer per unambiguous match to retain diagnostic counts for rejected batches.
-For unmatched or ambiguous name/building associations, review the source change
-against [the mapping document](docs/seed-mapping.md). When it is confirmed to be
-the same supplier, update only its `source_match` association while preserving
-its existing `seed_key` and `supplier_id`. Coordinates and row order are never
-identity evidence. Changed flagged source-time pairs also require review.
+Exit 0 means a valid conflict-free preview or successful import. Invalid input,
+conflicts, configuration/migration/connectivity/write failures, and uncertain
+commit outcomes return nonzero; argparse usage errors return 2. Database
+errors use safe diagnostics. Review conflicts and source associations while
+preserving permanent keys and UUIDs; do not regenerate identities to bypass them.
 
-Insert/skip/conflict classification will arrive with persistence. This command
-does not check database existence, insert suppliers, start transactions, reseed
-on startup, or integrate frontend assets.
+The real source contains 21 suppliers and 26 assignments across four migrated
+categories (Food 16, Coffee 5, Shopping 3, Printing 2). Exactly five reviewed
+midnight-to-23:59 pairs become daily 24-hour schedules; Supersnacks remains
+11:00–02:00, closing-day offset 1. Schedules use Asia/Singapore wall-clock times.
+A first import into an empty migrated database inserts 21; the second inserts
+zero and preserves totals of 21 suppliers, four categories, and 26 assignments.
 
-Verify the complete parser/command pipeline and existing API behavior from
-`supplier-service/`:
+### Isolated verification
+
+Packaging verification on 30 September 2026 passed on retry using Docker
+Linux/ARM64 and the actual repository CSV bind mount. Compose configuration and
+both image builds passed. The disposable database became healthy; administrator
+bootstrap, migrations, and runtime grants completed. UID 10001 could read the
+packaged metadata and Alembic configuration. The migration dependency exited 0
+before seed execution. A first read-only preview left totals at 0 suppliers,
+four categories, and zero assignments; the first import inserted 21 suppliers;
+the second inserted zero and skipped 21, retaining totals of 21/4/26. A final
+preview skipped 21 and preserved those totals. All command checks exited 0.
+The disposable project's containers, network, and volume were removed.
+The earlier Docker `Created` stall did not recur. Native AMD64 execution was
+not tested in this rehearsal.
+
+Use a unique Compose project name (for example `foc-seed-check`) and disposable
+database credentials/name. Prefix **every** installation and test command with
+`docker compose -p foc-seed-check`; this isolates the named volume and network.
+Follow fresh installation steps 1–5 for bootstrap, migration, and runtime grants,
+without starting the API. Then run:
+
+```bash
+docker compose -p foc-seed-check --profile tools config --quiet
+docker compose -p foc-seed-check build supplier-service
+docker compose -p foc-seed-check --profile tools run --rm supplier-seed --dry-run
+docker compose -p foc-seed-check --profile tools run --rm supplier-seed
+docker compose -p foc-seed-check --profile tools run --rm supplier-seed
+docker compose -p foc-seed-check --profile tools run --rm supplier-seed --dry-run
+docker compose -p foc-seed-check ps -a supplier-db supplier-migrate
+docker compose -p foc-seed-check exec -T supplier-db sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT (SELECT count(*) FROM supplier) AS suppliers, (SELECT count(*) FROM category) AS categories, (SELECT count(*) FROM supplier_category) AS assignments"'
+# Only for this disposable project:
+docker compose -p foc-seed-check --profile tools down --volumes --remove-orphans
+```
+
+Check counts before and after each preview: it must leave them unchanged.
+Inspect JSON for first import 21 inserts and second import 0 inserts/21 skips;
+check migration exit 0 and database totals 21/4/26. Do not run the cleanup against
+a persistent project. For automated rollback, identity and concurrency checks,
+from `supplier-service/` run:
 
 ```bash
 ./.venv/bin/python -m pytest tests/unit tests/api -q
+./.venv/bin/python -m pytest tests/integration/test_seed_import.py -q
 ```
 
-## Initial Data Import
-
-Import the [existing supplier CSV](../data/csv/supplier-seed-data.csv)
-through a separate, repeatable command after database migrations.
-
-The import should:
-
-- Handle the source encoding and normalize text consistently.
-- Map source category labels into the controlled category list.
-- Split combined categories such as `Food/Coffee` into assignments.
-- Supply a reviewed campus-area mapping because the CSV has no area field.
-- Convert supplied times into time values and a closing-day offset.
-- Treat ambiguous schedules explicitly rather than silently guessing.
-- Convert absent image references to null.
-- Use stable seed identities so repeated imports do not create duplicates.
-- Avoid overwriting later edits or restoring soft-deleted suppliers.
-
-The reviewed initial mapping uses trimmed supplier names and normalized
-buildings to locate permanent seed identities. Unmatched or ambiguous rows
-require explicit review; do not infer identity from coordinates or row order.
-Any invalid row rejects the entire batch before writes; database failures roll
-back the entire import. Existing seed identities, including deleted records,
-are skipped without overwriting later edits.
-
-All seed schedules apply every day in Asia/Singapore. The five reviewed
-0000hrs–2359hrs records (Printer @ Com 2, InstaChef, Cafe+ Robot Cafe, Octobox,
-and Cheers Unmanned Convenience Store) represent 24 hours and are imported as
-00:00–00:00 with offset 1. This is a per-record correction, not a general
-23:59 conversion. Supersnacks retains 11:00–02:00 with offset 1.
-
-Do not run a destructive reseed whenever an API instance starts.
+The integration command requires `TEST_DATABASE_URL` pointing to isolated
+PostgreSQL/PostGIS with a database name ending `_test`, distinct from
+`DATABASE_URL`. Its role must create disposable databases and install PostGIS;
+see the integration configuration above. Install `requirements-dev.txt` first.
 
 ## Deployment and Verification
 
@@ -1206,3 +1259,90 @@ checks were unavailable; no human test rerun is claimed. The
 [dry-run command record](ai/usage-log.md#ai-20260930-008) contains the exact prompt
 and verbatim final response. Original timestamps are unavailable; no redactions
 or header exceptions apply to this entry.
+
+
+For database seed classification, Codex (GPT-6) provided **Boilerplate generation**
+for `app/repositories/__init__.py` and `app/services/__init__.py`, **Writing
+implementation code** for `app/repositories/suppliers.py`,
+`app/services/seed_import.py`, and `tests/integration/test_seed_import.py`, and
+**Refactoring and documentation improvements** for `docs/seed-mapping.md`.
+All six files were retained and reviewed by Keith. Classification preserves
+caller-owned sessions, checks immutable coordinates for existing active/deleted
+UUIDs, resolves migrated categories, and collects active and batch duplicates.
+Agent verification: 545 tests passed (17 isolated migrated PostgreSQL/PostGIS
+integration tests and 528 unit/API tests), with one existing dependency warning.
+Database snapshots and pending caller state were unchanged by classification.
+The scoped documentation whitespace check passed; the repository-wide check
+reported pre-existing whitespace in the usage log. No human test rerun is claimed.
+The [database classification record](ai/usage-log.md#ai-20260930-009) contains the
+exact prompt and verbatim final response. Original timestamps are unavailable;
+no redactions or header exceptions apply to this entry.
+
+
+For atomic supplier import, Codex (GPT-6) provided **Writing implementation code**
+and **Refactoring and documentation improvements** for
+`app/services/seed_import.py` and `app/repositories/suppliers.py`, plus **Writing
+implementation code** for `tests/integration/test_seed_import.py`. All three files
+were retained and reviewed by Keith. The service owns one transaction, acquires
+advisory lock 3219001 before classification, preserves skipped identities, inserts
+suppliers and assignments atomically, and separates duplicate/UUID conflicts.
+Agent verification: 558 tests passed (30 seed integration cases and 528 unit/API
+tests), with one existing dependency warning. Coverage includes real CSV reruns,
+unchanged administrator edits and deletion state, assignment and pre-commit
+rollback, and synchronized independent-connection import/API races for both
+commit and rollback. Disposable migrated databases and the test container were
+removed. Python syntax and whitespace checks passed for the three changed files.
+No human test rerun is claimed. The
+[atomic import record](ai/usage-log.md#ai-20260930-010) contains the exact prompt
+and verbatim final response. Original timestamps are unavailable; no redactions
+or header exceptions apply to this entry.
+
+
+For the [database-aware seed command](ai/usage-log.md#ai-20260930-011), Codex
+(GPT-6) provided **Writing implementation code** and **Refactoring and documentation
+improvements** for `app/commands/seed_suppliers.py`, `app/services/seed_import.py`,
+`tests/unit/test_seed_command.py`, and `tests/integration/test_seed_import.py`.
+Retained changes added database previews/imports, exact migration-head gating,
+read-only transactions, safe reporting, resource lifecycle checks, and CLI tests.
+Agent verification passed 591 tests with one existing dependency warning.
+
+For the [snapshot and passwordless fixes](ai/usage-log.md#ai-20260930-011), Codex
+(GPT-6) provided **Writing implementation code** and **Refactoring and documentation
+improvements** for `app/commands/seed_parsing.py`, `app/commands/seed_suppliers.py`,
+and the two seed command/import test files. The retained fixes use one loaded
+snapshot for accepted records and diagnostics and guard optional password checks.
+Agent verification passed 596 tests, including the seed integration suite against
+passwordless PostGIS, with one existing dependency warning.
+
+For [uncertain commit outcomes](ai/usage-log.md#ai-20260930-011), Codex (GPT-6)
+provided **Writing implementation code**, **Refactoring and documentation
+improvements**, and **Debugging assistance** for `app/services/seed_import.py`,
+`app/commands/seed_suppliers.py`, and `tests/integration/test_seed_import.py`.
+The retained fix distinguishes confirmed rollback from unknown commit outcomes,
+uses null committed counts when acknowledgement is lost, preserves safe guidance,
+and discards uncertain connections without masking the original failure. Tests
+confirmed persisted rows after simulated lost acknowledgement and an unchanged
+idempotent rerun. Final agent verification passed 599 tests with one existing
+dependency warning; syntax and whitespace checks passed. Temporary database
+resources were removed after each task.
+
+Keith confirmed review of all five affected files and all retained changes across
+these three exchanges. No human test rerun is claimed. The consolidated record contains Prompts 1–3 and their verbatim final responses.
+Original message timestamps are unavailable; no redactions or header exceptions
+apply to these entries.
+
+
+For [explicit seed command packaging](ai/usage-log.md#ai-20260930-012), Codex
+(GPT-6) provided **Boilerplate generation** for `Dockerfile` and root
+`compose.yaml`, and **Refactoring and documentation improvements** for this
+README and `docs/seed-mapping.md`. Retained changes package metadata, configure
+the explicit tools service, and document setup, preview/import outcomes,
+identity preservation, locking, and isolated checks. Within this exchange,
+Compose validation, both image builds, isolated bootstrap, migrations, and
+grants passed on Linux/ARM64. Docker then stalled container startup; seed runs,
+non-root metadata access, dependency-order execution, and rerun totals were
+unverified, and cleanup timed out. These are the historical results for this
+entry, not a claim about subsequent operational checks. Keith confirmed review
+of all four affected files; no human test rerun is claimed. The exact prompt and
+verbatim final response are recorded. Original message timestamp unavailable;
+no redactions or header exceptions apply.
