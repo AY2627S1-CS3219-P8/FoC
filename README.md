@@ -70,3 +70,10 @@ docker compose down
 ```
 
 ---
+
+## Administrator Bootstrap
+
+The initial administrator is configured through the `BOOTSTRAP_ADMIN_*`
+variables in `.env`. See the
+[user-service bootstrap documentation](./user-service/README.md#first-administrator-bootstrap)
+for setup details and behavior.
