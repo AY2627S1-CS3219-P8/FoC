@@ -3,14 +3,15 @@
 # Scope: Writing implementation code — define separate Pydantic client and cleaned-result types, strict trimmed text, forbidden extra fields, nested coordinate validation, daily-time parsing, and category membership checks at original entry positions.
 # Scope: Writing implementation code; Refactoring and documentation improvements — share mutable-field validators between creation and PATCH, add SupplierPatch presence tracking and a separate cleaned PATCH result, and document omission versus explicit null.
 # Scope: Writing implementation code; Refactoring and documentation improvements — extract shared scalar fields and add category-free seed input/result schemas using the existing location and daily-time rules.
-# Author review: Keith confirmed review of the creation-validation and PATCH-validation changes (ai-20260930-001; ai-20260930-002). Keith also confirmed review of the shared seed scalar validation changes (ai-20260930-006).
-# Details: ../ai/usage-log.md; ai-20260930-001; ai-20260930-002; ai-20260930-006
+# Scope: Writing implementation code — define separate read response models and explicit loaded-value conversion preserving nulls, ordering, coordinates, and time precision. (ai-20260930-016)
+# Author review: Keith confirmed review of the creation-validation and PATCH-validation changes (ai-20260930-001; ai-20260930-002). Keith also confirmed review of the shared seed scalar validation changes (ai-20260930-006) and read response models (ai-20260930-016).
+# Details: ../ai/usage-log.md; ai-20260930-001; ai-20260930-002; ai-20260930-006; ai-20260930-016
 
 """Shared supplier scalars, seed/API inputs, and separately typed results."""
 
-from datetime import time
+from datetime import datetime, time
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -20,6 +21,71 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from app.validation import APPROVED_AREAS, DomainValidationError, validate_coordinates
+
+if TYPE_CHECKING:
+    from app.repositories.suppliers import CategoryRead, SupplierPage, SupplierRead
+
+
+class LocationResponse(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class CategoryResponse(BaseModel):
+    id: UUID
+    name: str
+
+    @classmethod
+    def from_read(cls, value: "CategoryRead") -> "CategoryResponse":
+        return cls(id=value.id, name=value.name)
+
+
+class SupplierResponse(BaseModel):
+    """Loaded output values, independent of mutation normalization."""
+
+    id: UUID
+    name: str
+    area: str
+    location: LocationResponse
+    categories: list[CategoryResponse]
+    description: str | None
+    building: str | None
+    floor: str | None
+    image_key: str | None
+    opening_time: time | None
+    closing_time: time | None
+    closing_day_offset: int | None
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    version: int
+
+    @classmethod
+    def from_read(cls, value: "SupplierRead") -> "SupplierResponse":
+        return cls(
+            id=value.id, name=value.name, area=value.area,
+            location=LocationResponse(latitude=value.latitude, longitude=value.longitude),
+            categories=[CategoryResponse.from_read(category) for category in value.categories],
+            description=value.description, building=value.building, floor=value.floor,
+            image_key=value.image_key, opening_time=value.opening_time,
+            closing_time=value.closing_time, closing_day_offset=value.closing_day_offset,
+            created_at=value.created_at, updated_at=value.updated_at,
+            deleted_at=value.deleted_at, version=value.version,
+        )
+
+
+class SupplierPageResponse(BaseModel):
+    items: list[SupplierResponse]
+    total: int
+    limit: int
+    offset: int
+
+    @classmethod
+    def from_read(cls, value: "SupplierPage") -> "SupplierPageResponse":
+        return cls(
+            items=[SupplierResponse.from_read(item) for item in value.items],
+            total=value.total, limit=value.limit, offset=value.offset,
+        )
 
 
 def _coordinate(value: object, *, latitude: bool) -> Decimal:

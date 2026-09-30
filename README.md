@@ -294,4 +294,37 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   no redactions or header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Supplier read response models](supplier-service/ai/usage-log.md#ai-20260930-016):
+  Codex (GPT-6) provided Writing implementation code for response schemas and
+  detached-value serialization tests. Both files were retained and reviewed by
+  Keith. Agent checks passed 11 new tests and all 552 unit/API tests with one
+  dependency warning; scoped whitespace checks passed. Database integration
+  tests were not run; no human test rerun is claimed. The exact prompt and final
+  response are recorded; original timestamp unavailable, with no redactions or
+  header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Unregistered Supplier GET adapters](supplier-service/ai/usage-log.md#ai-20260930-017):
+  Codex (GPT-6) provided Writing implementation code for the supplier router and
+  isolated HTTP tests. Retained handlers use existing services and response models
+  and remain unregistered pending authentication. During this exchange, 37 read
+  HTTP/serialization tests and all 578 unit/API tests passed with one dependency
+  warning; scoped whitespace checks passed. Database integration tests were not
+  run. Keith confirmed review of both affected files; no human test rerun is claimed. The exact
+  prompt and final response are recorded; original timestamp unavailable, with
+  no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Controlled reference-data GET adapters](supplier-service/ai/usage-log.md#ai-20260930-018):
+  Codex (GPT-6) provided Writing implementation code for the reference-data router
+  and isolated HTTP tests. Retained handlers preserve ordered choices and
+  database-free areas; all four read adapters remain unregistered in production.
+  Agent checks passed 43 read HTTP/serialization tests and all 584 unit/API tests,
+  with one dependency warning. Combined read collection passed with 97 tests;
+  scoped whitespace checks passed. Database integration tests were not run.
+  Keith confirmed review of both files; no human test rerun is claimed. The exact prompt
+  and final response are recorded; original timestamp unavailable, with no
+  redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.

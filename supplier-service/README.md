@@ -1393,3 +1393,40 @@ container was removed. Full schema/runtime-role integration coverage was not run
 Keith confirmed review of all three files; no human test rerun is claimed.
 The exact prompt and final response are recorded; original message timestamp
 unavailable. No redactions or header exceptions apply.
+
+
+For [supplier read response models](ai/usage-log.md#ai-20260930-016), Codex
+(GPT-6) provided **Writing implementation code** for `app/schemas.py` and
+`tests/api/test_supplier_reads.py`. Retained models explicitly convert loaded
+read values, preserving nulls, precision, ordering, and pagination metadata.
+Agent checks passed 11 new serialization tests and all 552 unit/API tests with
+one dependency warning; scoped whitespace checks passed. Database integration
+tests were not run. Keith confirmed review of both files; no human test rerun
+is claimed. The exact prompt and verbatim final response are recorded; original
+message timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [unregistered supplier GET adapters](ai/usage-log.md#ai-20260930-017),
+Codex (GPT-6) provided **Writing implementation code** for
+`app/routes/suppliers.py` and `tests/api/test_supplier_reads.py`. Retained handlers
+use existing read services, parsed UUIDs/pagination, explicit response conversion,
+and safe error envelopes. Tests verify cleanup and production route exclusion.
+During this exchange, agent checks passed 37 serialization/read HTTP tests and
+all 578 unit/API tests with one dependency warning; scoped whitespace checks
+passed. Database integration tests were not run. Keith confirmed review of both affected files;
+no human test rerun is claimed. The exact prompt and verbatim
+final response are recorded; original timestamp unavailable. No redactions or
+header exceptions apply. The router remains unregistered pending authentication.
+
+
+For [controlled reference-data GET adapters](ai/usage-log.md#ai-20260930-018),
+Codex (GPT-6) provided **Writing implementation code** for
+`app/routes/reference_data.py` and `tests/api/test_supplier_reads.py`. Retained
+handlers preserve controlled choices, safe category errors, and database-free
+areas. Tests mount all four read adapters together and verify production exclusion.
+Agent checks passed 43 read HTTP/serialization tests and all 584 unit/API tests
+with one dependency warning; combined read collection passed with 97 tests and
+scoped whitespace checks passed. Database integration tests were not run. Keith confirmed
+review of both affected files; no human test rerun is claimed. The exact prompt
+and verbatim final response are recorded; original timestamp unavailable. No
+redactions or header exceptions apply. Production mounting awaits authentication.

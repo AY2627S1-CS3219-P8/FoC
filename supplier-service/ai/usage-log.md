@@ -1535,3 +1535,210 @@ Full schema/runtime-role integration coverage was not run. One existing dependen
 ### Usage summary
 
 Retained controlled reference-data readers using migration-managed categories and the existing approved area vocabulary. Category reads return all controlled definitions independently of supplier activity; area reads preserve combined labels and declared order without SQL. Existing active-only supplier and seed identity behavior remains separate. Keith confirmed review of all three affected files; no human test rerun is claimed.
+
+
+## ai-20260930-016
+
+- Recorded at: 2026-09-30T18:42:25+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code for response models and serialization tests against the specified README/decisions contract and existing immutable repository read values.
+- Outcome: Retained four response models and explicit from_read constructors in schemas.py, plus detached-value tests. Existing mutation schemas were unchanged; no routes, authentication, repository changes, or image handling were added.
+- Verification: Agent checks passed 11 new serialization tests and all 552 unit/API tests, with one dependency deprecation warning. Scoped whitespace checks found no issues in the changed implementation/test files; the repository-wide check reported existing whitespace issues in this log. Database integration tests were not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of the recent response-model work in both affected files.
+
+### Prompt 1
+
+````text
+Define supplier read response models and explicit conversion from loaded read values in `supplier-service/app/schemas.py`. Use `SupplierRead`, `CategoryRead`, and `SupplierPage` from `supplier-service/app/repositories/suppliers.py` as read-only references. Read the complete JSON example in `supplier-service/README.md` and the response contract in `supplier-service/docs/decisions.md`. The repository already returns immutable scalar values, named coordinates, and fully loaded categories.
+
+Files to edit:
+
+- `supplier-service/app/schemas.py`
+- `supplier-service/tests/api/test_supplier_reads.py` (new, requested by the reference)
+
+Acceptance criteria:
+
+- Add `LocationResponse`, `CategoryResponse`, `SupplierResponse`, and `SupplierPageResponse`. Keep the existing create, PATCH, seed, and validation schemas unchanged in behavior.
+- `SupplierResponse` contains `id`, `name`, `area`, nested `location.latitude` and `location.longitude`, a `categories` array of IDs and names, `description`, `building`, `floor`, `image_key`, `opening_time`, `closing_time`, `closing_day_offset`, `created_at`, `updated_at`, `deleted_at`, and `version`.
+- Preserve optional null values in JSON, including unknown hours, null images, and null deletion timestamps. Serialize UUIDs as strings, coordinates as JSON numbers, daily times consistently with `10:00:00`, and aware timestamps as ISO 8601 strings with timezone information. Preserve meaningful time precision rather than truncating stored values.
+- Add explicit conversion helpers or model constructors for the repository read values. Build nested location objects from named latitude and longitude. Do not rely on automatic conversion of ORM geography or use mutation-input normalization to alter stored output values.
+- `SupplierPageResponse` contains `items`, `total`, `limit`, and `offset`. Preserve the service's total and pagination values, including an empty page with a nonzero total. Convert immutable category and item tuples to JSON arrays without changing their order.
+- Return only `image_key`. Do not construct image URLs or expose geometry values, association-table data, or database internals. The frontend resolves keys under `/images/suppliers/` on its own origin.
+- Add serialization tests for complete and nullable suppliers, multiple categories, asymmetric coordinates, overnight and unknown hours, timestamps, version, and empty/nonempty pages. Tests should use detached read values and require no database access.
+- In your answer, recommend the appropriate verification scripts or commands for the completed models and existing schema regressions. Ground them in project configuration and include the working directory, prerequisites, and any checks you could not perform.
+
+Do not implement (out of scope):
+
+- Routes, production registration, authentication, repository changes, mutation behavior, or image asset handling.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Added all four response models with explicit `from_read` conversion and 11 database-free serialization tests. Nulls, time precision, timezone information, ordering, and pagination totals are preserved. Existing mutation schemas remain unchanged.
+
+Verification: **552 unit/API tests passed**, with one dependency deprecation warning.
+
+Recommended commands from `supplier-service/`, using Python 3.12 and dependencies from `requirements-dev.txt`:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Neither requires PostgreSQL or User Service. Database integration tests were not run. Changed files passed whitespace checks; existing whitespace issues remain in the unrelated `ai/usage-log.md`.
+
+### Scope
+
+- `supplier-service/app/schemas.py`: Writing implementation code — define LocationResponse, CategoryResponse, SupplierResponse, and SupplierPageResponse with explicit constructors from loaded repository values, named coordinates, ordered arrays, complete nullable fields, and native UUID/time/timestamp serialization, separately from mutation normalization.
+- `supplier-service/tests/api/test_supplier_reads.py`: Writing implementation code — write detached-value serialization tests for the complete contract, nullable values, category and item ordering, asymmetric coordinates, overnight and precise daily times, aware timestamps, deletion state, version, stored-value preservation, and empty/nonempty page totals.
+
+### Usage summary
+
+Retained explicit response conversion from immutable supplier/category/page values. Output preserves nulls, stored text and time precision, named numeric coordinates, ordered categories/items, and pagination metadata while exposing only image keys. Keith confirmed review of both files. Agent verification passed the new serialization tests and existing unit/API regressions without database access; no human test rerun is claimed.
+
+
+## ai-20260930-017
+
+- Recorded at: 2026-09-30T19:16:11+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code for unregistered synchronous supplier GET adapters and isolated HTTP tests using the specified services, response constructors, session dependency, and shared validation handlers.
+- Outcome: Retained both supplier GET handlers and HTTP coverage in the two requested files. Production registration, authentication, service/repository contracts, and mutations were unchanged.
+- Verification: During this implementation exchange, agent checks passed 37 serialization/read HTTP tests and all 578 unit/API tests, with one dependency deprecation warning. Scoped whitespace checks passed. Tests verified original invalid category positions, no service calls for invalid parsed input, safe 404/503 responses, session cleanup, programming-error propagation, and production route/OpenAPI exclusion. Database integration tests were not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of the supplier GET adapters and added HTTP tests in both affected files. Earlier confirmed review of serialization tests remains recorded in ai-20260930-016.
+
+### Prompt 1
+
+````text
+Implement unregistered supplier GET adapters in `supplier-service/app/routes/suppliers.py`. Use the response models and explicit read-value conversion in `supplier-service/app/schemas.py`, which must be available before implementing these adapters. Call the existing `get_supplier` and `list_suppliers` services in `supplier-service/app/services/suppliers.py`. Those functions provide active-only detached results, validated pagination, matching totals, and `SupplierReadUnavailable` failures. Read `supplier-service/app/db.py`, `supplier-service/app/main.py`, and `supplier-service/app/validation/errors.py` for the existing synchronous session dependency and shared validation handlers.
+
+Files to edit:
+
+- `supplier-service/app/routes/suppliers.py` (new)
+- `supplier-service/tests/api/test_supplier_reads.py`
+
+Acceptance criteria:
+
+- Define synchronous APIRouter handlers for `GET /suppliers` and `GET /suppliers/{id}`. Use `get_db` through dependency injection. Call the existing services and explicitly map their loaded results to response models. Do not query ORM models in route code or own commits.
+- Parse the detail path as a UUID. Parse repeated `category_id` query parameters as UUID values and pass them as the service's category selection. Preserve the original positions of invalid query entries in validation issues. Do not discard malformed entries during deduplication.
+- Accept an optional area string, default limit 20, and default offset 0. Validate integer parsing, limit 1–100, and nonnegative offset at the adapter boundary. Retain service-side validation. Invalid requests return the shared 422 `VALIDATION_ERROR` envelope with query or path field locations and do not execute a supplier query.
+- Preserve equality area filtering, match-any categories combined with area using AND, active-only behavior, name/UUID sorting, and totals from the service. Empty category selections impose no restriction. A well-formed but unknown category UUID may yield an empty page and is not a validation error.
+- Return 200 with the complete supplier response or page envelope. Map a service `None` detail to 404 with code `SUPPLIER_NOT_FOUND`. Missing and deleted identities have the same ordinary response. Use a fixed safe message without supplier information.
+- Map only `SupplierReadUnavailable` to 503 with code `DATABASE_UNAVAILABLE` and a fixed safe message. Keep the agreed error object at the top level rather than nesting it under FastAPI's default `detail` key. Do not expose SQL, credentials, or raw exceptions, and do not turn programming defects into 404 or 503.
+- Mount the router only in isolated test application instances. Use the existing application factory's validation handlers and test dependency overrides. Use fake or instrumented sessions and service results so HTTP tests need no live PostgreSQL or User Service. Restore overrides and close session resources after both successful and failed requests.
+- Extend HTTP tests for JSON shape, null values, image keys, default and boundary pagination, malformed UUIDs and integers, repeated categories, filter forwarding, missing/deleted details, safe availability errors, and empty pages with preserved totals. Check the service is not invoked for invalid parsed inputs. Preserve response serialization tests already in the file.
+- Verify a fresh production application exposes neither supplier path in its OpenAPI document or route table. Leave `supplier-service/app/main.py` unchanged. In your answer or PR description, explain that these handlers remain unregistered until authentication is implemented.
+- In your answer, recommend verification scripts or commands for the completed HTTP adapters and relevant read-layer regressions. Ground them in available project configuration and include the working directory, prerequisites, and any checks you could not perform.
+
+Do not implement (out of scope):
+
+- Authentication, production router registration, reference-data routes, administrative status filters, writes, search, alternate sorting, or changes to the service/repository contracts.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented both supplier GET adapters with explicit response conversion, query validation, safe 404/503 envelopes, and session-cleanup tests.
+
+**578 unit/API tests passed**, including 37 serialization/read HTTP tests. One dependency deprecation warning remains.
+
+The handlers remain **unregistered until authentication is implemented**. Tests confirm production routes and OpenAPI expose neither supplier path; `app/main.py` is unchanged.
+
+From `supplier-service/`, with Python 3.12.12 and `requirements-dev.txt` installed:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Recommended database regressions, not run:
+
+```bash
+./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
+```
+
+These require `TEST_DATABASE_URL` using `postgresql+psycopg`, an isolated PostGIS database ending in `_test`, migration permissions, and a database distinct from `DATABASE_URL`.
+
+### Scope
+
+- `supplier-service/app/routes/suppliers.py`: Writing implementation code — write synchronous list/detail handlers with UUID and pagination parsing, get_db injection, explicit read-value response conversion, fixed top-level 404/503 error envelopes, and no production registration or transaction ownership.
+- `supplier-service/tests/api/test_supplier_reads.py`: Writing implementation code — extend the existing serialization tests with factory-based isolated HTTP tests, service doubles, session cleanup and override restoration checks, query/path validation, repeated category positions, filters, pagination, nullable output, safe failures, and production route/OpenAPI exclusion.
+
+### Usage summary
+
+Retained supplier GET adapters over the existing active-only services and explicit response models. Tests exercise HTTP behavior without live PostgreSQL or User Service and preserve the earlier serialization coverage. The router remains unregistered pending authentication. Agent checks passed 578 unit/API tests; Keith confirmed review of both affected files; no human test rerun is claimed.
+
+
+## ai-20260930-018
+
+- Recorded at: 2026-09-30T19:31:29+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code for unregistered controlled reference-data GET adapters using existing category/area services, CategoryResponse conversion, and the established isolated supplier HTTP test application.
+- Outcome: Retained categories/areas handlers and extended HTTP tests in the two requested files. All four read adapters remain unregistered in production; authentication, category management, area storage, migrations, and mutations were unchanged.
+- Verification: Agent checks passed 43 read HTTP/serialization tests and all 584 unit/API tests, with one dependency deprecation warning. Combined API/integration read collection passed with 97 tests. Scoped whitespace checks passed. Tests verified complete ordered category choices, session cleanup, safe availability errors, programming-error propagation, exact database-free area responses, all four adapters in one isolated app, and production route/OpenAPI exclusion. Database integration tests were collected but not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of the reference-data adapters and added tests in both affected files. Earlier review confirmations remain in ai-20260930-016 and ai-20260930-017.
+
+### Prompt 1
+
+````text
+Implement unregistered controlled reference-data GET adapters in `supplier-service/app/routes/reference_data.py`. Use `list_categories(session)` and `list_areas()` from `supplier-service/app/services/suppliers.py`. The category service returns immutable IDs and names ordered by name then ID through the existing safe availability boundary. The area service returns the exact approved tuple without a database dependency. Use `CategoryResponse` from `supplier-service/app/schemas.py` and the established read HTTP tests in `supplier-service/tests/api/test_supplier_reads.py`.
+
+Files to edit:
+
+- `supplier-service/app/routes/reference_data.py` (new)
+- `supplier-service/tests/api/test_supplier_reads.py`
+
+Acceptance criteria:
+
+- Define synchronous APIRouter handlers for `GET /categories` and `GET /areas`. Return categories as a JSON array of `CategoryResponse` objects and areas as a JSON array of strings.
+- The category handler uses `get_db`, calls the category service, and preserves its order and complete controlled definitions, including categories with no active assignments. It does not derive choices from suppliers or create categories.
+- The area handler calls `list_areas()` without a session dependency. Preserve every approved value and its declared order, including `USC/UHC` and `KR/NUH` as single strings. Area requests remain usable when database access is unavailable.
+- Map category `SupplierReadUnavailable` failures to 503 using code `DATABASE_UNAVAILABLE` and the same fixed safe message and top-level error envelope as the supplier adapters. Do not catch programming defects as availability failures.
+- Mount both reference-data and supplier routers only in isolated test application instances. Reuse the existing application factory and shared validation behavior. Restore dependency overrides and close category session resources on success and failure.
+- Extend HTTP tests to verify ordered category IDs/names, unassigned choices supplied by the service, exact area JSON, safe category 503 responses, and no writes. Verify `/areas` does not invoke `get_db`, open a connection, or execute SQL, even when the database dependency is configured to fail.
+- Verify all four GET adapters work in the isolated test application. Verify a fresh production application's OpenAPI and route table expose none of `/suppliers`, `/suppliers/{id}`, `/categories`, or `/areas`. Keep health and readiness behavior unchanged.
+- In your answer or PR description, explain that response models and adapters are ready for authenticated mounting but are intentionally unavailable in the production application. Recommend the appropriate verification scripts or commands for the completed read HTTP layer and existing supplier/seed regressions. Ground recommendations in project configuration and include the working directory, prerequisites, and any checks you could not perform.
+
+Do not implement (out of scope):
+
+- Production router registration, authentication, category management, area storage, migrations, supplier mutations, or administrative reads.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented `/categories` and `/areas` with ordered responses, safe category 503 errors, and database-free area access.
+
+**584 unit/API tests passed**, including 43 read HTTP/serialization tests. Combined read-test collection passed: **97 tests**. One dependency warning remains.
+
+All four adapters work in the isolated test app. Models and adapters are ready for authenticated mounting but intentionally absent from production routes and OpenAPI. `app/main.py` is unchanged.
+
+From `supplier-service/`, with Python 3.12.12 and `requirements-dev.txt` installed:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Recommended database regressions, not run:
+
+```bash
+./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
+```
+
+These require `TEST_DATABASE_URL` using `postgresql+psycopg`, an isolated PostGIS database ending in `_test`, migration permissions, and a database distinct from `DATABASE_URL`.
+
+### Scope
+
+- `supplier-service/app/routes/reference_data.py`: Writing implementation code — write synchronous categories/areas handlers using explicit category response conversion, injected category sessions, a fixed safe 503 envelope matching supplier adapters, and database-independent area access, without production registration.
+- `supplier-service/tests/api/test_supplier_reads.py`: Writing implementation code — mount both routers in isolated factory applications and extend tests for complete ordered category choices, empty categories, matching safe failures, programming-error propagation, session cleanup, exact area values without dependency/session/connection/SQL access, all four GET adapters, and production route/OpenAPI exclusion.
+
+### Usage summary
+
+Retained controlled reference-data GET adapters over existing services and response models. Categories preserve complete service choices and order; areas preserve approved combined labels and declared order without database access. All four read adapters work together in isolated tests and remain unavailable in production pending authentication. Agent verification passed 584 unit/API tests and collected 97 combined read tests. Keith confirmed review of both affected files; no human test rerun is claimed.
