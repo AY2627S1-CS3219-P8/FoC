@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import User
+from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
 from app.schemas import UserCreate, UserUpdate
 from app.services.users import register_user, update_user_profile
 
@@ -27,6 +27,8 @@ def database():
     )
     Base.metadata.create_all(bind=engine)
     with Session(engine) as db:
+        db.add(AdminStateLock(lock_name=ADMIN_STATE_LOCK_NAME))
+        db.commit()
         yield db
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
@@ -378,3 +380,53 @@ def test_deactivation_preserves_record_and_reactivation_restores_it(client, data
 
     database.expire_all()
     assert database.scalar(select(User).where(User.id == user.id)).status == "active"
+
+
+def test_last_admin_cannot_deactivate_account(client, database):
+    """The final active administrator must remain available for administration."""
+
+    user = create_user(database)
+    user.role = "admin"
+    database.commit()
+    token = login(client)
+
+    response = client.post(
+        "/users/me/deactivate",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Cannot deactivate the last administrator"}
+    database.refresh(user)
+    assert user.status == "active"
+    assert client.get(
+        "/users/me", headers={"Authorization": f"Bearer {token}"}
+    ).status_code == 200
+
+
+def test_admin_can_deactivate_when_another_active_admin_exists(client, database):
+    """An administrator may deactivate their account when another admin remains."""
+
+    user = create_user(database)
+    user.role = "admin"
+    other = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="other@example.com",
+        display_name="Other Admin",
+    )
+    other.role = "admin"
+    database.commit()
+    token = login(client)
+
+    response = client.post(
+        "/users/me/deactivate",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "deactivated"
+    database.refresh(user)
+    database.refresh(other)
+    assert user.status == "deactivated"
+    assert other.status == "active"
