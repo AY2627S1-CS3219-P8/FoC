@@ -4,8 +4,11 @@
 # Scope: Writing implementation code — extend isolated HTTP tests for supplier reads, query/path validation, safe errors, session cleanup, and production route exclusion. (ai-20260930-017)
 # Scope: Writing implementation code — extend isolated HTTP coverage for controlled choices, database-free areas, category failures and cleanup, all four adapters, and production exclusion. (ai-20260930-018)
 # Scope: Writing implementation code — adapt tests to production router registration without duplicate mounting and add recording MockTransport coverage for credential-independent public responses, authentication outages, database-free areas, and public OpenAPI declarations. (ai-20260930-022)
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code — count GET registrations specifically so POST sharing the supplier path is not treated as a duplicate read route. (ai-20261001-003)
 # Author review: Keith confirmed review of the response serialization tests (ai-20260930-016). Keith also confirmed review of the supplier HTTP tests (ai-20260930-017). Keith also confirmed review of the reference-data HTTP tests (ai-20260930-018). Keith confirmed review of public-read registration changes (ai-20260930-022).
-# Details: ../../ai/usage-log.md; ai-20260930-016; ai-20260930-017; ai-20260930-018; ai-20260930-022
+# Author review: Keith confirmed review of all retained changes for ai-20261001-003.
+# Details: ../../ai/usage-log.md; ai-20260930-016; ai-20260930-017; ai-20260930-018; ai-20260930-022; ai-20261001-003
 
 """Detached response serialization and isolated supplier HTTP reads."""
 
@@ -316,7 +319,8 @@ def test_production_reads_and_probes_are_public_and_registered_once(settings):
     paths = application.openapi()["paths"]
     assert "security" not in application.openapi()
     for path in public:
-        assert sum(route.path == path for route in application.routes) == 1
+        assert sum(route.path == path and 'GET' in route.methods
+                   for route in application.routes) == 1
         assert "security" not in paths[path]["get"]
 
 

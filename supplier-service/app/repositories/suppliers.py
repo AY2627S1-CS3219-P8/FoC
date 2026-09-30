@@ -5,8 +5,10 @@
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement active-only detail lookup, immutable supplier/category values, named PostGIS coordinates, and eager categories with caller-owned transactions. (ai-20260930-013)
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement active filtered pages and matching totals with name/UUID ordering, and share coordinate projection, select-in categories, and immutable mapping with detail reads. (ai-20260930-014)
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement direct ordered category ID/name retrieval as immutable values, independent of supplier assignments and without autoflush. (ai-20260930-015)
+# Scope: Writing implementation code; Refactoring and documentation improvements — accept cleaned seed/create results, exclude category IDs from supplier inserts, and clarify separate assignments. (ai-20261001-001)
 # Author review: Keith confirmed review of all affected changes.
-# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-013; ai-20260930-014; ai-20260930-015
+# Author review: Keith confirmed review of all affected changes.
+# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-001
 
 """Supplier queries and inserts; transaction ownership stays with the service."""
 
@@ -20,7 +22,7 @@ from sqlalchemy import cast, func, insert, literal_column, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Category, Supplier, supplier_category
-from app.schemas import SupplierSeedResult
+from app.schemas import SupplierCreateResult, SupplierSeedResult
 
 
 # Keep these expressions aligned with uq_supplier_active_name_location.
@@ -180,11 +182,11 @@ def find_active_duplicates(
 
 
 def insert_supplier(
-    session: Session, supplier_id: UUID, values: SupplierSeedResult,
+    session: Session, supplier_id: UUID, values: SupplierSeedResult | SupplierCreateResult,
     timestamp: datetime,
 ) -> None:
-    """Insert a new identity with bound longitude/latitude, never an upsert."""
-    scalars = values.model_dump(exclude={"location"})
+    """Insert scalar values and a bound point; assignments stay separate."""
+    scalars = values.model_dump(exclude={"location", "category_ids"})
     point = cast(func.ST_SetSRID(func.ST_MakePoint(
         float(values.location.longitude), float(values.location.latitude),
     ), 4326), Geography(geometry_type="POINT", srid=4326))

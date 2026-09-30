@@ -2,18 +2,22 @@
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — write unregistered supplier GET adapters with parsed UUIDs and pagination, explicit response conversion, session injection, and safe 404/503 envelopes.
 # Scope: Refactoring and documentation improvements — replace the stale unregistered-router docstring with the public active-only read description. (ai-20260930-022)
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Refactoring and documentation improvements — expose administrator-only POST with raw JSON, atomic service delegation, canonical 201 output, safe errors, and an updated router docstring. (ai-20261001-003)
 # Author review: Keith confirmed review of the supplier GET adapters. Keith confirmed review of public-read registration changes (ai-20260930-022).
-# Details: ../../ai/usage-log.md; ai-20260930-017; ai-20260930-022
+# Author review: Keith confirmed review of all retained changes for ai-20261001-003.
+# Details: ../../ai/usage-log.md; ai-20260930-017; ai-20260930-022; ai-20261001-003
 
-"""Public active-only supplier read endpoints."""
+"""Public supplier reads and administrator-only creation."""
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+from app.auth import require_admin
 from app.db import get_db
 from app.schemas import SupplierPageResponse, SupplierResponse
 from app.services import suppliers
@@ -28,6 +32,33 @@ def _unavailable() -> JSONResponse:
             "message": "Supplier details are temporarily unavailable.",
         },
     })
+
+
+@router.post(
+    "/suppliers", status_code=201, response_model=SupplierResponse,
+    dependencies=[Depends(require_admin)],
+)
+def post_supplier(
+    payload: Annotated[Any, Body()],
+    session: Annotated[Session, Depends(get_db)],
+):
+    try:
+        value = suppliers.create_supplier(session, payload)
+    except suppliers.SupplierDuplicate:
+        return JSONResponse(status_code=409, content={
+            "error": {
+                "code": "SUPPLIER_DUPLICATE",
+                "message": "An active supplier with this name and location already exists.",
+            },
+        })
+    except suppliers.SupplierCreateUnavailable:
+        return JSONResponse(status_code=503, content={
+            "error": {
+                "code": "DATABASE_UNAVAILABLE",
+                "message": "Supplier creation is temporarily unavailable.",
+            },
+        })
+    return SupplierResponse.from_read(value)
 
 
 @router.get("/suppliers", response_model=SupplierPageResponse)

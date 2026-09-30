@@ -375,4 +375,70 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Shared supplier seed/create insertion](supplier-service/ai/usage-log.md#ai-20261001-001):
+  Codex (GPT-6) provided Writing implementation code for the repository helper
+  and direct integration coverage, plus Refactoring and documentation improvements
+  for the docstring. Retained work excludes category IDs from supplier inserts and
+  preserves separate assignments and caller-owned transactions. Historical agent
+  checks passed 62 seed integration tests, 723 unit/API tests, two focused SQL
+  cases, and scoped whitespace checks, with one existing dependency warning.
+  Subsequent test edits have unestablished authorship/timing and are not covered
+  by those historical results. Keith confirmed review of both affected files; Keith also confirmed a test rerun, with commands and results unspecified. The exact prompt and
+  final response are recorded; original timestamp unavailable, with no redactions
+  or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Atomic supplier creation service](supplier-service/ai/usage-log.md#ai-20261001-002):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the creation service, plus Writing implementation
+  code and Boilerplate generation for isolated PostGIS coverage. Retained changes
+  validate and persist atomically, return detached values after commit, translate
+  only the exact duplicate constraint, and never retry uncertain writes. Agent
+  checks passed 878 creation/read/seed/unit/API tests, including 39 new creation
+  cases, with one dependency warning; syntax and scoped whitespace checks passed.
+  Keith confirmed review of both files; no human test rerun is claimed for this
+  increment. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Administrator supplier POST adapter](supplier-service/ai/usage-log.md#ai-20261001-003):
+  Codex (GPT-6) provided Writing implementation code for the POST adapter and
+  API regressions, plus Refactoring and documentation improvements for the router
+  docstring. All four files were retained and reviewed by Keith, including the
+  additional GET-registration assertion correction. Agent checks passed 148
+  focused API tests and all 765 unit/API tests, including 42 new POST cases,
+  with one dependency warning; syntax and scoped whitespace checks passed.
+  Controlled User Service responses exercised real authentication dependencies.
+  Live-service and PostGIS checks were not run for this increment; no human test
+  rerun is claimed. The exact prompt and verbatim relevant response excerpt are
+  recorded; original timestamp unavailable, with no redactions or header exceptions.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier POST duplicate-policy and concurrency verification](supplier-service/ai/usage-log.md#ai-20261001-004):
+  Codex (GPT-6) provided Writing implementation code and Boilerplate generation
+  for 12 additional PostGIS-backed cases in the creation integration test file.
+  Retained tests cover exact duplicate rules, deleted-history preservation,
+  canonical public reads, rollback, and synchronized independent commit/rollback
+  races using mounted routes and controlled administrator authentication. Agent
+  checks passed 199 tests, including 51 creation integration and 148 API cases,
+  with one dependency warning; syntax and scoped whitespace checks passed.
+  Disposable migrated databases were cleaned up. Keith confirmed review of the
+  test file; no human test rerun is claimed for this increment. No requested checks
+  were blocked. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier creation documentation](supplier-service/ai/usage-log.md#ai-20261001-005):
+  Codex (GPT-6) provided Refactoring and documentation improvements for the service
+  README and Writing implementation code for its live HTTP smoke procedure.
+  Retained content documents implemented POST, canonical examples, safe errors,
+  atomic persistence, seed/API reuse, and planned feature boundaries. Schema and
+  canonical-example checks, script syntax, paths, anchors, and whitespace checks
+  passed. No application suite was rerun; live smoke was not executed without an
+  approved administrator account and agreed provisioning process. Keith confirmed
+  review of the README and procedure; no human test rerun is claimed for this
+  increment. Exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.

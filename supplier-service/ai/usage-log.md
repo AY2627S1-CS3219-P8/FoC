@@ -2030,3 +2030,322 @@ Live login/logout smoke checks were not run: no Compose services were running. D
 ### Usage summary
 
 Retained public supplier and reference-data reads through the real application factory, preserving existing active-only read services and keeping authentication dependencies reserved for protected operations. Mock-backed tests establish zero User Service calls for public browsing and probes across credential states and outages. Documentation supplies a test-only live session harness and records that live-service and database integration behavior was not verified in this increment. Keith confirmed review of all eight affected files; no human test rerun is claimed.
+
+
+## ai-20261001-001
+
+- Recorded at: 2026-10-01T00:29:02+08:00
+- Exchange time: Original message timestamp unavailable; the implementation exchange was dated 2026-09-30 in the available conversation context.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for the requested shared supplier insertion contract and its regression coverage.
+- Outcome: Retained the union of cleaned seed/create input types, exclusion of category IDs from supplier scalar inserts, and direct helper coverage for both types. Existing seed orchestration, identity, locking, migrations, and category definitions were unchanged. The current test bodies contain subsequent edits relative to the implementation shown in the exchange; their author and timing are not established by the available evidence.
+- Verification: During the implementation exchange, agent checks passed two SQL statement cases, all 62 seed integration cases against an existing isolated PostGIS test container, and all 723 unit/API tests. Scoped whitespace checks passed; pytest reported one existing dependency deprecation warning. These are historical results, not a fresh verification of subsequent test edits. Keith subsequently confirmed a human test rerun; commands, counts, and results were not specified.
+- Author review: Keith confirmed review of both affected files ("Reviewed by Keith"). Keith subsequently confirmed a human test rerun; commands, counts, and results were not specified.
+- Missing evidence: Original message timestamp and authorship/timing of subsequent test edits are unavailable. The exact implementation prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Adapt the shared supplier insertion primitive in `supplier-service/app/repositories/suppliers.py` to accept both `SupplierSeedResult` and `SupplierCreateResult` from `supplier-service/app/schemas.py`. The current helper dumps every field except location, so passing a create result would incorrectly include `category_ids` as a supplier column. Keep category assignments separate and preserve the existing seed import contract.
+
+Files to edit:
+
+- `supplier-service/app/repositories/suppliers.py`
+- `supplier-service/tests/integration/test_seed_import.py`
+
+Acceptance criteria:
+
+- Both cleaned result types persist only supplier scalar columns. Category IDs never enter the supplier insert statement.
+- The helper still uses bound longitude-first coordinates, SRID 4326 geography, the supplied identity and aware timestamp, equal creation/update timestamps, version 1, and null deletion state.
+- The supplier and assignment helpers do not begin, commit, or roll back transactions. They do not call HTTP endpoints or seed orchestration code.
+- Verify both result types through the shared insertion helper and verify that seed insertion, repeat-import skipping, and rollback behavior remain unchanged.
+- In your answer, recommend appropriate verification commands based on the completed changes and project configuration. Include the working directory and database prerequisites.
+
+Do not implement (out of scope):
+
+- Schema migrations, new category definitions, or changes to seed identity and locking rules.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Updated the helper to accept both result types and exclude `category_ids` from supplier inserts. Category assignments remain separate, with transaction ownership unchanged.
+
+Added coverage for bound longitude-first coordinates, SRID 4326 geography, identity, timestamps, initial state, and caller rollback.
+
+Verification passed: **62 seed integration tests**, **723 unit/API tests**, and scoped whitespace checks. Repeat-import skipping and existing rollback behavior remain intact.
+
+Recommended commands, from `/Users/keith/Documents/FoC/supplier-service`:
+
+```sh
+./.venv/bin/python -m pytest tests/integration/test_seed_import.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Integration prerequisites: configure `TEST_DATABASE_URL` using `postgresql+psycopg`, pointing to an isolated PostGIS database ending `_test`, distinct from `DATABASE_URL`. Its role must create disposable databases and install PostGIS. Fixtures apply migrations automatically.
+
+### Scope
+
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — adapt the shared insertion function to the specified seed/create result contract, exclude category IDs alongside location from scalar values, and clarify the separation of supplier and assignment inserts in the docstring.
+- `supplier-service/tests/integration/test_seed_import.py`: Writing implementation code — write parameterized direct-helper tests for both result types, bound longitude-first SRID 4326 geography, supplied identity and aware timestamps, initial version/deletion state, separate category assignments, caller-owned transactions, and rollback; retain existing seed repeat-import and failure regressions.
+
+### Usage summary
+
+The requested change reuses the supplier repository primitive for cleaned API creation values while preserving the category-free seed contract. Category assignments remain a separate repository operation. Historical agent verification covered SQL compilation, persisted values, repeat-import skipping, and rollback behavior. Keith confirmed review of both affected files; later test edits are preserved without attributing their authorship or extending the historical test results to them. Keith subsequently confirmed a human test rerun; commands, counts, and results were not specified.
+
+
+## ai-20261001-002
+
+- Recorded at: 2026-10-01T02:13:21+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for the specified atomic supplier creation service, existing repository/validation architecture, and PostGIS integration coverage.
+- Outcome: Retained create_supplier with one service-owned transaction beginning before category lookup, validation against existing category UUIDs, shared supplier/assignment inserts, an explicit flush, and detached detail mapping before commit with return afterward. Added safe duplicate and creation-availability exceptions and shared the existing read availability classifier. No automatic write retry was introduced.
+- Verification: Agent checks passed 878 tests across creation, read, seed, unit, and API suites, including 39 new creation cases, against the existing isolated PostGIS test container where applicable. An earlier focused run passed 15 database-independent failure-classification cases. Syntax and scoped whitespace checks passed; pytest reported one existing dependency deprecation warning. The initial collection command used the wrong working directory and did not run; subsequent verification used supplier-service successfully. No human test rerun is claimed for this increment.
+- Author review: Keith confirmed review of both affected files and the retained creation implementation.
+- Missing evidence: Original message timestamp unavailable. Exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Implement `create_supplier(session, payload)` in `supplier-service/app/services/suppliers.py`. Use the shared repository insert helpers that accept cleaned create values and leave transactions to their caller. Read `supplier-service/app/validation/suppliers.py`, `supplier-service/app/db.py`, and the duplicate policy in `supplier-service/README.md`. Return a detached `SupplierRead` value compatible with `SupplierResponse.from_read` only after the transaction commits.
+
+Files to edit:
+
+- `supplier-service/app/services/suppliers.py`
+- `supplier-service/tests/integration/test_supplier_creates.py` (new)
+
+Acceptance criteria:
+
+- Begin one service-owned transaction on the fresh request session before any mutation-related database read. Do not start another transaction after a category lookup auto-begins one.
+- Obtain existing category UUIDs using the repository's `list_categories` and pass them with the raw payload to `validate_supplier_create`. Unknown IDs retain their original positions in validation errors. Invalid input writes nothing. Valid repeated IDs produce one assignment each.
+- Generate a random UUID and one aware UTC timestamp. Persist all cleaned optional fields and the derived closing-day offset through the shared insert helpers.
+- Insert the supplier and all assignments within the same transaction. Flush pending work and build the detached result using `find_active_detail` while the transaction is open. Commit once and return only after successful commit.
+- Expose a transport-independent duplicate exception only for SQLSTATE `23505` with constraint name `uq_supplier_active_name_location`. Translate it outside the transaction after rollback. Unrelated integrity errors must not become duplicate conflicts.
+- Expose a safe creation-availability exception for recognized database availability failures, following the existing read-service classification. Unexpected failures leave the transaction for rollback and propagate without embedding database diagnostics in public errors. Do not automatically retry a write with an uncertain commit outcome.
+- Verify persistence of multiple categories, coordinates, optional nulls, timestamps, version, same-day and overnight schedules, and equal opening/closing times under the existing 24-hour rule. Verify the returned value remains usable after session closure.
+- Verify unknown and empty categories and invalid schedules leave no supplier or assignments. Force an assignment failure after supplier insertion and verify complete rollback and a usable session afterward.
+- In your answer, recommend the appropriate service and PostGIS verification commands, including working directory and prerequisites.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented [create_supplier](/Users/keith/Documents/FoC/supplier-service/app/services/suppliers.py) with one service-owned transaction, validated and deduplicated categories, atomic inserts, and a detached result returned only after commit.
+
+Added `SupplierDuplicate` for the exact duplicate constraint and `SupplierCreateUnavailable` using the read-service availability rules. Uncertain writes are never retried.
+
+**878 tests passed**, including 39 new creation cases and existing read, seed, unit, and API regressions. Syntax and whitespace checks passed; one existing dependency warning remains.
+
+Recommended verification from `/Users/keith/Documents/FoC/supplier-service`:
+
+```sh
+./.venv/bin/python -m pytest tests/integration/test_supplier_creates.py tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Prerequisites: Python 3.12 with `requirements-dev.txt` installed. Integration tests require `TEST_DATABASE_URL` using `postgresql+psycopg`, an isolated PostGIS database ending `_test`, distinct from `DATABASE_URL`, and a role permitted to create/drop disposable databases and install PostGIS. Fixtures apply migrations.
+
+### Scope
+
+- `supplier-service/app/services/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — write the requested atomic create_supplier function using raw-payload validation, controlled category lookup, one random UUID and aware UTC timestamp, shared inserts, flush and detached reads; add transport-independent duplicate/availability exceptions and refactor the existing database availability classification for reuse without changing read behavior.
+- `supplier-service/tests/integration/test_supplier_creates.py`: Writing implementation code; Boilerplate generation — configure disposable migrated PostGIS databases and write 39 creation cases covering transaction order, committed detached values, category deduplication and validation positions, optional fields, daily schedules, exact active duplicates, assignment and late-failure rollback, safe error classification, session reuse, and no retry after lost commit acknowledgement.
+
+### Usage summary
+
+The service now creates suppliers and category assignments atomically on a fresh request session, preserving existing validation and database duplicate rules. Detached results are exposed only after successful commit. Tests verify persisted values and rollback boundaries, including an acknowledged-transport failure simulated after the database commits. The implementation and tests were retained and reviewed by Keith. Agent verification passed the combined 878-test suite; no human test rerun is claimed for this increment.
+
+
+## ai-20261001-003
+
+- Recorded at: 2026-10-01T02:22:27+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for the specified administrator-only supplier POST adapter, existing authentication/service/validation architecture, and isolated API regression coverage.
+- Outcome: Retained POST /suppliers with require_admin, request-scoped get_db, raw JSON delegation to the atomic service, canonical 201 conversion, and fixed safe duplicate/availability envelopes. Updated mutation-route exclusion and additionally corrected the read-registration assertion to count GET methods rather than paths shared by GET and POST. Public reads remain anonymous; no other mutations or role-selection mechanism were added.
+- Verification: Agent checks passed 148 focused creation/validation/read/authentication API tests and all 765 unit/API tests, including 42 new POST cases. Syntax and scoped whitespace checks passed, with one existing dependency deprecation warning. Tests used real authentication dependencies with controlled HTTPX User Service responses; live-service and PostGIS checks were not run for this adapter increment. No human test rerun is claimed for this increment.
+- Author review: Keith confirmed review of all four affected files and retained changes, including the additional read-registration assertion correction.
+- Missing evidence: Original message timestamp unavailable. Exact implementation prompt and verbatim relevant final-response excerpt are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Expose `POST /suppliers` in `supplier-service/app/routes/suppliers.py` using `require_admin`, the request-scoped `get_db`, and the service's atomic `create_supplier(session, payload)` operation. The service accepts raw JSON, performs aggregate validation, returns a detached `SupplierRead` after commit, and exposes safe duplicate and availability exceptions. Reuse the existing global validation handlers and canonical `SupplierResponse.from_read` conversion.
+
+Files to edit:
+
+- `supplier-service/app/routes/suppliers.py`
+- `supplier-service/tests/api/test_supplier_creates.py` (new)
+- `supplier-service/tests/api/test_validation_errors.py`
+
+Acceptance criteria:
+
+- A verified administrator receives HTTP 201 and the complete canonical supplier response, including category objects, coordinates, nullable fields, timestamps, deletion state, and version 1.
+- Accept the body as raw JSON rather than automatically parsing it with `SupplierCreateInput` before aggregate validation. Keep permission handling in dependencies and business validation in the service.
+- Missing or invalid credentials return 401, regular users return 403, and unavailable authentication returns 503. These failures never invoke creation or issue supplier database queries. Use controlled User Service responses rather than adding authentication bypasses.
+- Duplicate exceptions return 409 with `error.code` equal to `SUPPLIER_DUPLICATE`. Database availability failures return 503 with `DATABASE_UNAVAILABLE` and a safe message. Neither exposes SQL, parameters, constraints, or private exception details.
+- Validation returns the established 422 `VALIDATION_ERROR` envelope. Cover malformed JSON, non-object input, forbidden server fields, invalid coordinates, missing or empty categories, unknown IDs, and invalid schedules. Verify a usable JSON object can report independent field, category, and schedule issues together.
+- The POST operation declares bearer authentication and its success response in OpenAPI. Existing public reads remain accessible without authentication. Update the existing route-exclusion assertion to permit POST while still excluding unimplemented mutations and test-only routes.
+- In your answer, recommend the appropriate API, authentication, and validation regression commands, including the working directory and prerequisites.
+
+Do not implement (out of scope):
+
+- PATCH, DELETE, administrative reads, category management, or public role selection.
+````
+
+### Key response 1
+
+Verbatim final-response excerpt:
+
+Implemented administrator-only `POST /suppliers` with raw JSON, service-owned validation, canonical HTTP 201 responses, safe 409/503 errors, and bearer authentication in OpenAPI. Public reads remain anonymous.
+
+**765 unit/API tests passed**, including 42 new POST cases. Syntax and whitespace checks passed. Also adjusted the existing read-registration assertion to count GET routes specifically.
+
+From `/Users/keith/Documents/FoC/supplier-service`:
+
+```sh
+./.venv/bin/python -m pytest tests/api/test_supplier_creates.py tests/api/test_validation_errors.py tests/api/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/api/test_auth.py tests/api/test_startup.py tests/unit/test_user_service_client.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Prerequisites: Python 3.12 and `requirements-dev.txt` installed in `.venv`. These tests use controlled upstream responses; no live database or User Service is required. Live-service checks were not run.
+
+### Scope
+
+- `supplier-service/app/routes/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — write the administrator-only POST adapter using require_admin and get_db, pass raw JSON to create_supplier, convert its detached result through SupplierResponse.from_read, map safe service exceptions to fixed 409/503 envelopes, declare the canonical 201 response, and update the router docstring.
+- `supplier-service/tests/api/test_supplier_creates.py`: Writing implementation code — write 42 isolated API cases with controlled User Service responses and real authentication dependencies, request-scoped session cleanup, canonical complete/nullable responses, blocked unauthorized database access, aggregate service validation, safe errors, bearer OpenAPI declarations, and anonymous reads during authentication outage.
+- `supplier-service/tests/api/test_validation_errors.py`: Writing implementation code — update the production route-exclusion regression to permit supplier POST alongside existing GET routes while excluding unimplemented mutations and test-only routes.
+- `supplier-service/tests/api/test_supplier_reads.py`: Writing implementation code — correct the public read-registration assertion to count GET registrations specifically, allowing POST at the same path without weakening the single-GET or anonymous-read checks.
+
+### Usage summary
+
+The requested POST endpoint exposes the existing atomic creation service through verified administrator authentication, raw-payload aggregate validation, and canonical response serialization. Controlled upstream tests confirm authentication failures prevent creation and supplier session access, while public reads remain anonymous. Safe duplicate and database-unavailability envelopes avoid private exception details. All four affected files were retained and reviewed by Keith. Agent verification passed 765 unit/API tests; no human test rerun is claimed for this increment.
+
+
+## ai-20261001-004
+
+- Recorded at: 2026-10-01T02:37:06+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Boilerplate generation for the specified duplicate-policy and concurrency verification using the existing atomic service, mounted POST/public GET routes, and isolated migrated PostGIS databases.
+- Outcome: Retained 12 additional integration cases and a controlled-administrator HTTP fixture. Tests verify normalized active duplicates across areas, exact coordinate distinctions, preserved deleted histories, canonical public detail visibility, post-insertion rollback, and independent request/session/connection races. Event barriers and observed PostgreSQL transaction-ID locks coordinate the races with bounded waits and database timeouts. Production code, migrations, and the duplicate index were unchanged.
+- Verification: Agent checks passed 199 tests: all 51 creation integration cases plus 148 creation/authentication/validation/read API cases. Syntax and scoped whitespace checks passed; pytest reported one existing dependency deprecation warning. Real PostGIS persistence used the existing isolated test container and per-test disposable migrated databases with cleanup. No requested checks were blocked. Authentication used controlled User Service responses; no live User Service check or human test rerun is claimed for this increment.
+- Author review: Keith confirmed review of the affected test file and retained duplicate-policy/concurrency coverage.
+- Missing evidence: Original message timestamp unavailable. Exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Verify the duplicate policy and concurrency protection for the atomic supplier creation service and `POST /suppliers`. Use the implemented service-owned transaction and the existing `uq_supplier_active_name_location` index. Read `supplier-service/tests/integration/conftest.py` and the seed import integration tests for database isolation conventions. Exercise the actual mounted POST route with real PostGIS persistence and controlled administrator authentication.
+
+Files to edit:
+
+- `supplier-service/tests/integration/test_supplier_creates.py`
+
+Acceptance criteria:
+
+- Names differing only by trimming and lowercase normalization conflict at the exact same stored point, even if areas differ. The conflicting POST returns 409 and leaves no extra supplier or assignments.
+- Identical names at different points and different names at the same point are allowed. Do not round coordinates or use proximity matching.
+- A match against a deleted supplier creates a new UUID and preserves the deleted supplier and its assignments.
+- Use independent sessions and database connections to coordinate two competing creates for the same active name and point. When one commits, exactly one request succeeds and the other returns 409. No orphan assignments remain. Also verify that a waiting contender can succeed if the competing transaction rolls back.
+- Coordinate concurrency with explicit synchronization and bounded waits rather than timing-only sleeps. Use the explicitly isolated migrated test database and clean up committed fixtures because a shared outer rollback cannot isolate independent committed connections.
+- Verify a successful POST is visible through the public detail route and has the same canonical response values. Force failure after insertion and verify no partial supplier can be read afterward.
+- In your answer, recommend appropriate PostGIS transaction and API integration verification commands, including the working directory and prerequisites. State any checks that could not be performed.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Verified the policy and added **12 PostGIS-backed POST cases** in `test_supplier_creates.py`.
+
+- Normalized duplicates return 409 without extra rows.
+- Exact coordinate differences and different names are allowed.
+- Deleted suppliers and their assignments remain intact.
+- Synchronized competing requests produce 201/409 after commit; the waiting request succeeds after rollback.
+- Public GET matches successful POST responses; failed inserts leave nothing readable.
+
+**199 tests passed**, including all 51 creation integration cases. Syntax and whitespace checks passed. No requested checks were blocked; authentication used controlled User Service responses.
+
+From `/Users/keith/Documents/FoC/supplier-service`:
+
+```sh
+./.venv/bin/python -m pytest tests/integration/test_supplier_creates.py -q
+./.venv/bin/python -m pytest tests/api/test_supplier_creates.py tests/api/test_auth.py tests/api/test_validation_errors.py tests/api/test_supplier_reads.py -q
+```
+
+Prerequisites: Python 3.12 and `requirements-dev.txt`. Integration tests require an isolated PostGIS `TEST_DATABASE_URL` using `postgresql+psycopg`, with a database name ending `_test`, distinct from `DATABASE_URL`. The role must create/drop disposable databases and install PostGIS; fixtures migrate and clean them up.
+
+### Scope
+
+- `supplier-service/tests/integration/test_supplier_creates.py`: Writing implementation code; Boilerplate generation — configure the mounted application with real request sessions and controlled administrator authentication, write 12 PostGIS-backed POST cases, add exact supplier/assignment snapshots and canonical public-read assertions, and synchronize independent competing transactions with events, backend IDs, observed blocking locks, bounded waits, and rollback/commit outcomes using disposable database cleanup.
+
+### Usage summary
+
+The added tests exercise the production HTTP adapters and atomic creation service against the existing unique index. They establish one committed supplier with complete assignments after competing commits, successful waiting-contender creation after rollback, preserved deleted rows and assignments, exact coordinate behavior, and no publicly readable partial writes. The test changes were retained and reviewed by Keith. Agent verification passed 199 selected integration/API tests; no human test rerun is claimed for this increment.
+
+
+## ai-20261001-005
+
+- Recorded at: 2026-10-01T02:56:43+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Refactoring and documentation improvements for the implemented administrator creation contract, verification guidance, and distinction from planned mutations and administrative reads; Writing implementation code for the documented live HTTP smoke procedure.
+- Outcome: Retained README corrections covering mounted POST authorization, editable/server-managed fields, complete canonical request/response examples, safe errors, atomic persistence, exact active duplicates, deleted-record recreation, shared seed/API validation and insertion, and future PATCH/DELETE/administrative-read status. Replaced the test-only protected-route smoke harness with a procedure using mounted HTTP endpoints and an authorized active administrator; no authentication bypass or public role selection was added.
+- Verification: Agent validated the request example against migrated category UUIDs and verified that its complete response matched SupplierResponse.from_read. Python and shell syntax checks for the documented smoke script, referenced test paths, updated section anchors, and scoped whitespace checks passed. No application test suite was rerun for this documentation edit; previously observed 765 unit/API and 199 selected integration/API results were recorded as separate historical runs. Live smoke was not executed: no approved administrator credentials or agreed provisioning procedure were supplied, and the inspected User Service documentation/public routes did not provide a provisioning command. No human test rerun is claimed for this increment.
+- Author review: Keith confirmed review of the README and retained creation documentation.
+- Missing evidence: Original message timestamp unavailable. Exact prompt and verbatim final response are available; no redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Update `supplier-service/README.md` to describe the implemented administrator creation endpoint. Use the mounted `POST /suppliers`, aggregate validation behavior, canonical response, and transaction tests as the source of truth. Preserve the distinction between implemented creation and future update, deletion, and administrative-read features.
+
+Files to edit:
+
+- `supplier-service/README.md`
+
+Acceptance criteria:
+
+- Replace stale claims that all mutations are unimplemented. Document the bearer requirement, editable create fields, server-managed fields, and a complete create request and 201 response example consistent with the canonical schema.
+- Explain 401, 403, 409 duplicate conflicts, 422 validation failures, and 503 dependency failures. Explain atomic supplier/category persistence, exact active duplicate matching, and recreation with a new UUID after deletion.
+- Update the validation reuse guidance to distinguish the implemented creation caller from future PATCH callers. Explain how seed and API creation share validation and persistence without sharing HTTP endpoints.
+- Document verification scripts or commands grounded in the completed implementation, including isolated PostGIS prerequisites. Report actual verification results and unavailable checks without claiming unperformed checks passed.
+- For a live smoke check, require an active administrator provisioned through User Service's agreed process. If that process or account is unavailable, record that limitation explicitly. Do not add public role selection or an authentication bypass.
+- In your answer, recommend the relevant verification commands and any live smoke-check prerequisites based on the final implementation.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Updated [supplier-service/README.md](/Users/keith/Documents/FoC/supplier-service/README.md) with creation fields, complete request/201 examples, authentication and error behavior, atomic persistence, duplicate rules, and seed-validation reuse. PATCH, DELETE, and administrative reads remain clearly marked as planned.
+
+Validated the examples against the schemas, checked smoke-script syntax, and passed whitespace checks. Recorded previous test results without claiming a new suite run.
+
+Recommended from `/Users/keith/Documents/FoC/supplier-service`:
+
+```sh
+./.venv/bin/python -m pytest tests/unit tests/api -q
+./.venv/bin/python -m pytest tests/integration/test_supplier_creates.py tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
+```
+
+Use Python 3.12 with development dependencies. Integration tests require an isolated PostGIS `TEST_DATABASE_URL` ending `_test`, distinct from `DATABASE_URL`, with database creation/drop and PostGIS installation permissions.
+
+The live smoke check remains unperformed: no approved administrator account or provisioning procedure was supplied. It requires an active administrator provisioned through User Service’s agreed process, reachable services, and a disposable migrated Supplier database.
+
+### Scope
+
+- `supplier-service/README.md`: Refactoring and documentation improvements; Writing implementation code — correct stale implementation-status claims, document administrator POST inputs and canonical output, explain validation/errors/transactions/duplicates and shared seed persistence, distinguish future mutation/read contracts, and write a mounted-route live smoke procedure with authorized provisioning prerequisites, disposal guidance, commands, observed checks, and explicit unavailable live verification.
+
+### Usage summary
+
+The README now describes the implemented administrator creation endpoint using the mounted route, schemas, service, and tests as evidence. It preserves planned update/deletion/administrative-read requirements and explains seed/API reuse without HTTP coupling. The documentation and smoke procedure were retained and reviewed by Keith. Examples and script syntax were checked; no new suite run or live administrator smoke success is claimed.
