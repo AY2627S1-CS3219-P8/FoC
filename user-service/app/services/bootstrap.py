@@ -50,6 +50,12 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
         # job from creating a second initial administrator. Marking completion
         # makes that protection durable even if the existing admin is later
         # deactivated or has its role revoked.
+        #
+        # AdminStateLock above is the canonical lock for administrator-state
+        # changes. Keep the user-row lock as a defensive measure because this
+        # branch commits a bootstrap decision based on the admin's existence;
+        # it protects that decision from an out-of-band role/status change that
+        # does not follow the AdminStateLock convention.
         existing_admin = db.scalar(
             select(User)
             .where(User.role == "admin")
@@ -61,6 +67,12 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
             db.commit()
             return False
 
+        # This is a conflict-only lookup. If an existing regular account owns
+        # either identity, bootstrap aborts and rolls back without changing or
+        # claiming that account, so its state does not need to be preserved by
+        # this transaction. A FOR UPDATE also cannot lock a missing row; the
+        # unique email/student-number constraints handle a concurrent insert
+        # race instead.
         existing_identity = db.scalar(
             select(User).where(
                 (User.email == str(payload.email).lower())
