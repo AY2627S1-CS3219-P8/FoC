@@ -1321,3 +1321,217 @@ Follow the [isolated verification instructions](/Users/keith/Documents/FoC/suppl
 ### Usage summary
 
 Packaged seed metadata and retained an explicit runtime-role Compose tools service for atomic imports and database-aware previews. Updated operational and mapping documentation to explain setup, result meanings, preserved identities, conflicts, locking, and repeatable isolated verification. The exchange's verification was partial because Docker container startup stalled; no successful container import was claimed. Keith confirmed review of all four affected files. No human test rerun is claimed.
+
+
+## ai-20260930-013
+
+- Recorded at: 2026-09-30T16:54:17+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for the specified active supplier detail lookup using existing synchronous sessions, Supplier/Category models, and PostGIS.
+- Outcome: Retained the repository lookup, immutable read values, service availability boundary, and integration tests in the three requested files. Seed identity lookup and insertion helpers remain intact.
+- Verification: Agent checks passed 612 tests covering the new read cases, seed integration regressions, and unit/API suites against disposable PostGIS, with one existing dependency deprecation warning. Syntax and scoped whitespace checks passed. The disposable database container was removed. The full schema/runtime-role integration suite was not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files.
+- Missing evidence: Original message timestamp unavailable; the exact implementation prompt and final response are available below. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Implement active supplier detail lookup in `supplier-service/app/repositories/suppliers.py` and expose it through a new `supplier-service/app/services/suppliers.py`. Use `Supplier`, `Category`, and the existing synchronous session conventions as read-only references. Keep the seed importer's `find_identity` behavior intact because it intentionally includes deleted identities.
+
+Files to edit:
+
+- `supplier-service/app/repositories/suppliers.py`
+- `supplier-service/app/services/suppliers.py` (new)
+- `supplier-service/tests/integration/test_supplier_reads.py` (new, explicitly requested by the reference)
+
+Acceptance criteria:
+
+- Lookup accepts a UUID and always applies `Supplier.deleted_at IS NULL`. Both a missing UUID and a deleted supplier return `None` through the ordinary service.
+- Define a transport-independent read value containing supplier scalar fields, timestamps, version, category IDs and names, and explicitly named latitude and longitude. Preserve optional null values, opening and closing times, derived day offset, and `image_key`.
+- Extract latitude with `ST_Y` and longitude with `ST_X` after casting geography to SRID 4326 point geometry. Include coordinates in the supplier query and eagerly load categories with `selectinload`. Reading the returned value requires no lazy database access.
+- Ordinary callers cannot enable deleted records through a flag. Preserve the seed-specific lookup and insertion helpers.
+- Repository functions neither format HTTP responses nor own commits. The service maps connection or database availability failures to a safe transport-independent exception without exposing SQL, credentials, or raw exception messages. Do not turn programming defects into missing records or availability failures.
+- Add real PostGIS coverage using the existing `db_connection` fixture from `supplier-service/tests/integration/conftest.py`. Verify active, deleted, and missing identities, multiple categories, nullable fields, and coordinate round trips with asymmetric latitude and longitude values. Verify the safe failure boundary without requiring an actual database outage.
+- In your answer, recommend the appropriate verification scripts or commands based on the completed implementation and project configuration. Include the working directory, database prerequisites, and any checks you could not perform.
+
+Do not implement (out of scope):
+
+- HTTP schemas, routes, authentication, administrative reads, or changes to seed import behavior.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented active-only detail lookup and `get_supplier(session, UUID)`.
+
+- Returns immutable details with categories, named coordinates, nullable fields, hours, timestamps, and version.
+- Missing/deleted suppliers return `None`; seed lookup behavior remains unchanged.
+- Availability failures produce a safe exception; programming errors propagate.
+- Added PostGIS and simulated failure tests.
+
+**Verification:** 612 tests passed; syntax and whitespace checks passed. Disposable database removed.
+
+From `supplier-service/`, recommended commands:
+
+```bash
+./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/integration/test_seed_import.py tests/unit tests/api -q
+```
+
+Prerequisites: install `requirements-dev.txt`; set `TEST_DATABASE_URL` to a `postgresql+psycopg` PostGIS database ending in `_test`, distinct from `DATABASE_URL`, with migration permissions. The fixture runs migrations.
+
+The full schema/runtime-role integration suite was not run; one existing dependency deprecation warning remains.
+
+### Scope
+
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — implement the specified active-only UUID query and immutable supplier/category read classes, cast geography to SRID 4326 point geometry for named ST_Y/ST_X coordinates, eagerly load categories with selectinload, and document detached access and caller-owned transactions while preserving seed helpers.
+- `supplier-service/app/services/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — write the synchronous get_supplier function and safe transport-independent availability exception, classify connection/resource failures, preserve programming errors, and document caller-owned session cleanup.
+- `supplier-service/tests/integration/test_supplier_reads.py`: Writing implementation code — write real PostGIS tests using db_connection for active/deleted/missing identities, multiple categories, scalar/null/hour preservation, asymmetric coordinates, detached access, two-query loading, pending-state preservation, and seed identity behavior; simulate availability and programming failures without an outage.
+
+### Usage summary
+
+Implemented the requested detail-only read layer with immutable transport-independent values and a service failure boundary. Ordinary lookup always filters deleted suppliers, while seed identity lookup retains deleted identities. Real PostGIS and simulated-error coverage passed alongside seed, unit, and API regressions. Keith confirmed review of all three affected files; no human test rerun is claimed.
+
+
+## ai-20260930-014
+
+- Recorded at: 2026-09-30T17:06:35+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for active supplier listing and pagination validation under the specified README/decisions contract and existing synchronous read architecture.
+- Outcome: Retained changes to the three requested files: shared detail/list projection and mapping, active filtered pages and totals, service pagination validation and shared failure handling, and expanded integration tests.
+- Verification: Agent checks passed 639 tests covering supplier reads, seed integration regressions, and unit/API suites against disposable PostGIS, with one existing dependency deprecation warning. Fresh-session tests verified three queries for nonempty pages at limits 1, 2, 20, and 100, invalid pagination before repository access, and unchanged stored data. Syntax and scoped whitespace checks passed. The disposable database container was removed. The full schema/runtime-role integration suite was not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files.
+- Missing evidence: Original message timestamp unavailable; the exact implementation prompt and final response are available below. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Implement active supplier listing and service-side pagination validation in `supplier-service/app/repositories/suppliers.py` and `supplier-service/app/services/suppliers.py`. Use the active detail read value and safe service failure boundary in those modules, which provide loaded categories and named coordinates without HTTP coupling. Read the filtering and pagination contract in `supplier-service/README.md` and `supplier-service/docs/decisions.md`.
+
+Files to edit:
+
+- `supplier-service/app/repositories/suppliers.py`
+- `supplier-service/app/services/suppliers.py`
+- `supplier-service/tests/integration/test_supplier_reads.py`
+
+Acceptance criteria:
+
+- The service defaults to limit 20 and offset 0. Reject limits outside 1–100 and negative offsets before executing a query. Use the existing `DomainValidationError` and `ValidationIssue` conventions for invalid pagination, with `query.limit` and `query.offset` field paths. Keep transport parsing of UUID strings for the future route adapter.
+- Every ordinary supplier query excludes deleted records. An optional area filter uses equality. Category UUID filters match any selected category and combine with area using AND. Empty category selections impose no restriction.
+- Use relationship `any()`, EXISTS, or an equivalent nonmultiplying predicate so a supplier matching several selected categories appears once. Repeated filter UUIDs do not change the results.
+- Sort by supplier name, then UUID, before applying offset and limit. Return a transport-independent page containing `items`, `total`, `limit`, and `offset`.
+- Calculate the required total from exactly the same active, area, and category predicates before pagination. An offset past the last result returns an empty item list while preserving the matching total.
+- Fetch all categories of each matched supplier, including categories outside the filter. Use select-in loading and a coordinate projection or batch projection so neither categories nor coordinates require a query per supplier.
+- Extend the real PostGIS fixture coverage with same-name suppliers, different areas, multiple assignments, and a deleted supplier. Verify deterministic pages, combined filters, match-any behavior, no duplicate rows, repeated and unmatched category UUIDs, totals, empty pages, and boundary pagination values.
+- Verify bounded query growth with fresh sessions and multiple page sizes rather than relying on an already populated identity map. Verify invalid pagination reaches no repository query and reads leave stored data unchanged.
+- In your answer, recommend the appropriate verification scripts or commands based on the completed implementation and project configuration. Include the working directory, database prerequisites, and any checks you could not perform.
+
+Do not implement (out of scope):
+
+- HTTP endpoints, administrative status filters, mutations, search, or alternate sorting.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented `list_suppliers()` with validated pagination, active-only filtering, match-any categories, deterministic ordering, and matching totals. Pages reuse detached read values and the safe failure boundary.
+
+**639 tests passed**, including PostGIS coverage verifying three queries per nonempty page and unchanged stored data. Syntax/whitespace checks passed; disposable database removed.
+
+From `supplier-service/`, run:
+
+```bash
+./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/integration/test_seed_import.py tests/unit tests/api -q
+```
+
+Prerequisites: `requirements-dev.txt` installed and `TEST_DATABASE_URL` pointing to an isolated PostGIS database ending in `_test`, using `postgresql+psycopg`, with migration permissions and distinct from `DATABASE_URL`.
+
+The full schema/runtime-role integration suite was not run. One existing dependency deprecation warning remains.
+
+### Scope
+
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — implement SupplierPage and active listing with identical count/page predicates, equality area filtering, match-any relationship EXISTS filtering, name/UUID ordering, and bounded pagination; refactor detail/list reads to share coordinate projection, select-in category loading, and immutable value mapping.
+- `supplier-service/app/services/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — implement list_suppliers with default and bounded integer pagination, shared DomainValidationError/ValidationIssue field paths, validation before repository access, and a refactored availability boundary shared with detail reads.
+- `supplier-service/tests/integration/test_supplier_reads.py`: Writing implementation code — extend real PostGIS coverage with deliberately unsorted same-name identities, areas, multiple categories and deletion; test filters, duplicate prevention, totals, empty pages, boundary values, fresh-session query growth, unchanged snapshots, invalid pagination without queries, and both service operations' safe failure behavior.
+
+### Usage summary
+
+Retained active supplier listing and service validation using the existing detached read values and synchronous sessions. Count and item queries share predicates, category selection does not multiply rows, and complete categories and coordinates load without per-supplier queries. Tests confirm deterministic pages and unchanged stored data. Keith confirmed review of all three affected files; no human test rerun is claimed.
+
+
+## ai-20260930-015
+
+- Recorded at: 2026-09-30T17:19:44+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-09-30.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Refactoring and documentation improvements for controlled category and area readers using the specified migration-managed Category table, approved vocabulary, immutable read values, and existing service availability boundary.
+- Outcome: Retained changes in the three requested files: ordered category retrieval, service category/area readers, and expanded read-layer integration coverage. No migrations, category management, area storage, or routes were added.
+- Verification: Agent checks passed 653 tests across supplier reads, seed integration regressions, and unit/API suites against disposable PostGIS, with one existing dependency deprecation warning. A separate database-independent area test passed. Tests covered migrated and unassigned/deleted-only categories, ordering, immutable results, no writes, exact area choices, no SQL for areas, and category failure handling. Syntax and scoped whitespace checks passed. The disposable database container was removed. Full schema/runtime-role integration coverage was not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of all three affected files.
+- Missing evidence: Original message timestamp unavailable; the exact implementation prompt and final response are available below. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+````text
+Implement controlled category and area readers through `supplier-service/app/services/suppliers.py`, with database category retrieval in `supplier-service/app/repositories/suppliers.py`. Reuse the service's transport-independent category values and safe database availability exception. Use `supplier-service/app/validation/vocabulary.py` as the source of approved areas and the migration-managed `Category` table as the source of categories.
+
+Files to edit:
+
+- `supplier-service/app/repositories/suppliers.py`
+- `supplier-service/app/services/suppliers.py`
+- `supplier-service/tests/integration/test_supplier_reads.py`
+
+Acceptance criteria:
+
+- The category reader returns controlled category IDs and names ordered by name then ID, including categories with no active supplier assignments. It does not derive choices from supplier rows or create missing categories.
+- The area reader returns the exact `APPROVED_AREAS` values in their declared order without a database lookup. Preserve `USC/UHC` and `KR/NUH` as single choices. Return a value callers cannot use to mutate the shared vocabulary.
+- Category database availability failures use the existing safe service exception. Area reads remain usable without a database connection.
+- Extend the integration coverage to verify migrated categories, categories with no active assignments, deterministic ordering, exact area values, and absence of category or area writes. Verify area access does not execute SQL.
+- Ordinary supplier reads remain active-only, and reference-data reads do not introduce an option to reveal deleted suppliers. Seed-specific identity lookup remains separate.
+- In your answer, recommend the appropriate verification scripts or commands for the completed supplier read layer, including existing seed repository regression coverage. Ground recommendations in available project configuration and include the working directory, prerequisites, and any checks you could not perform.
+
+Do not implement (out of scope):
+
+- Category management, new area storage, migrations, administrative read APIs, or route registration.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented `list_categories(session)` and `list_areas()`.
+
+- Categories return immutable IDs/names ordered by name then ID, including unassigned choices.
+- Areas preserve the exact approved order and slash labels without database access.
+- Category failures reuse the safe service exception.
+
+**653 tests passed**, including supplier reads and seed regressions. Syntax/whitespace checks passed; disposable PostGIS removed.
+
+From `supplier-service/`:
+
+```bash
+./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
+./.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Prerequisites: install `requirements-dev.txt`; configure `TEST_DATABASE_URL` with `postgresql+psycopg`, an isolated PostGIS database ending in `_test`, and migration permissions. It must differ from `DATABASE_URL`.
+
+Full schema/runtime-role integration coverage was not run. One existing dependency deprecation warning remains.
+
+### Scope
+
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — write and document list_categories using a direct Category ID/name projection ordered by name then ID, returning immutable CategoryRead values with autoflush disabled and no dependency on supplier assignments.
+- `supplier-service/app/services/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — write and document list_categories through the existing safe availability boundary and list_areas returning the immutable APPROVED_AREAS tuple in declared order without a session or database lookup.
+- `supplier-service/tests/integration/test_supplier_reads.py`: Writing implementation code — extend real PostGIS tests for migrated categories with no assignments or only deleted assignments, deterministic ordering, immutable results, pending-state and stored-data preservation; verify exact immutable areas and database-free/zero-SQL access, and extend simulated availability/programming failure coverage to categories.
+
+### Usage summary
+
+Retained controlled reference-data readers using migration-managed categories and the existing approved area vocabulary. Category reads return all controlled definitions independently of supplier activity; area reads preserve combined labels and declared order without SQL. Existing active-only supplier and seed identity behavior remains separate. Keith confirmed review of all three affected files; no human test rerun is claimed.

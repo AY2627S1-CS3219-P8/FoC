@@ -258,4 +258,40 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   or header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Active Supplier detail reads](supplier-service/ai/usage-log.md#ai-20260930-013):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the repository, new read service, and PostGIS
+  integration tests. All three files were retained and reviewed by Keith.
+  Agent verification passed 612 read/seed integration and unit/API tests, with
+  one existing dependency warning; syntax and scoped whitespace checks passed.
+  The disposable database was removed. The full schema/runtime-role integration
+  suite was not run; no human test rerun is claimed. The exact prompt and final
+  response are recorded; original timestamp unavailable, with no redactions or
+  header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Active Supplier listing and pagination](supplier-service/ai/usage-log.md#ai-20260930-014):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the repository, service, and PostGIS tests.
+  All three files were retained and reviewed by Keith. Agent checks passed
+  639 read/seed integration and unit/API tests, with one existing dependency
+  warning, plus syntax and scoped whitespace checks. Fresh-session tests verified
+  bounded query growth and unchanged stored data. The disposable database was
+  removed; the full schema/runtime-role integration suite was not run. No human
+  test rerun is claimed. The exact prompt and final response are recorded;
+  original timestamp unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Controlled Supplier category and area readers](supplier-service/ai/usage-log.md#ai-20260930-015):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the repository, service, and read integration
+  tests. All three files were retained and reviewed by Keith. Agent checks passed
+  653 read/seed integration and unit/API tests and a separate database-independent
+  area test, with an existing dependency warning. Syntax and scoped whitespace
+  checks passed; the disposable database was removed. Full schema/runtime-role
+  integration coverage was not run; no human test rerun is claimed. The exact
+  prompt and final response are recorded; original timestamp unavailable, with
+  no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.
