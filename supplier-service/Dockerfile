@@ -1,8 +1,9 @@
 # AI Assistance Disclosure:
-# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-29
+# Tool: Codex (model: GPT-6), date: 2026-09-28 to 2026-09-30
 # Scope: Boilerplate generation — package Alembic configuration and revisions in the service image. Configure the bounded API health probe to use /ready (2026-09-29).
-# Author review: Keith confirmed review of all affected changes.
-# Details: ai/usage-log.md; ai-20260929-001; ai-20260929-003
+# Scope: Boilerplate generation — configure the existing image to copy module-relative seed metadata with supplier ownership while retaining application and Alembic files. (ai-20260930-012)
+# Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
+# Details: ai/usage-log.md; ai-20260929-001; ai-20260929-003; ai-20260930-012
 
 # Use the Python version chosen for the service
 FROM python:3.12-slim
@@ -23,6 +24,7 @@ RUN useradd --create-home --uid 10001 supplier
 COPY --chown=supplier:supplier app ./app
 COPY --chown=supplier:supplier alembic.ini ./
 COPY --chown=supplier:supplier migrations ./migrations
+COPY --chown=supplier:supplier seed ./seed
 
 # Switch subsequent instructions to the runtime user
 USER supplier
