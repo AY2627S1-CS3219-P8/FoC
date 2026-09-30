@@ -218,6 +218,31 @@ multiple application replicas can start safely after the migration job
 completes. In another deployment system, run `alembic upgrade head` as a
 single migration job before starting or rolling out application replicas.
 
+### First administrator bootstrap
+
+The Compose stack includes a one-shot `user-bootstrap` job. Set all of these
+variables in the untracked `.env` file before starting the stack:
+
+```dotenv
+BOOTSTRAP_ADMIN_NUS_STUDENT_NUMBER=A0123456X
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_ADMIN_DISPLAY_NAME=Platform Admin
+BOOTSTRAP_ADMIN_PASSWORD='use-a-long-password-with-1-symbol!'
+```
+
+When all four variables are empty, the job exits successfully without making
+changes. A partially configured set fails so an administrator is never
+silently skipped. The job runs after `user-migrate` and before
+`user-service`.
+
+Bootstrap completion is recorded in the database on the singleton
+administrator-state row in the same transaction as the administrator account.
+The row is locked while the transaction runs, so retries, restarts, and
+multiple bootstrap instances create at most one administrator. A failed
+transaction leaves the marker unset and can be safely retried. Once the marker
+is set, changing or removing the environment variables cannot create another
+initial administrator.
+
 To apply migrations directly during local development, run this from
 `user-service/` with the target database configured in `DATABASE_URL`:
 

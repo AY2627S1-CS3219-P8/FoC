@@ -92,3 +92,6 @@ class AdminStateLock(Base):
     )
 
     lock_name: Mapped[str] = mapped_column(String(50), primary_key=True, nullable=False)
+    bootstrap_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
