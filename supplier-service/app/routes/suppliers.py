@@ -1,0 +1,59 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-30
+# Scope: Writing implementation code — write unregistered supplier GET adapters with parsed UUIDs and pagination, explicit response conversion, session injection, and safe 404/503 envelopes.
+# Author review: Keith confirmed review of the supplier GET adapters.
+# Details: ../../ai/usage-log.md; ai-20260930-017
+
+"""Supplier read adapters; remain unregistered until authentication is added."""
+
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.schemas import SupplierPageResponse, SupplierResponse
+from app.services import suppliers
+
+router = APIRouter()
+
+
+def _unavailable() -> JSONResponse:
+    return JSONResponse(status_code=503, content={
+        "error": {
+            "code": "DATABASE_UNAVAILABLE",
+            "message": "Supplier details are temporarily unavailable.",
+        },
+    })
+
+
+@router.get("/suppliers", response_model=SupplierPageResponse)
+def get_suppliers(
+    session: Annotated[Session, Depends(get_db)],
+    area: str | None = None,
+    category_id: Annotated[list[UUID], Query()] = [],
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    try:
+        page = suppliers.list_suppliers(
+            session, area=area, category_ids=category_id, limit=limit, offset=offset,
+        )
+    except suppliers.SupplierReadUnavailable:
+        return _unavailable()
+    return SupplierPageResponse.from_read(page)
+
+
+@router.get("/suppliers/{id}", response_model=SupplierResponse)
+def get_supplier(id: UUID, session: Annotated[Session, Depends(get_db)]):
+    try:
+        value = suppliers.get_supplier(session, id)
+    except suppliers.SupplierReadUnavailable:
+        return _unavailable()
+    if value is None:
+        return JSONResponse(status_code=404, content={
+            "error": {"code": "SUPPLIER_NOT_FOUND", "message": "Supplier not found."},
+        })
+    return SupplierResponse.from_read(value)

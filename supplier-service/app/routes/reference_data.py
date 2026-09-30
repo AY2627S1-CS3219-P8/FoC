@@ -1,0 +1,38 @@
+# AI Assistance Disclosure:
+# Tool: Codex (model: GPT-6), date: 2026-09-30
+# Scope: Writing implementation code — write unregistered category and area GET adapters with explicit category conversion, injected category sessions, safe 503 errors, and database-independent area access.
+# Author review: Keith confirmed review of the reference-data GET adapters.
+# Details: ../../ai/usage-log.md; ai-20260930-018
+
+"""Controlled read choices; remain unregistered until authentication is added."""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.schemas import CategoryResponse
+from app.services import suppliers
+
+router = APIRouter()
+
+
+@router.get("/categories", response_model=list[CategoryResponse])
+def get_categories(session: Annotated[Session, Depends(get_db)]):
+    try:
+        categories = suppliers.list_categories(session)
+    except suppliers.SupplierReadUnavailable:
+        return JSONResponse(status_code=503, content={
+            "error": {
+                "code": "DATABASE_UNAVAILABLE",
+                "message": "Supplier details are temporarily unavailable.",
+            },
+        })
+    return [CategoryResponse.from_read(category) for category in categories]
+
+
+@router.get("/areas", response_model=list[str])
+def get_areas():
+    return suppliers.list_areas()

@@ -1346,3 +1346,87 @@ entry, not a claim about subsequent operational checks. Keith confirmed review
 of all four affected files; no human test rerun is claimed. The exact prompt and
 verbatim final response are recorded. Original message timestamp unavailable;
 no redactions or header exceptions apply.
+
+
+For [active supplier detail reads](ai/usage-log.md#ai-20260930-013), Codex
+(GPT-6) provided **Writing implementation code** and **Refactoring and
+documentation improvements** for `app/repositories/suppliers.py` and
+`app/services/suppliers.py`, and **Writing implementation code** for
+`tests/integration/test_supplier_reads.py`. Retained work provides immutable
+active-only details, eager categories, named PostGIS coordinates, and safe
+availability failures while preserving seed identity behavior. Agent checks
+passed 612 tests across the new reads, seed integration, unit, and API suites,
+with one existing dependency warning; syntax and scoped whitespace checks passed.
+The disposable PostGIS container was removed. The full schema/runtime-role
+integration suite was not run. Keith confirmed review of all three files;
+no human test rerun is claimed. The exact prompt and final response are recorded;
+original message timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [active supplier listing and pagination](ai/usage-log.md#ai-20260930-014),
+Codex (GPT-6) provided **Writing implementation code** and **Refactoring and
+documentation improvements** for `app/repositories/suppliers.py` and
+`app/services/suppliers.py`, and **Writing implementation code** for
+`tests/integration/test_supplier_reads.py`. Retained changes add active filtered
+pages with matching totals, deterministic ordering, pagination validation, and
+shared detail/list loading and failure handling. Agent checks passed 639 tests
+across reads, seed integration, unit, and API suites, with one existing dependency
+warning; syntax and scoped whitespace checks passed. Fresh-session tests verified
+three queries per nonempty page at multiple limits and unchanged stored data.
+The disposable PostGIS container was removed. The full schema/runtime-role
+integration suite was not run. Keith confirmed review of all three files;
+no human test rerun is claimed. The exact prompt and final response are recorded;
+original message timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [controlled category and area readers](ai/usage-log.md#ai-20260930-015),
+Codex (GPT-6) provided **Writing implementation code** and **Refactoring and
+documentation improvements** for `app/repositories/suppliers.py` and
+`app/services/suppliers.py`, and **Writing implementation code** for
+`tests/integration/test_supplier_reads.py`. Retained readers return ordered,
+immutable category values independently of supplier assignments and exact
+approved area choices without database access. Category failures reuse the safe
+service boundary. Agent checks passed 653 read/seed integration and unit/API
+tests, plus a separate database-independent area test, with an existing dependency
+warning. Syntax and scoped whitespace checks passed; the disposable PostGIS
+container was removed. Full schema/runtime-role integration coverage was not run.
+Keith confirmed review of all three files; no human test rerun is claimed.
+The exact prompt and final response are recorded; original message timestamp
+unavailable. No redactions or header exceptions apply.
+
+
+For [supplier read response models](ai/usage-log.md#ai-20260930-016), Codex
+(GPT-6) provided **Writing implementation code** for `app/schemas.py` and
+`tests/api/test_supplier_reads.py`. Retained models explicitly convert loaded
+read values, preserving nulls, precision, ordering, and pagination metadata.
+Agent checks passed 11 new serialization tests and all 552 unit/API tests with
+one dependency warning; scoped whitespace checks passed. Database integration
+tests were not run. Keith confirmed review of both files; no human test rerun
+is claimed. The exact prompt and verbatim final response are recorded; original
+message timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [unregistered supplier GET adapters](ai/usage-log.md#ai-20260930-017),
+Codex (GPT-6) provided **Writing implementation code** for
+`app/routes/suppliers.py` and `tests/api/test_supplier_reads.py`. Retained handlers
+use existing read services, parsed UUIDs/pagination, explicit response conversion,
+and safe error envelopes. Tests verify cleanup and production route exclusion.
+During this exchange, agent checks passed 37 serialization/read HTTP tests and
+all 578 unit/API tests with one dependency warning; scoped whitespace checks
+passed. Database integration tests were not run. Keith confirmed review of both affected files;
+no human test rerun is claimed. The exact prompt and verbatim
+final response are recorded; original timestamp unavailable. No redactions or
+header exceptions apply. The router remains unregistered pending authentication.
+
+
+For [controlled reference-data GET adapters](ai/usage-log.md#ai-20260930-018),
+Codex (GPT-6) provided **Writing implementation code** for
+`app/routes/reference_data.py` and `tests/api/test_supplier_reads.py`. Retained
+handlers preserve controlled choices, safe category errors, and database-free
+areas. Tests mount all four read adapters together and verify production exclusion.
+Agent checks passed 43 read HTTP/serialization tests and all 584 unit/API tests
+with one dependency warning; combined read collection passed with 97 tests and
+scoped whitespace checks passed. Database integration tests were not run. Keith confirmed
+review of both affected files; no human test rerun is claimed. The exact prompt
+and verbatim final response are recorded; original timestamp unavailable. No
+redactions or header exceptions apply. Production mounting awaits authentication.
