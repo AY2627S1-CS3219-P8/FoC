@@ -496,4 +496,73 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   no redactions or header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Atomic supplier soft deletion](supplier-service/ai/usage-log.md#ai-20261001-010):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the supplier repository/service, and Writing
+  implementation code and Boilerplate generation for 31 new integration cases.
+  Retained work adds refreshed row locking, version checks, write-free repeated
+  deletion, preserved columns/assignments, and safe transaction failures without
+  retries. Agent checks passed 88 update/deletion integration cases and 820 unit/API
+  tests, with one dependency warning per suite; scoped whitespace checks passed.
+  Disposable PostGIS resources were removed; broader integration suites were not
+  run. Keith reviewed all three files; no human test rerun is claimed. Exact prompt
+  and final response are recorded; original timestamp unavailable, with no
+  redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Administrator supplier DELETE adapter](supplier-service/ai/usage-log.md#ai-20261001-011):
+  Codex (GPT-6) provided Writing implementation code, Refactoring and documentation
+  improvements, Boilerplate generation, and Debugging assistance across the new
+  administrator router, app registration, API tests, and route assertion correction.
+  Retained work adds positive-version validation, empty 204 after service completion,
+  safe errors, and 31 DELETE cases covering authentication, repeat deletion,
+  transaction failure, cleanup, no retries, and OpenAPI. Agent checks passed
+  86 focused adapter cases and all 851 unit/API tests, with one dependency warning
+  per suite; whitespace checks passed. Controlled dependencies required no external
+  services; PostGIS integration was not rerun for this adapter. Keith reviewed all
+  four files; no human test rerun is claimed. Exact prompt and final response are
+  recorded; original timestamp unavailable, with no redactions or header exceptions.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Protected administrator supplier reads](supplier-service/ai/usage-log.md#ai-20261001-012):
+  Codex (GPT-6) provided Writing implementation code, Refactoring and documentation
+  improvements, and Debugging assistance across the supplier repository/service,
+  administrator router, and API/integration read tests. Retained work adds protected
+  status-filtered listing and complete active/deleted detail reads while preserving
+  anonymous active-only public reads. Agent checks passed 883 unit/API tests
+  (including 91 focused read API cases) and 85 read integration tests against
+  disposable PostGIS, with one dependency warning per suite; scoped whitespace
+  checks passed. Initial route and working-directory errors were corrected and
+  the test container removed. Broader integration suites and live authentication
+  were not run. Keith reviewed all five files; no human test rerun is claimed.
+  Exact prompt and final response are recorded; original timestamp unavailable,
+  with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Deletion lifecycle verification](supplier-service/ai/usage-log.md#ai-20261001-013):
+  Codex (GPT-6) provided Writing implementation code and Boilerplate generation
+  for five integration cases across supplier updates, reads, and seed imports.
+  Retained tests verify mounted deletion visibility, stable repeat deletion,
+  real DELETE/PATCH contention, complete retained state, cleanup, and seed
+  reimport preservation. All 240 integration cases passed against disposable
+  PostGIS, with one dependency warning; collection and whitespace checks passed.
+  Test resources were removed; no requested checks remained blocked. Authentication
+  was controlled, not live. Keith reviewed all three files; no human rerun is
+  claimed. Exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Deletion and administrator-read documentation](supplier-service/ai/usage-log.md#ai-20261001-014):
+  Codex (GPT-6) provided Refactoring and documentation improvements for the
+  Supplier Service README, covering implemented contracts, retention/concurrency,
+  seed preservation, separate service authentication, examples, and verification
+  commands. A follow-up fixed a remaining stale claim with an internal link.
+  Canonical examples, OpenAPI declarations, test links, summary placement, and
+  whitespace checks passed; application suites and live authentication were not
+  rerun. Historical results remain historical. Keith reviewed the retained work
+  and correction; no human rerun is claimed. Exact prompts and relevant responses
+  are recorded; original timestamps unavailable, with no redactions or header
+  exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.

@@ -4,7 +4,12 @@
 # Author review: Keith confirmed review of the retained atomic update changes (ai-20261001-006).
 # Scope: Writing implementation code; Boilerplate generation — extend the specified mounted PATCH and existing service tests with 13 real PostGIS cases, reuse disposable database and controlled authentication fixtures, track request-session cleanup, synchronize independent writes with bounded barriers and observed PostgreSQL locks, and verify complete winner state, rollback snapshots, stale/no-op behavior, canonical public reads, and deletion-race classification. (ai-20261001-008)
 # Author review: Keith confirmed review of the retained concurrency and rollback tests (ai-20261001-008).
-# Details: ../../ai/usage-log.md; ai-20261001-006; ai-20261001-008
+# Scope: Writing implementation code; Boilerplate generation — add 31 cases using existing isolated PostgreSQL/PostGIS fixtures, complete row and assignment snapshots, write-free repeated deletion, missing/stale failures, failure injection at lock/flush/commit, lock-release checks, and synchronized competing update/delete/rollback transactions with stale cached state. (ai-20261001-010)
+# Author review: Keith confirmed review of the retained soft deletion changes (ai-20261001-010).
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Boilerplate generation — add three mounted DELETE/PATCH contention cases using independent request sessions, bounded events, observed PostgreSQL blocking, complete winner snapshots, single deletion increments, conflict/not-found outcomes, and transaction/lock cleanup. (ai-20261001-013)
+# Author review: Keith confirmed review of the retained lifecycle tests (ai-20261001-013).
+# Details: ../../ai/usage-log.md; ai-20261001-006; ai-20261001-008; ai-20261001-010; ai-20261001-013
 
 """Atomic versioned updates against disposable, migrated PostGIS databases."""
 
@@ -553,3 +558,256 @@ def test_patch_concurrent_deletion_classifies_failed_conditional_write_as_not_fo
     assert after_assignments == before_assignments
     assert patch_client.client.get(f'/suppliers/{saved.id}').status_code == 404
     assert len(patch_client.authentication) == 1
+
+
+def test_delete_preserves_columns_and_assignments_and_is_idempotent(create_engine_db, saved):
+    before_rows, assignments = supplier_snapshot(create_engine_db)
+    started = datetime.now(timezone.utc)
+    with Session(create_engine_db) as session:
+        commits = []
+        event.listen(session, 'after_commit', lambda *_: commits.append(True))
+        assert suppliers.delete_supplier(session, saved.id, 1) is None
+        assert commits == [True]
+        assert not session.in_transaction()
+    rows, after_assignments = supplier_snapshot(create_engine_db)
+    original, deleted = dict(before_rows[0]._mapping), dict(rows[0]._mapping)
+    timestamp = deleted['deleted_at']
+    assert timestamp.utcoffset().total_seconds() == 0
+    assert started <= timestamp <= datetime.now(timezone.utc)
+    assert deleted == dict(original, deleted_at=timestamp, updated_at=timestamp, version=2)
+    assert after_assignments == assignments
+    statements = []
+    def record(_conn, _cursor, statement, *_):
+        statements.append(statement.strip().split()[0].upper())
+    event.listen(create_engine_db, 'before_cursor_execute', record)
+    try:
+        for version in (1, 2, 99):
+            with Session(create_engine_db) as session:
+                suppliers.delete_supplier(session, saved.id, version)
+                assert not session.in_transaction()
+    finally:
+        event.remove(create_engine_db, 'before_cursor_execute', record)
+    assert not {'UPDATE', 'INSERT', 'DELETE'} & set(statements)
+    assert supplier_snapshot(create_engine_db) == (rows, assignments)
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_delete_rejection_preserves_storage(create_engine_db, saved, missing):
+    before = supplier_snapshot(create_engine_db)
+    with Session(create_engine_db) as session:
+        with pytest.raises(suppliers.SupplierNotFound if missing else suppliers.SupplierVersionConflict):
+            suppliers.delete_supplier(session, uuid4() if missing else saved.id, 99)
+        assert not session.in_transaction()
+    assert supplier_snapshot(create_engine_db) == before
+    with create_engine_db.begin() as connection:
+        connection.execute(select(Supplier.id).where(Supplier.id == saved.id).with_for_update(nowait=True))
+
+
+@pytest.mark.parametrize('stage', ['lock', 'flush', 'commit'])
+@pytest.mark.parametrize('state,expected', [
+    (None, suppliers.SupplierDeleteUnavailable),
+    ('08006', suppliers.SupplierDeleteUnavailable),
+    ('53000', suppliers.SupplierDeleteUnavailable),
+    ('57P01', suppliers.SupplierDeleteUnavailable),
+    ('40001', OperationalError),
+    ('40P01', OperationalError),
+    ('23503', OperationalError),
+])
+def test_delete_failure_boundary_and_rollback(create_engine_db, saved, monkeypatch, stage, state, expected):
+    class DatabaseFailure(Exception):
+        sqlstate = state
+    error = OperationalError('private diagnostics', {}, DatabaseFailure('private diagnostics'))
+    before = supplier_snapshot(create_engine_db)
+    calls = Mock(side_effect=error)
+    with Session(create_engine_db) as session:
+        if stage == 'lock':
+            monkeypatch.setattr(suppliers, 'lock_supplier', calls)
+        else:
+            event.listen(session, 'after_flush' if stage == 'flush' else 'before_commit', calls)
+        with pytest.raises(expected) as caught:
+            suppliers.delete_supplier(session, saved.id, 1)
+        calls.assert_called_once()
+        assert not session.in_transaction()
+    if expected is suppliers.SupplierDeleteUnavailable:
+        assert str(caught.value) == 'Supplier deletion is temporarily unavailable.'
+        assert caught.value.__cause__ is None
+    assert supplier_snapshot(create_engine_db) == before
+    with create_engine_db.begin() as connection:
+        connection.execute(select(Supplier.id).where(Supplier.id == saved.id).with_for_update(nowait=True))
+
+
+@pytest.mark.parametrize('error,expected', [
+    (TimeoutError('private'), suppliers.SupplierDeleteUnavailable),
+    (ProgrammingError('private', {}, Exception('private')), ProgrammingError),
+    (IntegrityError('private', {}, Exception('private')), IntegrityError),
+    (RuntimeError('private'), RuntimeError),
+])
+def test_delete_commit_failure_never_returns_success(create_engine_db, saved, error, expected):
+    before = supplier_snapshot(create_engine_db)
+    with Session(create_engine_db) as session:
+        fail = Mock(side_effect=error)
+        event.listen(session, 'before_commit', fail)
+        with pytest.raises(expected):
+            suppliers.delete_supplier(session, saved.id, 1)
+        fail.assert_called_once()
+        assert not session.in_transaction()
+    assert supplier_snapshot(create_engine_db) == before
+
+
+@pytest.mark.parametrize('competing_action', ['update', 'delete', 'rollback'])
+def test_delete_waits_and_refreshes_locked_state(create_engine_db, saved, monkeypatch, competing_action):
+    waiting = Queue()
+    original_lock = suppliers.lock_supplier
+    def lock(session, identity):
+        waiting.put(session.scalar(text('SELECT pg_backend_pid()')))
+        return original_lock(session, identity)
+    monkeypatch.setattr(suppliers, 'lock_supplier', lock)
+    with Session(create_engine_db, expire_on_commit=False) as session:
+        cached = session.get(Supplier, saved.id)
+        session.commit()
+        with create_engine_db.connect() as competitor:
+            transaction = competitor.begin()
+            pid = competitor.scalar(text('SELECT pg_backend_pid()'))
+            timestamp = datetime.now(timezone.utc)
+            changes = {'version': 2, 'updated_at': timestamp}
+            if competing_action == 'delete':
+                changes['deleted_at'] = timestamp
+            competitor.execute(update(Supplier).where(Supplier.id == saved.id).values(**changes))
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(suppliers.delete_supplier, session, saved.id, 1)
+                try:
+                    wait_for_patch_lock(create_engine_db, waiting.get(timeout=10), pid)
+                    assert not future.done()
+                finally:
+                    if competing_action == 'rollback':
+                        transaction.rollback()
+                    else:
+                        transaction.commit()
+                if competing_action == 'update':
+                    with pytest.raises(suppliers.SupplierVersionConflict):
+                        future.result(timeout=10)
+                else:
+                    assert future.result(timeout=10) is None
+        assert not session.in_transaction()
+        assert cached.version == 2
+    rows, assignments = supplier_snapshot(create_engine_db)
+    stored = rows[0]._mapping
+    assert stored['version'] == 2
+    assert len(assignments) == len(saved.categories)
+    if competing_action == 'update':
+        assert stored['deleted_at'] is None
+    elif competing_action == 'delete':
+        assert stored['deleted_at'] == stored['updated_at'] == timestamp
+    else:
+        assert stored['deleted_at'] == stored['updated_at'] > timestamp
+
+
+@pytest.mark.parametrize('first_action,second_action', [
+    ('delete', 'delete'), ('patch', 'delete'), ('delete', 'patch'),
+])
+def test_mounted_delete_and_patch_contend_without_partial_mutation(
+    patch_client, create_engine_db, saved, monkeypatch, first_action, second_action,
+):
+    """Hold the winning real write until PostgreSQL observes the second waiter."""
+    client = patch_client.client
+    before_rows, before_assignments = supplier_snapshot(create_engine_db)
+    participants, winning_snapshots = Queue(), Queue()
+    applied, release = Event(), Event()
+    original_lock = suppliers.lock_supplier
+    original_conditional = suppliers.update_active_supplier
+    original_delete = suppliers.soft_delete_supplier
+    original_assignments = suppliers.replace_category_assignments
+    edits = {'name': 'Committed lifecycle edit', 'description': None,
+             'category_ids': [str(saved.categories[1].id)]}
+
+    def participant(session):
+        session.execute(text("SET LOCAL statement_timeout = '20s'"))
+        session.execute(text("SET LOCAL lock_timeout = '15s'"))
+        participants.put((session, session.scalar(text('SELECT pg_backend_pid()'))))
+
+    def lock(session, identity):
+        participant(session)
+        return original_lock(session, identity)
+
+    def conditional(session, *args):
+        participant(session)
+        return original_conditional(session, *args)
+
+    def hold_written_state(session):
+        session.flush()
+        winning_snapshots.put((
+            tuple(session.execute(text('SELECT * FROM supplier ORDER BY id'))),
+            tuple(session.execute(text(
+                'SELECT * FROM supplier_category ORDER BY supplier_id, category_id'))),
+        ))
+        applied.set()
+        assert release.wait(15), 'Winning mutation was not released'
+
+    def delete(session, *args):
+        original_delete(session, *args)
+        hold_written_state(session)
+
+    def assignments(session, *args):
+        original_assignments(session, *args)
+        hold_written_state(session)
+
+    def request(action):
+        if action == 'patch':
+            return patch_supplier(client, saved.id, saved.version, edits)
+        return client.delete(f'/suppliers/{saved.id}', headers=ADMIN_HEADERS,
+                             params={'expected_version': saved.version})
+
+    with monkeypatch.context() as patch:
+        patch.setattr(suppliers, 'lock_supplier', lock)
+        patch.setattr(suppliers, 'update_active_supplier', conditional)
+        patch.setattr(suppliers, 'soft_delete_supplier', delete)
+        patch.setattr(suppliers, 'replace_category_assignments', assignments)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(request, first_action)
+            try:
+                assert applied.wait(10), 'First mutation did not reach write barrier'
+                first_session, first_pid = participants.get(timeout=10)
+                second = pool.submit(request, second_action)
+                second_session, second_pid = participants.get(timeout=10)
+                assert first_session is not second_session and first_pid != second_pid
+                wait_for_patch_lock(create_engine_db, second_pid, first_pid)
+                assert not first.done() and not second.done()
+            finally:
+                release.set()
+            winner, loser = first.result(timeout=20), second.result(timeout=20)
+
+    assert winner.status_code == (200 if first_action == 'patch' else 204), winner.text
+    if first_action == 'patch':
+        assert_version_conflict(loser)
+        value = assert_public_saved(client, create_engine_db, saved.id, winner)
+        assert value == replace(saved, name=edits['name'], description=None,
+                                categories=(saved.categories[1],), version=saved.version + 1,
+                                updated_at=value.updated_at)
+    else:
+        assert winner.content == b''
+        if second_action == 'delete':
+            assert loser.status_code == 204 and loser.content == b''
+        else:
+            assert loser.status_code == 404
+            assert loser.json() == {'error': {'code': 'SUPPLIER_NOT_FOUND',
+                                               'message': 'Supplier not found.'}}
+        rows, assignments_after = supplier_snapshot(create_engine_db)
+        timestamp = rows[0]._mapping['deleted_at']
+        assert timestamp is not None
+        assert dict(rows[0]._mapping) == dict(before_rows[0]._mapping,
+            deleted_at=timestamp, updated_at=timestamp, version=saved.version + 1)
+        assert assignments_after == before_assignments
+        assert client.get(f'/suppliers/{saved.id}').status_code == 404
+
+    # Exactly one complete write occurred; the losing request changed nothing.
+    assert supplier_snapshot(create_engine_db) == winning_snapshots.get_nowait()
+    assert winning_snapshots.empty() and participants.empty()
+    assert not first_session.in_transaction() and not second_session.in_transaction()
+    with create_engine_db.begin() as connection:
+        connection.execute(select(Supplier.id).where(
+            Supplier.id == saved.id).with_for_update(nowait=True))
+    with Session(create_engine_db) as session:
+        value = suppliers.get_admin_supplier(session, saved.id)
+    response = client.get(f'/admin/suppliers/{saved.id}', headers=ADMIN_HEADERS)
+    assert response.status_code == 200
+    assert response.json() == SupplierResponse.from_read(value).model_dump(mode='json')

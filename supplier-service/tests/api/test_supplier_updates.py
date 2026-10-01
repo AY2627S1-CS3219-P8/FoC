@@ -2,18 +2,22 @@
 # Tool: Codex (model: GPT-6), date: 2026-10-01
 # Scope: Writing implementation code; Boilerplate generation — configure controlled service and User Service responses using existing creation-test fixtures and write 55 mounted-route cases for authentication, request validation, merged body validation, category presence, safe failures, canonical output, session cleanup, and OpenAPI requirements. (ai-20261001-007)
 # Author review: Keith confirmed review of the retained PATCH adapter changes (ai-20261001-007).
-# Details: ../../ai/usage-log.md; ai-20261001-007
+# Scope: Writing implementation code; Boilerplate generation; Refactoring and documentation improvements — reuse controlled authentication fixtures and add 31 mounted DELETE cases for validation, authentication before session creation, repeat deletion, transaction completion and commit failure, cleanup, safe errors, no retries, unexpected errors, and OpenAPI security/bodyless success; update the module docstring. (ai-20261001-011)
+# Author review: Keith confirmed review of the retained DELETE adapter changes (ai-20261001-011).
+# Details: ../../ai/usage-log.md; ai-20261001-007; ai-20261001-011
 
-"""Mounted PATCH adapter with real authentication and controlled dependencies."""
+"""Mounted PATCH/DELETE adapters with real auth and controlled dependencies."""
 
 from dataclasses import replace
 from datetime import time, timedelta
+from types import SimpleNamespace
 from unittest.mock import Mock
 from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError, TimeoutError
 
 from app.schemas import SupplierResponse
 from app.services import suppliers
@@ -22,6 +26,7 @@ from tests.api.test_supplier_creates import (
 )
 
 UPDATE = suppliers.update_supplier
+DELETE = suppliers.delete_supplier
 
 
 @pytest.fixture
@@ -257,3 +262,188 @@ def test_openapi_requires_bearer_and_positive_version(update_client):
     for path in ('/suppliers', '/suppliers/{id}', '/categories', '/areas'):
         assert 'security' not in schema['paths'][path]['get']
     update_client.factory.assert_not_called()
+
+
+@pytest.fixture
+def delete_client(create_client, supplier, monkeypatch):
+    create_client.delete = Mock(return_value=None)
+    monkeypatch.setattr(suppliers, 'delete_supplier', create_client.delete)
+    create_client.url = f'/suppliers/{supplier.id}?expected_version=1'
+    return create_client
+
+
+@pytest.fixture
+def deletion_service_client(delete_client, supplier, monkeypatch):
+    # Exercise the actual transaction-owning service; control only repository I/O.
+    delete_client.delete.side_effect = DELETE
+    delete_client.stored = SimpleNamespace(
+        deleted_at=None, updated_at=supplier.updated_at, version=supplier.version,
+    )
+    delete_client.commits = []
+    def lock(session, identity):
+        event.listen(session, 'after_commit', lambda *_: delete_client.commits.append(identity))
+        return delete_client.stored
+    delete_client.lock = Mock(side_effect=lock)
+    delete_client.write = Mock(wraps=suppliers.soft_delete_supplier)
+    monkeypatch.setattr(suppliers, 'lock_supplier', delete_client.lock)
+    monkeypatch.setattr(suppliers, 'soft_delete_supplier', delete_client.write)
+    return delete_client
+
+
+def test_delete_and_stale_repeat_return_empty_204_after_completion(deletion_service_client, supplier):
+    client = deletion_service_client
+    for count in (1, 2):
+        response = client.client.delete(client.url, headers=AUTH)
+        assert response.status_code == 204
+        assert response.content == b''
+        assert 'content-type' not in response.headers
+        assert client.commits == [supplier.id] * count
+        assert client.delete.call_count == count
+        client.delete.assert_called_with(client.sessions[-1], supplier.id, 1)
+        client.sessions[-1].close.assert_called_once_with()
+        assert not client.sessions[-1].in_transaction()
+        client.write.assert_called_once()
+        if count == 1:
+            deleted_at = client.stored.deleted_at
+        assert client.stored.deleted_at == client.stored.updated_at == deleted_at
+        assert client.stored.version == 2
+    assert len(client.sessions) == len(client.requests) == 2
+    assert client.sessions[0] is not client.sessions[1]
+    client.create.assert_not_called()
+
+
+@pytest.mark.parametrize('deleted', [False, True])
+@pytest.mark.parametrize('version,code', [
+    (None, 'REQUIRED_FIELD'), ('bad', 'INVALID_INPUT'), ('1.5', 'INVALID_INPUT'),
+    ('0', 'INVALID_INPUT'), ('-1', 'INVALID_INPUT'), ('', 'INVALID_INPUT'),
+])
+def test_delete_version_validation_before_service(deletion_service_client, supplier, deleted, version, code):
+    client = deletion_service_client
+    if deleted:
+        client.stored.deleted_at = supplier.updated_at
+        client.stored.version = 2
+    response = client.client.delete(f'/suppliers/{supplier.id}', headers=AUTH,
+        params={} if version is None else {'expected_version': version})
+    assert issues(response) == {(('query.expected_version',), code)}
+    client.delete.assert_not_called()
+    client.lock.assert_not_called()
+    client.write.assert_not_called()
+    for session in client.sessions:
+        session.close.assert_called_once_with()
+
+
+def test_delete_uuid_validation(delete_client):
+    response = delete_client.client.delete('/suppliers/not-a-uuid?expected_version=1', headers=AUTH)
+    assert issues(response) == {(('path.id',), 'INVALID_UUID')}
+    delete_client.delete.assert_not_called()
+
+
+@pytest.mark.parametrize('authorization', [None, '', 'Basic abc', 'Bearer', 'Bearer two tokens'])
+def test_delete_missing_or_invalid_credentials_never_opens_session(delete_client, authorization):
+    response = delete_client.client.delete(delete_client.url,
+        headers={} if authorization is None else {'Authorization': authorization})
+    assert response.status_code == 401
+    assert response.json() == {'error': {
+        'code': 'AUTHENTICATION_REQUIRED', 'message': 'Invalid authentication credentials',
+    }}
+    assert response.headers['WWW-Authenticate'] == 'Bearer'
+    delete_client.delete.assert_not_called()
+    delete_client.factory.assert_not_called()
+    delete_client.reply.assert_not_called()
+
+
+@pytest.mark.parametrize('failure,status,code,message', [
+    ('revoked', 401, 'AUTHENTICATION_REQUIRED', 'Invalid authentication credentials'),
+    ('user', 403, 'FORBIDDEN', 'Administrator access required'),
+    ('outage', 503, 'AUTHENTICATION_UNAVAILABLE', 'Authentication temporarily unavailable'),
+    ('timeout', 503, 'AUTHENTICATION_UNAVAILABLE', 'Authentication temporarily unavailable'),
+])
+def test_delete_upstream_authentication_rejection(delete_client, failure, status, code, message):
+    if failure == 'timeout':
+        delete_client.reply.side_effect = httpx.ReadTimeout(SECRET)
+    else:
+        delete_client.reply.return_value = {
+            'revoked': httpx.Response(401, text=SECRET),
+            'user': httpx.Response(200, json={**PROFILE, 'role': 'user'}),
+            'outage': httpx.Response(503, text=SECRET),
+        }[failure]
+    response = delete_client.client.delete(delete_client.url, headers={**AUTH, 'X-Role': 'admin'})
+    assert response.status_code == status
+    assert response.json() == {'error': {'code': code, 'message': message}}
+    assert SECRET not in response.text and TOKEN not in response.text
+    if status == 401:
+        assert response.headers['WWW-Authenticate'] == 'Bearer'
+    assert len(delete_client.requests) == 1
+    delete_client.delete.assert_not_called()
+    delete_client.factory.assert_not_called()
+
+
+@pytest.mark.parametrize('error,status,code,message', [
+    (suppliers.SupplierNotFound(), 404, 'SUPPLIER_NOT_FOUND', 'Supplier not found.'),
+    (suppliers.SupplierVersionConflict(), 409, 'VERSION_CONFLICT',
+     'This supplier has changed. Reload it before trying again.'),
+    (suppliers.SupplierDeleteUnavailable(), 503, 'DATABASE_UNAVAILABLE',
+     'Supplier deletion is temporarily unavailable.'),
+])
+def test_delete_safe_service_errors_without_retries(delete_client, error, status, code, message):
+    error.args = (SECRET + TOKEN,)
+    delete_client.delete.side_effect = error
+    response = delete_client.client.delete(delete_client.url, headers=AUTH)
+    assert response.status_code == status
+    assert response.json() == {'error': {'code': code, 'message': message}}
+    delete_client.delete.assert_called_once()
+    delete_client.sessions[0].close.assert_called_once_with()
+
+
+@pytest.mark.parametrize('error', [RuntimeError('defect'), IntegrityError('SQL', {}, Exception('unrelated'))])
+def test_delete_unexpected_errors_propagate_and_close_session(delete_client, error):
+    delete_client.delete.side_effect = error
+    with pytest.raises(type(error)) as caught:
+        delete_client.client.delete(delete_client.url, headers=AUTH)
+    assert caught.value is error
+    delete_client.delete.assert_called_once()
+    delete_client.sessions[0].close.assert_called_once_with()
+
+
+@pytest.mark.parametrize('deleted', [False, True])
+def test_delete_commit_failure_cannot_return_204(deletion_service_client, deleted):
+    client = deletion_service_client
+    if deleted:
+        client.stored.deleted_at = client.stored.updated_at
+        client.stored.version = 2
+    original = client.lock.side_effect
+    fail = Mock(side_effect=TimeoutError(SECRET))
+    def lock(session, identity):
+        event.listen(session, 'before_commit', fail)
+        return original(session, identity)
+    client.lock.side_effect = lock
+    response = client.client.delete(client.url, headers=AUTH)
+    assert response.status_code == 503
+    assert response.json() == {'error': {
+        'code': 'DATABASE_UNAVAILABLE', 'message': 'Supplier deletion is temporarily unavailable.',
+    }}
+    fail.assert_called_once()
+    client.delete.assert_called_once()
+    assert client.commits == []
+    assert not client.sessions[0].in_transaction()
+    client.sessions[0].close.assert_called_once_with()
+
+
+def test_delete_openapi_security_validation_and_bodyless_success(delete_client):
+    schema = delete_client.client.get('/openapi.json').json()
+    operation = schema['paths']['/suppliers/{id}']['delete']
+    assert operation['security'] == [{'HTTPBearer': []}]
+    assert schema['components']['securitySchemes']['HTTPBearer'] == {'type': 'http', 'scheme': 'bearer'}
+    parameters = {p['name']: p for p in operation['parameters']}
+    assert parameters['id']['in'] == 'path' and parameters['id']['required'] is True
+    assert parameters['id']['schema']['format'] == 'uuid'
+    version = parameters['expected_version']
+    assert version['in'] == 'query' and version['required'] is True
+    assert version['schema']['type'] == 'integer'
+    assert version['schema']['exclusiveMinimum'] == 0
+    assert 'requestBody' not in operation
+    assert 'content' not in operation['responses']['204']
+    assert '200' not in operation['responses']
+    for path in ('/suppliers', '/suppliers/{id}', '/categories', '/areas'):
+        assert 'security' not in schema['paths'][path]['get']
+    delete_client.factory.assert_not_called()

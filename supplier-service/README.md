@@ -11,7 +11,10 @@ Author review: Keith confirmed review of all affected changes, including the dry
 Author review: Keith confirmed review of the retained creation documentation and smoke procedure for ai-20261001-005.
 Scope: Refactoring and documentation improvements — replace stale PATCH implementation-status claims using the mounted route, update service, and API/integration tests; document administrator authentication, positive expected versions, editable fields and merged validation, complete saved/conflict examples, atomic rollback and safe errors, test links and prerequisites, and separate historical results from recommended reruns while retaining planned DELETE and administrative-read boundaries. (ai-20261001-009)
 Author review: Keith confirmed review of the retained PATCH documentation (ai-20261001-009).
-Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012; ai-20260930-022; ai-20261001-005; ai-20261001-009
+Tool: Codex (model: GPT-6), date: 2026-10-01
+Scope: Refactoring and documentation improvements — document mounted DELETE and administrator GET contracts, version and status validation, retained data, repeat deletion, PATCH lock arbitration, seed reimport preservation, order-owned pickup snapshots and separate future service authentication, canonical examples, test links and prerequisites; preserve historical verification and correct the remaining stale retrieval sentence with an administrator-read section link. (ai-20261001-014)
+Author review: Keith confirmed review of the retained README work and follow-up correction (ai-20261001-014).
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012; ai-20260930-022; ai-20261001-005; ai-20261001-009; ai-20261001-014
 -->
 
 # Supplier Service
@@ -37,7 +40,8 @@ and four controlled categories; startup and probes do not create tables.
 See [schema operations](docs/migrations.md) for ordered installation, deployment
 to an existing volume, role grants, recovery rehearsals, and integration tests.
 Public supplier and reference-data reads and administrator-only `POST /suppliers`
-and `PATCH /suppliers/{id}` are mounted. Deletion and administrative reads remain future work.
+and `PATCH /suppliers/{id}`, `DELETE /suppliers/{id}`, and administrator
+`GET /admin/suppliers` and `GET /admin/suppliers/{id}` are mounted.
 
 ## Local Development
 
@@ -276,8 +280,8 @@ verification.
 The administrator bootstrap enables PostGIS; migrations create the schema.
 The API initializes its database engine and gates readiness on connectivity and
 installed migration revisions. Public reads do not authenticate. The mounted
-`POST /suppliers` and `PATCH /suppliers/{id}` endpoints use the reusable User
-Service administrator dependency. Deletion and administrative reads are not yet mounted.
+POST, PATCH, DELETE, and administrator GET endpoints use the reusable User
+Service administrator dependency.
 Compose gates new API startup on database health and successful migration completion.
 
 Deployment verification on disposable data covered fresh bootstrap and grants,
@@ -295,14 +299,11 @@ Implemented:
 - Version-checked administrator updates and atomic replacement of category assignments.
 - Public active-only listing and detail reads, with area/category filters.
 - Explicit initial-dataset import and general daily opening schedules.
+- Version-checked soft deletion with idempotent repeat deletion.
+- Administrator listing and detail reads of active and deleted suppliers.
 
-Planned:
-
-- Soft-deletion endpoints.
-- Administrative reads of active and deleted suppliers.
-
-Stored deletion state already affects public reads and duplicate matching; it does
-not imply that a DELETE or administrative-read endpoint exists.
+Restoration and editing deleted records are unsupported. Frontend status controls
+are outside the implemented backend contract.
 
 Direct supplier mutations are restricted to administrators. User-submitted
 change requests and their approval workflow will be introduced later.
@@ -683,8 +684,9 @@ offset. Sort by name then ID. Repeated `category_id` filters match any selected
 category, without duplicate suppliers; combine categories with an area filter
 using AND.
 
-Deleted suppliers return 404 through public detail reads. Administrative or
-historical retrieval is planned and is not exposed by the current API.
+Deleted suppliers return 404 through public detail reads. Verified administrators
+can retrieve active and deleted records through the implemented
+[administrator reads](#administrative-listings).
 
 ### Update
 
@@ -796,27 +798,75 @@ inspect the result before deciding on another edit.
 
 ### Delete
 
-Planned: no supplier DELETE endpoint is mounted. The following describes the
-intended contract. DELETE will require a positive `expected_version` query parameter.
+`DELETE /suppliers/{id}?expected_version=N` requires a verified administrator,
+a UUID path ID, and a positive integer version. There is no request body.
+Missing, malformed, zero, or negative versions and malformed UUIDs return the
+existing `422 VALIDATION_ERROR` envelope, even for already deleted records.
 
-Removal uses soft deletion. The supplier stays in the `supplier` table.
+`delete_supplier` owns one transaction and locks the row with `SELECT FOR UPDATE`,
+including deleted rows, refreshing stored state after a competing writer completes.
+For an active row, a matching version sets `deleted_at` and `updated_at` to one
+aware UTC timestamp and increments `version` once. All other fields, coordinates,
+creation timestamp, and category assignments survive. The route returns an empty
+`204 No Content` only after transaction completion. Ordinary listing excludes the
+row and ordinary detail returns `404 SUPPLIER_NOT_FOUND`.
 
-The service:
+A missing identity returns `404 SUPPLIER_NOT_FOUND`. A stale version on an active
+row returns `409 VERSION_CONFLICT` without modifying it. An already deleted row
+returns an empty 204 for any valid positive version, including a stale version,
+without a write: its original deletion/update timestamps, version, fields, and
+assignments stay unchanged. Authentication and parameter validation still apply.
 
-1. Sets `deleted_at`.
-2. Updates `updated_at`.
-3. Increments `version`.
-4. Retains all supplier details and category assignments.
+For example, deleting the version-2 row in the [update example](#update):
 
-The supplier then disappears from ordinary available-supplier listings.
-Repeated deletion must not repeatedly increment the version or replace
-the original deletion timestamp. An authenticated, authorized repeat DELETE
-with a valid positive expected-version parameter returns `204` even if that
-version is stale, because the record is already deleted.
+```http
+DELETE /suppliers/a98f9ffd-1d20-4b9d-88f0-585039d5949a?expected_version=2 HTTP/1.1
+Authorization: Bearer <session-token>
+```
 
-Existing orders should retain their supplier identifier and a snapshot
-of the pickup details needed to preserve historical information.
-Cross-service references are not database foreign keys.
+Successful response has no JSON or other body:
+
+```http
+HTTP/1.1 204 No Content
+```
+
+Repeating that request after deletion also returns 204, though the stored version
+is now 3. Missing-record response (HTTP 404):
+
+```json
+{"error": {"code": "SUPPLIER_NOT_FOUND", "message": "Supplier not found."}}
+```
+
+Stale active-record response (HTTP 409):
+
+```json
+{"error": {"code": "VERSION_CONFLICT", "message": "This supplier has changed. Reload it before trying again."}}
+```
+
+Row locking and conditional PATCH writes arbitrate concurrent requests:
+
+| First committed mutation | Waiting request using the original version | Result |
+| --- | --- | --- |
+| PATCH | DELETE | 409; the complete edited active row and assignments remain. |
+| DELETE | PATCH | 404; PATCH cannot change any scalar or assignment. |
+| DELETE | DELETE | Both return 204; one version increment and one retained deletion timestamp. |
+
+Failures roll back and release locks. Recognized database availability failures
+return safe `503 DATABASE_UNAVAILABLE` with message
+`Supplier deletion is temporarily unavailable.` Unexpected failures propagate;
+writes are never retried automatically. A lost commit acknowledgement can leave
+the result uncertain, so inspect administrator detail before deciding what to do.
+
+Reimporting an existing seed UUID preserves its deleted state and all retained
+fields, assignments, timestamps, and version; it does not restore or overwrite
+that identity. Restoration, hard deletion, and editing deleted records are not
+supported by these routes. PATCH remains active-only.
+
+Order history uses the Order Service's own pickup snapshot. The supplier ID may
+remain as a historical reference, but cross-service references are not database
+foreign keys. Any future service access to deleted supplier records requires a
+separate authentication contract; administrator GET routes are not a
+service-to-service authorization mechanism.
 
 ## Authentication and HTTP Contract
 
@@ -825,9 +875,8 @@ Ordinary browsing is public. `GET /suppliers`, `GET /suppliers/{id}`,
 Service. They ignore Authorization headers, including invalid or expired
 credentials. Ordinary supplier reads expose active suppliers only.
 
-The implemented creation and update endpoints require an authenticated account
-with a verified `admin` role. Future deletion and administrative reads will use
-the same authorization requirement. For protected operations,
+Creation, update, deletion, and administrator reads require an authenticated
+account with a verified `admin` role. For protected operations,
 forward opaque bearer tokens to User Service `GET /users/me`. Do not decode
 JWTs or query its database. Use bounded timeouts and no authentication caching
 initially. Administrator mode changes only frontend controls. Check the
@@ -846,8 +895,9 @@ construction and application startup must not contact User Service. Neither
 still depend on User Service and fail closed during an authentication outage.
 All four public read adapters are mounted in the production application, with
 no authentication dependencies or OpenAPI security requirements. The mounted
-`POST /suppliers` and `PATCH /suppliers/{id}` use `require_admin` and declare
-HTTP bearer security. Deletion and administrative reads remain unimplemented.
+POST and PATCH routes use `require_admin`; the registered administrator router
+applies it at router level to DELETE and both administrator GET routes. All declare
+HTTP bearer security in OpenAPI.
 
 Each application lifespan creates one reusable synchronous `UserServiceClient`
 from the existing settings and stores it at `app.state.user_service_client`.
@@ -877,7 +927,7 @@ Use the `error.code` and `error.message` envelope with
 POST returns `201 Created` with the complete saved supplier shown in the
 [creation example](#create). PATCH returns `200 OK` with the complete saved
 representation shown in the [update example](#update), after checking the expected
-version. Planned DELETE returns `204 No Content`.
+version. DELETE returns an empty `204 No Content` after transaction completion.
 
 Implemented POST and PATCH failures use these envelopes:
 
@@ -892,7 +942,7 @@ Implemented POST and PATCH failures use these envelopes:
 | 503 | `AUTHENTICATION_UNAVAILABLE` | Identity cannot be verified because User Service failed or returned an untrusted response. |
 | 503 | `DATABASE_UNAVAILABLE` | A recognized database availability failure; POST returns `Supplier creation is temporarily unavailable.`; PATCH returns `Supplier update is temporarily unavailable.` |
 
-Authentication/authorization failures never invoke creation/update services or
+Authentication/authorization failures never invoke protected supplier services or
 issue supplier queries. Service errors expose no SQL, parameters, constraint names, or private
 exception details. Unrelated integrity/programming failures are not relabelled as
 duplicate conflicts. Example duplicate response:
@@ -953,8 +1003,9 @@ administrator authorization, required positive versions, raw aggregate validatio
 canonical output, safe errors, cleanup, and OpenAPI. Integration cases prove
 same-version contenders have one complete winner, rollback restores deleted
 assignments, duplicate renames preserve all stored values, stale/no-op rules hold,
-and a competing deletion produces 404 after the conditional write fails. Deletion
-state is set directly in test storage; these tests do not imply a DELETE endpoint.
+and a competing deletion produces 404 after the conditional write fails. Earlier
+cases set deletion state directly; the mounted DELETE/PATCH lifecycle cases now
+exercise the implemented deletion service under real database contention.
 
 Observed implementation verification on 1 October 2026 (separate historical runs):
 
@@ -975,7 +1026,7 @@ administrator smoke run is claimed here. Prior creation-documentation checks
 validated its example and smoke-script syntax; live account/provisioning
 limitations below remain separate from the passing controlled-authentication tests.
 
-For this README edit, the PATCH request passed merged validation against the
+For the earlier PATCH documentation edit, the PATCH request passed merged validation against the
 creation example, and the complete saved response matched `SupplierResponse.from_read`.
 The conflict example, linked test paths, and whitespace checks also passed.
 No application tests were rerun for the documentation edit.
@@ -1004,8 +1055,9 @@ and never prints it or the bearer token.
 This uses the actual mounted HTTP routes and commits one uniquely named supplier.
 It verifies 201/public GET equality, a 409 duplicate, validation, logout/revocation,
 and anonymous reads. Dispose of the dedicated smoke database afterward using the
-[database lifecycle instructions](docs/migrations.md); supplier DELETE is not
-implemented. The automated tests above cover controlled authentication outages
+[database lifecycle instructions](docs/migrations.md). DELETE is implemented but
+retains soft-deleted rows, so it does not replace disposal of the smoke database.
+The automated tests above cover controlled authentication outages
 and regular-user rejection; this script requires no test-only routes or overrides.
 
 ```bash
@@ -1080,16 +1132,129 @@ has passed. It has not been executed with a real administrator for this update.
 
 ### Administrative listings
 
-Planned: no administrative-read endpoints are mounted. The intended
-`GET /admin/suppliers` contract accepts `status=active|deleted|all`, defaulting to
-`active`. Active selects null `deleted_at`, deleted selects non-null values,
-and all applies no deletion filter. Unsupported values return `422`.
-All views require administrator authorization and use the same area/category
-filters, name-then-ID sorting, and pagination envelope as ordinary listings.
-Apply the status filter before pagination and before counting `total`.
-Ordinary listings remain active-only. Administrative detail reads can retrieve
-active or deleted records; these views do not introduce restoration or editing
-of deleted suppliers. The UI starts with Active and offers Deleted and All.
+Both mounted routes require a verified administrator bearer session:
+
+- `GET /admin/suppliers` returns the canonical page envelope
+  `{ "items": [...], "total": N, "limit": N, "offset": N }`.
+- `GET /admin/suppliers/{id}` returns the canonical complete supplier response
+  for either an active or deleted identity. It retains categories, optional fields,
+  timestamps, version, and named latitude/longitude coordinates.
+
+Listing accepts exactly `status=active|deleted|all`, defaulting to `active`.
+Active selects null `deleted_at`, deleted selects non-null values, and all adds
+no deletion predicate. Unsupported values, including empty or differently cased
+values, return `422 VALIDATION_ERROR` with safe `query.status` details.
+
+Status, exact `area` matching, and repeated UUID `category_id` filters combine
+before both counting and pagination. Categories match **any** requested category;
+repeated IDs are deduplicated, and multiple matching categories never duplicate
+suppliers or inflate totals. Results sort by supplier name then UUID. `limit`
+defaults to 20 and must be 1–100; `offset` defaults to 0 and must be nonnegative.
+Unknown category UUIDs can produce an empty result. Empty and out-of-range pages
+retain the matching `total`, requested `limit`, and `offset`.
+
+Example combined query (use stored category IDs):
+
+```http
+GET /admin/suppliers?status=deleted&area=Science&category_id=92f0136e-5617-4380-9367-b2991ceda339&category_id=92f0136e-5617-4380-9367-b2991ceda339&limit=20&offset=0 HTTP/1.1
+Authorization: Bearer <session-token>
+```
+
+Detail for the illustrative deleted row above:
+
+```http
+GET /admin/suppliers/a98f9ffd-1d20-4b9d-88f0-585039d5949a HTTP/1.1
+Authorization: Bearer <session-token>
+```
+
+Complete HTTP 200 response (the deletion timestamp is illustrative):
+
+```json
+{
+  "id": "a98f9ffd-1d20-4b9d-88f0-585039d5949a",
+  "name": "Campus Café",
+  "area": "Science",
+  "location": {"latitude": 1.291876, "longitude": 103.781234},
+  "categories": [
+    {"id": "92f0136e-5617-4380-9367-b2991ceda339", "name": "Coffee"}
+  ],
+  "description": null,
+  "building": "S16",
+  "floor": null,
+  "image_key": null,
+  "opening_time": "22:30:00",
+  "closing_time": "23:30:00",
+  "closing_day_offset": 0,
+  "created_at": "2026-10-01T02:03:04.123456Z",
+  "updated_at": "2026-10-01T02:05:06.123456Z",
+  "deleted_at": "2026-10-01T02:05:06.123456Z",
+  "version": 3
+}
+```
+
+A matching listing wraps that same object in `items`; if one row matches but
+`offset=20`, the HTTP 200 response is:
+
+```json
+{"items": [], "total": 1, "limit": 20, "offset": 20}
+```
+
+Missing detail returns the standard `404 SUPPLIER_NOT_FOUND`; malformed path or
+category UUIDs and invalid pagination return the existing 422 validation envelope.
+Both routes retain safe 401/403 authorization errors and 503 authentication-outage
+behavior. Recognized database failures return `503 DATABASE_UNAVAILABLE` with
+`Supplier details are temporarily unavailable.` No database diagnostics are exposed.
+
+Ordinary `GET /suppliers` and `GET /suppliers/{id}` remain anonymous and active-only;
+there is no public status switch that reveals deleted records. These administrator
+views do not enable restoration, deleted-record editing, frontend status controls,
+or service-to-service authorization.
+
+### Deletion and administrator-read verification
+
+The implemented contracts are covered by:
+
+- [API update/deletion tests](tests/api/test_supplier_updates.py): DELETE validation,
+  authorization before database access, empty success, stale repeat deletion,
+  safe errors, completion/cleanup, and OpenAPI bearer security.
+- [API read tests](tests/api/test_supplier_reads.py): status/default validation,
+  canonical administrator responses, filters, authorization, safe failures,
+  OpenAPI security, and public status isolation.
+- [Integration update/deletion tests](tests/integration/test_supplier_updates.py):
+  `test_mounted_delete_and_patch_contend_without_partial_mutation` exercises both
+  PATCH/DELETE commit orders and two deletes using independent sessions, bounded
+  synchronization, observed PostgreSQL blocking, exact snapshots, and lock release.
+- [Integration read tests](tests/integration/test_supplier_reads.py):
+  `test_mounted_create_delete_retains_admin_history` verifies public exclusion,
+  complete administrator history/status views, and unchanged stale repeat deletion.
+- [Seed-import tests](tests/integration/test_seed_import.py):
+  `test_reimport_preserves_identity_deleted_through_mounted_route` verifies that
+  reimport preserves edited fields, assignments, timestamps, version, and deletion.
+
+Recommended regression commands, from `supplier-service/`:
+
+```bash
+./.venv/bin/python -m pytest tests/api/test_supplier_updates.py tests/api/test_supplier_reads.py -q
+./.venv/bin/python -m pytest tests/integration/test_supplier_updates.py tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
+```
+
+Use Python 3.12 with `requirements-dev.txt` installed. API tests use controlled
+User Service responses and need no live services. Integration tests require an
+explicit `TEST_DATABASE_URL` using `postgresql+psycopg`, an isolated PostGIS database
+ending `_test`, and a database name distinct from `DATABASE_URL`. The test role
+needs access to `postgres`, permission to create/drop disposable databases, and
+permission to install PostGIS and apply migrations. Fixtures migrate and clean up
+their databases; do not use a production database or runtime-only role.
+
+Historical agent verification on 1 October 2026: the administrator-read increment
+passed 883 unit/API tests (including 91 read API cases) and 85 read integration
+tests. The subsequent lifecycle increment passed all 240 cases across the three
+integration suites above, including five new lifecycle cases. Each run reported
+one existing dependency deprecation warning; scoped whitespace checks passed and
+disposable resources were removed. Counts describe separate runs, not cumulative
+coverage. Authentication used controlled fixtures, not live accounts. These are
+prior implementation results, not application tests rerun for this README edit;
+no human review or live administrator verification is claimed for this edit.
 
 ### Error bodies
 
@@ -1097,8 +1262,8 @@ Errors contain an `error` object with a stable machine-readable `code` and a
 human-readable `message`. Frontend logic branches on the code, not message text.
 Implemented POST and PATCH use `SUPPLIER_DUPLICATE` for duplicate conflicts.
 PATCH uses `VERSION_CONFLICT` for stale active versions (also `409`), as shown
-below. The planned DELETE contract also uses version checks. Reload on a PATCH
-conflict; the response omits the current version and supplier data, and the edit
+below. DELETE uses the same conflict envelope for stale active versions. Reload
+on a PATCH or DELETE conflict; the response omits the current version and supplier data, and the edit
 must not be retried automatically.
 
 ```json
@@ -1418,9 +1583,10 @@ exact duplicates, atomic rollback, stale versions, concurrent writes and deletio
 state races, public exclusion of stored deleted rows, and repeatable seed imports. Deployment checks additionally cover persistence across
 container recreation. See the commands and observed results above.
 
-DELETE and administrative reads remain future work. When implemented, add
-end-to-end checks for soft-deletion requests and authorized deleted-record access.
-Existing PATCH tests cover database-set deletion state, not a DELETE endpoint.
+Mounted DELETE and administrator GET coverage verifies retained deleted history,
+public exclusion, repeat deletion, actual DELETE/PATCH contention, and seed
+reimport preservation. See [deletion and administrator-read verification](#deletion-and-administrator-read-verification)
+for commands and the separately recorded historical results.
 
 ## Requirements to Reconcile
 
@@ -2036,3 +2202,83 @@ prior suite results remain historical. Keith confirmed review of the retained
 README changes; no human test rerun is claimed. The exact prompt and verbatim
 final response are recorded; original timestamp unavailable. No redactions or
 header exceptions apply.
+
+
+For [atomic supplier soft deletion](ai/usage-log.md#ai-20261001-010), Codex (GPT-6)
+provided Writing implementation code and Refactoring and documentation improvements
+for `app/repositories/suppliers.py` and `app/services/suppliers.py`, plus Writing
+implementation code and Boilerplate generation for 31 added cases in
+`tests/integration/test_supplier_updates.py`. Retained work locks and refreshes
+stored state, preserves columns and assignments, supports write-free repeated
+deletion, and handles transaction completion and safe failures without retries.
+Agent checks passed all 88 update/deletion integration cases and 820 unit/API tests,
+with one existing dependency warning per suite; scoped whitespace checks passed.
+Disposable PostGIS resources were removed. Broader integration suites were not run.
+Keith confirmed review of all three files; no human test rerun is claimed. The exact
+prompt and verbatim final response are recorded; original timestamp unavailable.
+No redactions or header exceptions apply.
+
+
+For the [administrator DELETE adapter](ai/usage-log.md#ai-20261001-011), Codex (GPT-6)
+provided Writing implementation code and Refactoring and documentation improvements
+for `app/routes/admin_suppliers.py`, Writing implementation code for `app/main.py`,
+Writing implementation code, Boilerplate generation, and Refactoring and documentation
+improvements for `tests/api/test_supplier_updates.py`, and Writing implementation
+code and Debugging assistance for `tests/api/test_validation_errors.py`. Retained
+work mounts administrator-only deletion, validates UUIDs and positive versions,
+returns bodyless 204 after completion, and maps safe errors through the existing
+service. The added 31 DELETE cases cover authentication, repeat deletion, transaction
+completion/failure, cleanup, no retries, and OpenAPI; the route assertion includes
+DELETE. Agent checks passed 86 focused adapter cases and all 851 unit/API tests,
+with one existing dependency warning per suite; whitespace checks passed. Tests
+used controlled dependencies; PostGIS integration was not rerun for this adapter.
+Keith confirmed review of all four files; no human test rerun is claimed. The exact
+prompt and verbatim final response are recorded; original timestamp unavailable.
+No redactions or header exceptions apply.
+
+
+For [protected administrator supplier reads](ai/usage-log.md#ai-20261001-012), Codex
+(GPT-6) provided Writing implementation code and Refactoring and documentation
+improvements for the repository, service, administrator router, and integration
+read tests, plus Writing implementation code for API read tests and Debugging
+assistance for the initial route collision. Retained changes add separate
+administrator entry points, active/deleted/all views with shared filtered paging,
+canonical responses, and safe failures under router-level authentication; public
+reads remain anonymous and active-only. Agent checks passed 91 focused read API
+cases, all 883 unit/API tests, and 85 read integration tests against disposable
+PostGIS, with one existing dependency warning per suite; scoped whitespace checks
+passed. The route collision and working-directory test errors were corrected.
+The test container was removed; broader integration suites and live authentication
+were not run. Keith confirmed review of all five affected files; no human test
+rerun is claimed. The exact prompt and final response are recorded; the original
+message timestamp is unavailable. No redactions or header exceptions apply.
+
+
+For [deletion lifecycle verification](ai/usage-log.md#ai-20261001-013), Codex (GPT-6)
+provided Writing implementation code and Boilerplate generation for five added
+cases in `tests/integration/test_supplier_updates.py`,
+`tests/integration/test_supplier_reads.py`, and `tests/integration/test_seed_import.py`.
+Retained tests cover mounted creation/deletion and administrator history, stable
+repeat deletion, real DELETE/PATCH contention with independent sessions and bounded
+lock observation, complete snapshots, transaction cleanup, and seed reimport
+preservation. All 240 cases across these three integration suites passed against
+disposable PostGIS, with one existing dependency warning; collection and scoped
+whitespace checks passed. Test resources were removed. No requested verification
+remained blocked; authentication was controlled rather than live. Keith confirmed
+review of all three files; no human rerun is claimed. Exact prompt and final response
+are recorded; original timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [deletion and administrator-read documentation](ai/usage-log.md#ai-20261001-014),
+Codex (GPT-6) provided Refactoring and documentation improvements for this README.
+Retained changes document mounted contracts, version/status validation, canonical
+examples, repeat deletion, PATCH lock arbitration, data and seed-history retention,
+order-owned pickup snapshots, separate future service authentication, unsupported
+restoration/editing, and test commands with isolated database prerequisites.
+A follow-up corrected the remaining stale retrieval claim with a verified internal
+link. Canonical example conversion, deletion transition, OpenAPI declarations,
+actual test links, summary placement, and whitespace checks passed. Application
+suites and live authentication were not rerun; prior counts remain historical.
+Keith confirmed review of the README work and correction; no human test rerun is
+claimed. Both exact prompts and verbatim relevant responses are recorded; original
+timestamps are unavailable. No redactions or header exceptions apply.

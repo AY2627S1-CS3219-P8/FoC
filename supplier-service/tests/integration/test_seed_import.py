@@ -8,7 +8,10 @@
 # Scope: Writing implementation code — add direct seed/create insertion coverage for scalar persistence, bound geography, initial state, separate assignments, and caller-owned rollback. (ai-20261001-001)
 # Author review: Keith confirmed review of earlier work (ai-20260930-009; ai-20260930-010). Keith also confirmed review of all affected changes under ai-20260930-011 (Prompts 1–3).
 # Author review: Keith confirmed review of all affected changes (ai-20261001-001)
-# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-011; ai-20261001-001
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Boilerplate generation — seed a real batch, edit and delete through mounted routes, reimport, and verify complete retained deleted identity, assignments, timestamps, version, administrator visibility, and lock release. (ai-20261001-013)
+# Author review: Keith confirmed review of the retained lifecycle tests (ai-20261001-013).
+# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-011; ai-20261001-001; ai-20261001-013
 
 """Classification and atomic imports on migrated PostgreSQL/PostGIS databases."""
 from dataclasses import replace
@@ -25,6 +28,9 @@ from sqlalchemy.orm import Session
 from app.commands.seed_parsing import parse_seed_source
 from app.models import Category, Supplier
 from app.services.seed_import import classify_seed_records
+
+from tests.integration.test_supplier_creates import ADMIN_HEADERS, create_engine_db, post_client
+from tests.integration.test_supplier_updates import patch_client, patch_supplier
 
 
 @pytest.fixture
@@ -868,3 +874,50 @@ def test_failure_before_commit_has_confirmed_rollback(atomic_engine, parsed_batc
     assert caught.value.code == 'DATABASE_ERROR'
     assert caught.value.outcome == 'rolled_back' and caught.value.inserted_count == 0
     assert database_counts(atomic_engine) == (0, 4, 0)
+
+
+def test_reimport_preserves_identity_deleted_through_mounted_route(
+    create_engine_db, parsed_batch, patch_client,
+):
+    from app.services.seed_import import import_seed_batch
+
+    client = patch_client.client
+    imported = import_seed_batch(create_engine_db, parsed_batch)
+    assert (imported.inserted_count, imported.skipped_count) == (21, 0)
+    identity = parsed_batch.records[0].supplier_id
+    with Session(create_engine_db) as session:
+        category = session.scalar(select(Category.id).where(Category.name == 'Printing'))
+    edited = patch_supplier(client, identity, 1, {
+        'name': 'Retained administrator edit', 'area': 'Science',
+        'description': 'Preserved history', 'building': 'Edited building', 'floor': 'B1',
+        'image_key': 'retained.jpg', 'opening_time': None, 'closing_time': None,
+        'category_ids': [str(category)],
+    })
+    assert edited.status_code == 200
+    deleted = client.delete(f'/suppliers/{identity}', headers=ADMIN_HEADERS,
+                            params={'expected_version': edited.json()['version']})
+    assert deleted.status_code == 204 and deleted.content == b''
+    history = client.get(f'/admin/suppliers/{identity}', headers=ADMIN_HEADERS)
+    assert history.status_code == 200
+    retained = history.json()
+    assert retained == {**edited.json(), 'deleted_at': retained['deleted_at'],
+                        'updated_at': retained['deleted_at'], 'version': 3}
+    assert retained['deleted_at'] is not None
+    with create_engine_db.connect() as connection:
+        before = snapshot(connection)
+    rerun = import_seed_batch(create_engine_db, parsed_batch)
+    assert (rerun.inserted_count, rerun.skipped_count) == (0, 21)
+    with create_engine_db.connect() as connection:
+        assert snapshot(connection) == before
+    assert client.get(f'/admin/suppliers/{identity}', headers=ADMIN_HEADERS).json() == retained
+    assert client.get(f'/suppliers/{identity}').status_code == 404
+    for status, total in [('deleted', 1), ('all', 21)]:
+        response = client.get('/admin/suppliers', headers=ADMIN_HEADERS,
+                              params={'status': status, 'limit': 100})
+        assert response.status_code == 200
+        page = response.json()
+        assert page['total'] == total
+        assert [item for item in page['items'] if item['id'] == str(identity)] == [retained]
+    with create_engine_db.begin() as connection:
+        connection.execute(select(Supplier.id).where(
+            Supplier.id == identity).with_for_update(nowait=True))

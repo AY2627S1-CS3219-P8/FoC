@@ -7,7 +7,12 @@
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement atomic creation with category validation, shared inserts, detached post-commit results, exact duplicate translation, and shared availability classification. (ai-20261001-002)
 # Author review: Keith confirmed review of earlier work and the creation implementation (ai-20261001-002).
 # Author review: Keith confirmed review of the retained atomic update changes (ai-20261001-006).
-# Details: ../../ai/usage-log.md; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-002; ai-20261001-006
+# Scope: Writing implementation code; Refactoring and documentation improvements — implement and document the specified single-transaction delete_supplier service, deleted-before-version classification, shared availability failure boundary, SupplierDeleteUnavailable, rollback, and success only after completion without retries. (ai-20261001-010)
+# Author review: Keith confirmed review of the retained soft deletion changes (ai-20261001-010).
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Refactoring and documentation improvements — add administrator detail/list services, validate status, extract shared pagination validation, and reuse the safe read failure boundary while keeping ordinary entry points active-only. (ai-20261001-012)
+# Author review: Keith confirmed review of the retained administrator-read changes (ai-20261001-012).
+# Details: ../../ai/usage-log.md; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-002; ai-20261001-006; ai-20261001-010; ai-20261001-012
 
 """Transport-independent supplier reads and atomic mutations on caller sessions."""
 
@@ -23,6 +28,8 @@ from app.repositories.suppliers import (
     CategoryRead, SupplierPage, SupplierRead, find_active_detail, list_active_suppliers,
     insert_category_assignments, insert_supplier, active_supplier_exists,
     replace_category_assignments, update_active_supplier,
+    lock_supplier, soft_delete_supplier, SupplierStatus, find_admin_detail,
+    list_admin_suppliers as read_admin_suppliers,
     list_categories as read_categories,
 )
 from app.schemas import SupplierPatch
@@ -156,6 +163,34 @@ def update_supplier(
         raise
 
 
+class SupplierDeleteUnavailable(Exception):
+    """Safe write failure, including uncertain commit acknowledgement."""
+
+    def __init__(self) -> None:
+        super().__init__("Supplier deletion is temporarily unavailable.")
+
+
+def delete_supplier(session: Session, supplier_id: UUID, expected_version: int) -> None:
+    """Soft-delete in one transaction on a fresh caller session; never retry."""
+    try:
+        with session.begin():
+            stored = lock_supplier(session, supplier_id)
+            if stored is None:
+                raise SupplierNotFound()
+            if stored.deleted_at is None:
+                if stored.version != expected_version:
+                    raise SupplierVersionConflict()
+                soft_delete_supplier(session, stored, datetime.now(timezone.utc))
+                session.flush()
+        # Even an idempotent success is exposed only after transaction completion.
+    except TimeoutError:
+        raise SupplierDeleteUnavailable() from None
+    except DBAPIError as error:
+        if _database_unavailable(error):
+            raise SupplierDeleteUnavailable() from None
+        raise
+
+
 def get_supplier(session: Session, supplier_id: UUID) -> SupplierRead | None:
     """Return active details or None; leave transaction cleanup to the caller."""
     with _read_failure_boundary():
@@ -202,6 +237,37 @@ def list_suppliers(
     category_ids: Iterable[UUID] = (), limit: int = 20, offset: int = 0,
 ) -> SupplierPage:
     """Validate pagination before querying; UUID parsing belongs to adapters."""
+    _validate_pagination(limit, offset)
+    with _read_failure_boundary():
+        return list_active_suppliers(
+            session, area=area, category_ids=category_ids, limit=limit, offset=offset,
+        )
+
+
+def get_admin_supplier(session: Session, supplier_id: UUID) -> SupplierRead | None:
+    """Return retained details in either deletion state."""
+    with _read_failure_boundary():
+        return find_admin_detail(session, supplier_id)
+
+
+def list_admin_suppliers(
+    session: Session, *, status: SupplierStatus = "active", area: str | None = None,
+    category_ids: Iterable[UUID] = (), limit: int = 20, offset: int = 0,
+) -> SupplierPage:
+    """Validate administrator filters before reading through the safe boundary."""
+    if status not in ("active", "deleted", "all"):
+        raise DomainValidationError([ValidationIssue(
+            ("query.status",), "INVALID_INPUT", "Status must be active, deleted, or all.",
+        )])
+    _validate_pagination(limit, offset)
+    with _read_failure_boundary():
+        return read_admin_suppliers(
+            session, status=status, area=area, category_ids=category_ids,
+            limit=limit, offset=offset,
+        )
+
+
+def _validate_pagination(limit: int, offset: int) -> None:
     issues = []
     if type(limit) is not int or not 1 <= limit <= 100:
         issues.append(ValidationIssue(
@@ -213,7 +279,3 @@ def list_suppliers(
         ))
     if issues:
         raise DomainValidationError(issues)
-    with _read_failure_boundary():
-        return list_active_suppliers(
-            session, area=area, category_ids=category_ids, limit=limit, offset=offset,
-        )

@@ -8,7 +8,10 @@
 # Scope: Writing implementation code — count GET registrations specifically so POST sharing the supplier path is not treated as a duplicate read route. (ai-20261001-003)
 # Author review: Keith confirmed review of the response serialization tests (ai-20260930-016). Keith also confirmed review of the supplier HTTP tests (ai-20260930-017). Keith also confirmed review of the reference-data HTTP tests (ai-20260930-018). Keith confirmed review of public-read registration changes (ai-20260930-022).
 # Author review: Keith confirmed review of all retained changes for ai-20261001-003.
-# Details: ../../ai/usage-log.md; ai-20260930-016; ai-20260930-017; ai-20260930-018; ai-20260930-022; ai-20261001-003
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code — reuse controlled authentication/session fixtures and add mounted administrator read cases for default and explicit statuses, canonical detail/page responses, combined filters, invalid queries/UUIDs, missing records, authorization failures, safe database errors, and OpenAPI/public status isolation. (ai-20261001-012)
+# Author review: Keith confirmed review of the retained administrator-read changes (ai-20261001-012).
+# Details: ../../ai/usage-log.md; ai-20260930-016; ai-20260930-017; ai-20260930-018; ai-20260930-022; ai-20261001-003; ai-20261001-012
 
 """Detached response serialization and isolated supplier HTTP reads."""
 
@@ -24,6 +27,8 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+
+from tests.api.test_supplier_creates import AUTH, PROFILE, create_client
 
 from app.db import get_db
 from app.main import create_app
@@ -471,3 +476,139 @@ def test_public_read_contracts_ignore_session_state(
         assert response.status_code == 200
         assert response.json() == body
     assert session.close.call_count == 3
+
+
+@pytest.fixture
+def admin_read_client(create_client, monkeypatch, supplier):
+    create_client.detail = MagicMock(return_value=supplier)
+    create_client.listing = MagicMock(return_value=SupplierPage((supplier,), 1, 20, 0))
+    monkeypatch.setattr(supplier_service, "get_admin_supplier", create_client.detail)
+    monkeypatch.setattr(supplier_service, "list_admin_suppliers", create_client.listing)
+    return create_client
+
+
+@pytest.mark.parametrize("status", [None, "active", "deleted", "all"])
+def test_admin_status_and_canonical_page(admin_read_client, supplier, status):
+    ctx = admin_read_client
+    value = replace(supplier, deleted_at=supplier.updated_at) if status == "deleted" else supplier
+    ctx.listing.return_value = SupplierPage((value,), 1, 20, 0)
+    response = ctx.client.get("/admin/suppliers", headers=AUTH,
+                              params={} if status is None else {"status": status})
+    assert response.status_code == 200
+    assert response.json() == {"items": [serialize(value)], "total": 1, "limit": 20, "offset": 0}
+    ctx.listing.assert_called_once_with(ctx.sessions[0], status=status or "active",
+                                       area=None, category_ids=[], limit=20, offset=0)
+
+
+@pytest.mark.parametrize("total,offset", [(0, 0), (3, 100)])
+def test_admin_combined_filters_empty_pages(admin_read_client, total, offset):
+    ctx = admin_read_client
+    category = UUID(int=3)
+    ctx.listing.return_value = SupplierPage((), total, 100, offset)
+    response = ctx.client.get("/admin/suppliers", headers=AUTH, params=[
+        ("status", "all"), ("area", "Science"), ("category_id", str(category)),
+        ("category_id", str(category)), ("limit", 100), ("offset", offset),
+    ])
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "total": total, "limit": 100, "offset": offset}
+    ctx.listing.assert_called_once_with(ctx.sessions[0], status="all", area="Science",
+                                       category_ids=[category, category], limit=100, offset=offset)
+
+
+@pytest.mark.parametrize("query", ["status=", "status=ALL", "status=unknown", "status= active",
+                                   "limit=0", "limit=101", "offset=-1", "category_id=bad"])
+def test_admin_invalid_query(admin_read_client, query):
+    response = admin_read_client.client.get("/admin/suppliers?" + query, headers=AUTH)
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+    field = query.split("=")[0]
+    assert response.json()["error"]["details"][0]["fields"][0].startswith(f"query.{field}")
+    admin_read_client.listing.assert_not_called()
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_admin_detail_retains_complete_value(admin_read_client, supplier, deleted):
+    ctx = admin_read_client
+    value = replace(supplier, deleted_at=supplier.updated_at) if deleted else supplier
+    ctx.detail.return_value = value
+    response = ctx.client.get(f"/admin/suppliers/{supplier.id}", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == serialize(value)
+    ctx.detail.assert_called_once_with(ctx.sessions[0], supplier.id)
+
+
+def test_admin_missing_and_malformed(admin_read_client):
+    ctx = admin_read_client
+    ctx.detail.return_value = None
+    response = ctx.client.get(f"/admin/suppliers/{UUID(int=999)}", headers=AUTH)
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "SUPPLIER_NOT_FOUND", "message": "Supplier not found."}}
+    ctx.detail.reset_mock()
+    response = ctx.client.get("/admin/suppliers/bad", headers=AUTH)
+    assert response.status_code == 422
+    assert response.json()["error"]["details"][0]["fields"] == ["path.id"]
+    ctx.detail.assert_not_called()
+
+
+@pytest.mark.parametrize("path", ["/admin/suppliers", f"/admin/suppliers/{UUID(int=1)}"])
+@pytest.mark.parametrize("failure,code,status", [
+    ("missing", "AUTHENTICATION_REQUIRED", 401),
+    ("malformed", "AUTHENTICATION_REQUIRED", 401),
+    ("revoked", "AUTHENTICATION_REQUIRED", 401),
+    ("user", "FORBIDDEN", 403),
+    ("outage", "AUTHENTICATION_UNAVAILABLE", 503),
+    ("timeout", "AUTHENTICATION_UNAVAILABLE", 503),
+])
+def test_admin_read_authorization(admin_read_client, path, failure, code, status):
+    ctx = admin_read_client
+    headers = AUTH
+    if failure == "missing":
+        headers = {}
+    elif failure == "malformed":
+        headers = {"Authorization": "Basic bad"}
+    elif failure == "timeout":
+        ctx.reply.side_effect = httpx.ReadTimeout("secret")
+    else:
+        ctx.reply.return_value = {
+            "revoked": httpx.Response(401, text="secret"),
+            "user": httpx.Response(200, json={**PROFILE, "role": "user"}),
+            "outage": httpx.Response(503, text="secret"),
+        }[failure]
+    response = ctx.client.get(path, headers=headers)
+    assert response.status_code == status
+    assert response.json()["error"]["code"] == code
+    assert "secret" not in response.text
+    ctx.detail.assert_not_called()
+    ctx.listing.assert_not_called()
+    ctx.factory.assert_not_called()
+
+
+@pytest.mark.parametrize("detail", [False, True])
+def test_admin_safe_database_failure(admin_read_client, detail):
+    ctx = admin_read_client
+    target = ctx.detail if detail else ctx.listing
+    target.side_effect = supplier_service.SupplierReadUnavailable()
+    path = f"/admin/suppliers/{UUID(int=1)}" if detail else "/admin/suppliers"
+    response = ctx.client.get(path, headers=AUTH)
+    assert response.status_code == 503
+    assert response.json() == {"error": {"code": "DATABASE_UNAVAILABLE",
+        "message": "Supplier details are temporarily unavailable."}}
+
+
+def test_admin_openapi_security_and_public_status_isolation(admin_read_client, monkeypatch):
+    ctx = admin_read_client
+    paths = ctx.client.app.openapi()["paths"]
+    for path in ("/admin/suppliers", "/admin/suppliers/{id}"):
+        assert paths[path]["get"]["security"] == [{"HTTPBearer": []}]
+    for path in ("/suppliers", "/suppliers/{id}"):
+        assert not paths[path]["get"].get("security")
+    status = next(p for p in paths["/admin/suppliers"]["get"]["parameters"] if p["name"] == "status")
+    assert status["schema"]["enum"] == ["active", "deleted", "all"]
+    assert status["schema"]["default"] == "active"
+    assert "status" not in {p["name"] for p in paths["/suppliers"]["get"]["parameters"]}
+    public = MagicMock(return_value=SupplierPage((), 0, 20, 0))
+    monkeypatch.setattr(supplier_service, "list_suppliers", public)
+    assert ctx.client.get("/suppliers?status=all").status_code == 200
+    public.assert_called_once_with(ctx.sessions[0], area=None, category_ids=[], limit=20, offset=0)
+    ctx.listing.assert_not_called()
+    ctx.reply.assert_not_called()

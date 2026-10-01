@@ -8,13 +8,19 @@
 # Scope: Writing implementation code; Refactoring and documentation improvements — accept cleaned seed/create results, exclude category IDs from supplier inserts, and clarify separate assignments. (ai-20261001-001)
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement conditional active/version SQL updates with RETURNING, atomic version/timestamp changes, direct active-state queries, assignment replacement, and optional refreshed scalar/relationship loading while retaining service transaction ownership. (ai-20261001-006)
 # Author review: Keith confirmed review of the retained atomic update changes (ai-20261001-006).
-# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-001; ai-20261001-006
+# Scope: Writing implementation code; Refactoring and documentation improvements — implement and document SELECT FOR UPDATE lookup including deleted rows with populate_existing refresh, plus timestamp and version changes on the locked row within the service-owned transaction. (ai-20261001-010)
+# Author review: Keith confirmed review of the retained soft deletion changes (ai-20261001-010).
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Refactoring and documentation improvements — add separate administrator detail/list entry points, a status Literal, and shared status/area/category predicates before count and pagination while preserving immutable values, category matching, ordering, and active-only ordinary reads. (ai-20261001-012)
+# Author review: Keith confirmed review of the retained administrator-read changes (ai-20261001-012).
+# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-001; ai-20261001-006; ai-20261001-010; ai-20261001-012
 
 """Supplier persistence; transaction ownership stays with the service."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, time
+from typing import Literal
 from uuid import UUID
 
 from geoalchemy2 import Geography, Geometry
@@ -120,12 +126,48 @@ def find_active_detail(
         return _read_value(*row) if row is not None else None
 
 
+SupplierStatus = Literal["active", "deleted", "all"]
+
+
+def find_admin_detail(session: Session, supplier_id: UUID) -> SupplierRead | None:
+    """Read either deletion state without flushing or owning the transaction."""
+    with session.no_autoflush:
+        row = session.execute(_read_statement().where(Supplier.id == supplier_id)).one_or_none()
+        return _read_value(*row) if row is not None else None
+
+
 def list_active_suppliers(
     session: Session, *, area: str | None = None,
     category_ids: Iterable[UUID] = (), limit: int, offset: int,
 ) -> SupplierPage:
+    return _list_suppliers(
+        session, status="active", area=area, category_ids=category_ids,
+        limit=limit, offset=offset,
+    )
+
+
+def list_admin_suppliers(
+    session: Session, *, status: SupplierStatus = "active", area: str | None = None,
+    category_ids: Iterable[UUID] = (), limit: int, offset: int,
+) -> SupplierPage:
+    return _list_suppliers(
+        session, status=status, area=area, category_ids=category_ids,
+        limit=limit, offset=offset,
+    )
+
+
+def _list_suppliers(
+    session: Session, *, status: SupplierStatus, area: str | None = None,
+    category_ids: Iterable[UUID] = (), limit: int, offset: int,
+) -> SupplierPage:
     """Count and page identical predicates; pagination is validated by the service."""
-    predicates = [Supplier.deleted_at.is_(None)]
+    if status not in ("active", "deleted", "all"):
+        raise ValueError("Unsupported supplier status.")
+    predicates = []
+    if status == "active":
+        predicates.append(Supplier.deleted_at.is_(None))
+    elif status == "deleted":
+        predicates.append(Supplier.deleted_at.is_not(None))
     if area is not None:
         predicates.append(Supplier.area == area)
     selected = tuple(set(category_ids))
@@ -230,6 +272,21 @@ def active_supplier_exists(session: Session, supplier_id: UUID) -> bool:
         return session.scalar(select(Supplier.id).where(
             Supplier.id == supplier_id, Supplier.deleted_at.is_(None),
         )) is not None
+
+
+def lock_supplier(session: Session, supplier_id: UUID) -> Supplier | None:
+    """Lock even deleted rows and refresh state after competing writes finish."""
+    with session.no_autoflush:
+        return session.scalar(select(Supplier).where(
+            Supplier.id == supplier_id,
+        ).with_for_update().execution_options(populate_existing=True))
+
+
+def soft_delete_supplier(session: Session, supplier: Supplier, timestamp: datetime) -> None:
+    """Mark a locked active row deleted within the service-owned transaction."""
+    supplier.deleted_at = timestamp
+    supplier.updated_at = timestamp
+    supplier.version += 1
 
 
 def replace_category_assignments(
