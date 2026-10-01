@@ -441,4 +441,59 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   unavailable, with no redactions or header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Atomic versioned supplier updates](supplier-service/ai/usage-log.md#ai-20261001-006):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the service/repository layers, plus Writing
+  implementation code and Boilerplate generation for update tests. Retained work
+  adds merged validation, atomic version checks and category replacement, fresh
+  conflict classification, and detached post-commit responses. Agent checks passed
+  44 update cases, 51 creation integration cases, and 765 unit/API tests, with one
+  dependency warning; syntax and whitespace checks passed. Temporary PostGIS
+  resources were removed. Broader read/seed/schema suites were not run; no checks
+  remained blocked. Keith reviewed all three files; no human test rerun is claimed.
+  Exact prompt and final response are recorded; original timestamp unavailable,
+  with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Administrator supplier PATCH adapter](supplier-service/ai/usage-log.md#ai-20261001-007):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the route, Writing implementation code and
+  Boilerplate generation for API tests, and Writing implementation code and
+  Debugging assistance for the stale registration assertion. Retained work adds
+  administrator-only PATCH, aggregate validation, positive expected versions,
+  canonical saved output, and safe errors through the existing atomic service.
+  Agent checks passed 55 new PATCH cases and all 820 unit/API tests after the
+  assertion correction, with one dependency warning; syntax and whitespace checks
+  passed. Live-service and PostGIS checks were not rerun. Keith reviewed all three
+  files; no human test rerun is claimed. Exact prompt and final response are
+  recorded; original timestamp unavailable, with no redactions or header exceptions.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [PATCH concurrency and rollback verification](supplier-service/ai/usage-log.md#ai-20261001-008):
+  Codex (GPT-6) provided Writing implementation code and Boilerplate generation
+  for 13 additional update integration cases. Retained tests exercise mounted
+  routes and real PostGIS with controlled authentication, synchronized independent
+  writes, complete rollback snapshots, stale/no-op behavior, canonical public
+  reads, and deletion-race classification. Agent checks passed 57 update integration
+  cases and 174 selected API cases, with one dependency warning; syntax and
+  whitespace checks passed. Disposable resources were removed. No requested checks
+  were blocked; broader suites and live authentication were not run. Keith reviewed
+  the retained changes; no human test rerun is claimed. The exact prompt and verbatim
+  relevant response excerpt are recorded; original timestamp unavailable, with no
+  redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Implemented PATCH documentation](supplier-service/ai/usage-log.md#ai-20261001-009):
+  Codex (GPT-6) provided Refactoring and documentation improvements for the
+  Supplier Service README. Retained changes document mounted administrator PATCH,
+  version checks, complete saved/conflict examples, atomic failure behavior, and
+  test coverage/prerequisites while preserving planned DELETE and administrative
+  reads. Merged example validation, exact canonical response comparison, conflict
+  body, test paths, summary placement, and whitespace checks passed. No application
+  suite or live smoke check was rerun; prior results remain historical. Keith
+  reviewed the retained README changes; no human test rerun is claimed. Exact
+  prompt and final response are recorded; original timestamp unavailable, with
+  no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.

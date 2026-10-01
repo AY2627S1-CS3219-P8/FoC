@@ -1,16 +1,16 @@
 # AI Assistance Disclosure:
-# Tool: Codex (model: GPT-6), date: 2026-09-30
+# Tool: Codex (model: GPT-6), date: 2026-09-30, 2026-10-01
 # Scope: Writing implementation code — implement category resolution, active/deleted UUID lookup, and PostgreSQL index-aligned active-duplicate queries with autoflush disabled.
 # Scope: Writing implementation code; Refactoring and documentation improvements — add supplier and category-assignment insertion helpers using bound longitude-first SRID 4326 points, normalized values, aware timestamps, version 1, and null deletion state while leaving transaction ownership in the service.
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement active-only detail lookup, immutable supplier/category values, named PostGIS coordinates, and eager categories with caller-owned transactions. (ai-20260930-013)
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement active filtered pages and matching totals with name/UUID ordering, and share coordinate projection, select-in categories, and immutable mapping with detail reads. (ai-20260930-014)
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement direct ordered category ID/name retrieval as immutable values, independent of supplier assignments and without autoflush. (ai-20260930-015)
 # Scope: Writing implementation code; Refactoring and documentation improvements — accept cleaned seed/create results, exclude category IDs from supplier inserts, and clarify separate assignments. (ai-20261001-001)
-# Author review: Keith confirmed review of all affected changes.
-# Author review: Keith confirmed review of all affected changes.
-# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-001
+# Scope: Writing implementation code; Refactoring and documentation improvements — implement conditional active/version SQL updates with RETURNING, atomic version/timestamp changes, direct active-state queries, assignment replacement, and optional refreshed scalar/relationship loading while retaining service transaction ownership. (ai-20261001-006)
+# Author review: Keith confirmed review of the retained atomic update changes (ai-20261001-006).
+# Details: ../../ai/usage-log.md; ai-20260930-009; ai-20260930-010; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-001; ai-20261001-006
 
-"""Supplier queries and inserts; transaction ownership stays with the service."""
+"""Supplier persistence; transaction ownership stays with the service."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -18,7 +18,7 @@ from datetime import datetime, time
 from uuid import UUID
 
 from geoalchemy2 import Geography, Geometry
-from sqlalchemy import cast, func, insert, literal_column, select
+from sqlalchemy import cast, delete, func, insert, literal_column, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Category, Supplier, supplier_category
@@ -106,11 +106,15 @@ def _read_value(supplier: Supplier, latitude: float, longitude: float) -> Suppli
     )
 
 
-def find_active_detail(session: Session, supplier_id: UUID) -> SupplierRead | None:
+def find_active_detail(
+    session: Session, supplier_id: UUID, *, refresh: bool = False,
+) -> SupplierRead | None:
     """Read an active identity without flushing or owning the transaction."""
     statement = _read_statement().where(
         Supplier.id == supplier_id, Supplier.deleted_at.is_(None),
     )
+    if refresh:
+        statement = statement.execution_options(populate_existing=True)
     with session.no_autoflush:
         row = session.execute(statement).one_or_none()
         return _read_value(*row) if row is not None else None
@@ -205,3 +209,34 @@ def insert_category_assignments(
             {"supplier_id": supplier_id, "category_id": category_id}
             for category_id in category_ids
         ])
+
+
+def update_active_supplier(
+    session: Session, supplier_id: UUID, expected_version: int,
+    scalars: dict[str, object], timestamp: datetime,
+) -> bool:
+    """Atomically compare version and active state; never own the transaction."""
+    table = Supplier.__table__
+    statement = update(table).where(
+        table.c.id == supplier_id, table.c.version == expected_version,
+        table.c.deleted_at.is_(None),
+    ).values(**scalars, version=table.c.version + 1, updated_at=timestamp).returning(table.c.id)
+    return session.execute(statement).scalar_one_or_none() is not None
+
+
+def active_supplier_exists(session: Session, supplier_id: UUID) -> bool:
+    """Query database state directly, independently of the ORM identity map."""
+    with session.no_autoflush:
+        return session.scalar(select(Supplier.id).where(
+            Supplier.id == supplier_id, Supplier.deleted_at.is_(None),
+        )) is not None
+
+
+def replace_category_assignments(
+    session: Session, supplier_id: UUID, category_ids: tuple[UUID, ...],
+) -> None:
+    """Replace assignments only after the service's conditional write succeeds."""
+    session.execute(delete(supplier_category).where(
+        supplier_category.c.supplier_id == supplier_id,
+    ))
+    insert_category_assignments(session, supplier_id, category_ids)

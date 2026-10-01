@@ -2349,3 +2349,246 @@ The live smoke check remains unperformed: no approved administrator account or p
 ### Usage summary
 
 The README now describes the implemented administrator creation endpoint using the mounted route, schemas, service, and tests as evidence. It preserves planned update/deletion/administrative-read requirements and explains seed/API reuse without HTTP coupling. The documentation and smoke procedure were retained and reviewed by Keith. Examples and script syntax were checked; no new suite run or live administrator smoke success is claimed.
+
+
+## ai-20261001-006
+
+- Recorded at: 2026-10-01T03:57:19+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code, Boilerplate generation, and Refactoring and documentation improvements for atomic versioned supplier updates under the user's specified service/repository architecture and existing validation contract.
+- Outcome: Retained the update service, repository primitives, and new integration test file. No HTTP update adapter was added.
+- Verification: Agent checks passed 44 new update cases (37 in the initial combined run and 7 additional cases), 51 creation integration cases, and 765 unit/API tests. Syntax and whitespace checks passed. Test runs emitted one existing dependency deprecation warning. Disposable migrated PostGIS databases and the temporary container were cleaned up. Initial sandbox Docker access failed; escalated access enabled verification, so no checks remained blocked. Broader read/seed/schema integration suites were not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of the retained implementation and tests across all three affected files.
+
+### Prompt 1
+
+````text
+Implement atomic versioned supplier updates in the existing service and repository layers. Add `update_supplier(session, supplier_id, expected_version, payload)` in `supplier-service/app/services/suppliers.py`, returning the existing detached `SupplierRead` only after commit. Follow the transaction ownership and safe database-failure handling used by `create_supplier`. Read `supplier-service/app/validation/suppliers.py`, `supplier-service/app/schemas.py`, and the update contract in `supplier-service/README.md` before making changes.
+
+Load the active record inside the service-owned transaction. Build an explicit editable snapshot containing name, area, category UUIDs, optional text, and both schedule times. Pass the original payload, stored snapshot, and existing category IDs to `validate_supplier_patch`. Preserve whether `category_ids` was explicitly supplied separately from the complete validated result. If handling a `SupplierPatch` instance, extract it with `exclude_unset=True`.
+
+Use a conditional SQL update matching supplier ID, expected version, and active state. Persist normalized editable scalar changes and the derived closing-day offset when either schedule time changes. Increment the stored version and set an aware UTC update timestamp in that same statement. Detect success through RETURNING or affected-row count. Replace category assignments only after the conditional update succeeds, within the same transaction. Refresh the saved scalar values and relationships before creating the detached response.
+
+Files to edit:
+- `supplier-service/app/services/suppliers.py`
+- `supplier-service/app/repositories/suppliers.py`
+- `supplier-service/tests/integration/test_supplier_updates.py` (new)
+
+Acceptance criteria:
+- Omission preserves values and assignments. Explicit null clears nullable values. Required nulls, forbidden fields, unknown fields, empty categories, and invalid merged schedules reject the entire mutation through the existing aggregate validator.
+- Unknown categories retain original input positions in validation issues. Valid repeated category IDs are silently deduplicated before replacement.
+- Category-only edits, equal-value edits, and an empty object each increment version exactly once and update the timestamp. They are never short-circuited.
+- Location, ID, creation timestamp, and deletion state remain unchanged. Client-supplied version and closing-day offset are rejected. A one-field time edit derives its offset against the stored other time.
+- A missing or deleted supplier produces a transport-independent not-found error. A failed conditional write is classified using a fresh active-state lookup, producing not-found for unavailable records and a version-conflict error for active records. Do not rely on a stale ORM identity-map value.
+- Translate only SQLSTATE `23505` for `uq_supplier_active_name_location` into the existing `SupplierDuplicate` after rollback. Preserve unrelated programming and integrity errors. Map known database availability failures safely and never retry writes automatically.
+- Returned values contain refreshed categories and version, remain usable after session closure, and are exposed only after a successful commit.
+- Add database coverage for merged validation, successful scalar/category updates, missing/deleted records, stale versions, and duplicate renames. Verify rejected requests preserve all stored values, timestamps, versions, and assignments.
+- In your answer, recommend the appropriate test commands for the completed implementation, including working directory and database prerequisites. Report checks actually performed and any unavailable checks.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented atomic versioned updates with merged validation, conditional SQL writes, transactional category replacement, fresh conflict classification, and detached responses returned only after commit.
+
+Verified:
+- 44 new update tests passed.
+- 51 creation integration tests passed.
+- 765 unit/API tests passed.
+- Syntax and whitespace checks passed.
+
+Recommended commands from `supplier-service/`:
+
+```sh
+.venv/bin/python -m pytest tests/integration/test_supplier_updates.py tests/integration/test_supplier_creates.py -q
+.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+Integration prerequisites: set `TEST_DATABASE_URL` to isolated PostgreSQL/PostGIS using `postgresql+psycopg`, with a database name ending `_test`. Credentials need database creation/deletion and migration privileges; fixtures create disposable databases.
+
+No checks were blocked. The broader read/seed/schema integration suites were not run. The temporary PostGIS container was removed.
+
+### Scope
+
+- `supplier-service/app/services/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — implement the specified service-owned update transaction, explicit editable snapshot and merged validation, presence-aware scalar/category edits, detached post-commit results, fresh conflict classification, and safe database-failure translation without retries.
+- `supplier-service/app/repositories/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — implement conditional active/version SQL updates with RETURNING, atomic version/timestamp changes, direct active-state queries, assignment replacement, and optional refreshed scalar/relationship loading while retaining service transaction ownership.
+- `supplier-service/tests/integration/test_supplier_updates.py`: Writing implementation code; Boilerplate generation — write 44 update cases using existing disposable PostGIS fixtures, covering merged validation, omission/null behavior, scalar/category changes, no-op versions, refreshed relationships, concurrent state changes, duplicate renames, rollback, commit failures, and exact SQLSTATE classification.
+
+### Usage summary
+
+The service merges the original patch with explicit stored editable values, validates all changes, and performs one active/version-conditional SQL update before optional category replacement. Every successful patch advances the version and timestamp, including empty and equal-value edits. Refreshed immutable values are exposed after commit; failures roll back and retain safe transport-independent classifications. Keith reviewed the retained work. Agent verification covered the new update cases and creation/unit/API regressions; no human rerun or broader integration run is claimed.
+
+
+## ai-20261001-007
+
+- Recorded at: 2026-10-01T04:13:46+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code, Boilerplate generation, Refactoring and documentation improvements, and Debugging assistance for the administrator PATCH adapter under the user's specified existing service/authentication/validation architecture.
+- Outcome: Retained the PATCH route, new API tests, and the additional one-line stale route-registration assertion correction in tests/api/test_validation_errors.py. The existing update service retains transaction ownership.
+- Verification: Agent checks passed all 55 new PATCH API cases and all 820 unit/API tests, with one existing dependency deprecation warning. Syntax and whitespace checks passed. An initial test command used the wrong working directory and was corrected. The first full regression run passed 819 cases and failed the stale route-registration assertion; after correction, all 820 passed. Tests used controlled dependencies and real authentication dependencies without live services. Live-service and PostGIS checks were not rerun for this adapter change. No human test rerun is claimed.
+- Author review: Keith confirmed review of the retained changes across all three affected files.
+
+### Prompt 1
+
+````text
+Expose administrator-only `PATCH /suppliers/{id}` in `supplier-service/app/routes/suppliers.py` using `update_supplier(session, supplier_id, expected_version, payload)` from `supplier-service/app/services/suppliers.py`. That service must already own the conditional write and category replacement transaction and return a committed `SupplierRead`. Follow the existing POST adapter's raw JSON handling so aggregate validation can report independent body issues together. Reuse `require_admin`, `get_db`, `SupplierResponse.from_read`, and the global validation handlers.
+
+Files to edit:
+- `supplier-service/app/routes/suppliers.py`
+- `supplier-service/tests/api/test_supplier_updates.py` (new)
+
+Acceptance criteria:
+- A verified administrator can update a UUID supplier with a required positive integer `expected_version` query parameter and receive HTTP 200 with the complete canonical saved representation.
+- Missing, malformed, zero, and negative expected versions return the shared 422 envelope with `query.expected_version` field paths. Invalid path UUIDs and malformed JSON use the existing safe request-validation contract.
+- Missing or invalid credentials return 401, a verified non-administrator returns 403, and authentication outages retain the established 503 behavior. Unauthorized requests never invoke the update service.
+- Missing/deleted records return 404 with `SUPPLIER_NOT_FOUND`. Stale active versions return 409 with `VERSION_CONFLICT` and the message `This supplier has changed. Reload it before trying again.` Include neither current version nor supplier data, and perform no automatic retry.
+- Duplicate renames return 409 with `SUPPLIER_DUPLICATE`. Known storage availability failures return 503 with `DATABASE_UNAVAILABLE`. Responses expose no SQL, tokens, private diagnostics, or raw exception text.
+- Body validation covers omission, optional null clearing, required null rejection, schedule merging, category replacement, original unknown-category positions, and forbidden location/server fields. Preserve aggregate independently detectable issues.
+- API tests exercise the mounted route with controlled service and User Service responses, following the existing creation-test conventions. Verify session cleanup, the OpenAPI bearer requirement and required positive query parameter, and canonical 200 output.
+- Existing creation and anonymous public reads retain their behavior.
+- In your answer, recommend the appropriate test commands for the completed route and regression coverage, including working directory and prerequisites. Report checks actually performed and any unavailable checks.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Implemented administrator-only PATCH with raw aggregate validation, required positive `expected_version`, canonical 200 responses, and safe error mappings.
+
+Added 55 API tests and corrected one stale route-registration assertion in `test_validation_errors.py`.
+
+**Verified:** all 820 unit/API tests passed; syntax and whitespace checks passed. One existing dependency warning remains.
+
+Run from `supplier-service/` with Python 3.12 and development dependencies installed:
+
+```sh
+.venv/bin/python -m pytest tests/api/test_supplier_updates.py tests/api/test_supplier_creates.py tests/api/test_supplier_reads.py tests/api/test_validation_errors.py -q
+.venv/bin/python -m pytest tests/unit tests/api -q
+```
+
+These tests use controlled dependencies; no database or live User Service is required. Live-service and PostGIS checks were not rerun for this adapter change.
+
+### Scope
+
+- `supplier-service/app/routes/suppliers.py`: Writing implementation code; Refactoring and documentation improvements — implement the specified administrator-only PATCH adapter using require_admin, get_db, raw JSON, required positive expected_version, the existing atomic update service, canonical response conversion, fixed safe error envelopes, and an updated router docstring.
+- `supplier-service/tests/api/test_supplier_updates.py`: Writing implementation code; Boilerplate generation — configure controlled service and User Service responses using existing creation-test fixtures and write 55 mounted-route cases for authentication, request validation, merged body validation, category presence, safe failures, canonical output, session cleanup, and OpenAPI requirements.
+- `supplier-service/tests/api/test_validation_errors.py`: Writing implementation code; Debugging assistance — correct the stale production route-registration assertion to permit the implemented PATCH endpoint while retaining exclusion of test-only and unimplemented supplier routes.
+
+### Usage summary
+
+The mounted PATCH adapter authorizes verified administrators, accepts raw JSON for aggregate validation, delegates to the existing atomic update service, and returns the canonical saved representation. Fixed public error messages preserve authentication, validation, not-found, conflict, duplicate, and availability contracts without exposing private exception details. API coverage exercises controlled upstreams and real dependency/session cleanup behavior. The additional registration assertion now recognizes PATCH. Keith reviewed all retained changes; agent checks passed, with no human rerun or new live-service/PostGIS verification claimed.
+
+
+## ai-20261001-008
+
+- Recorded at: 2026-10-01T04:34:03+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Writing implementation code and Boilerplate generation for the user's specified real PostgreSQL/PostGIS concurrency and rollback verification through the mounted PATCH endpoint and existing transaction-owning update service.
+- Outcome: Retained 13 additional integration cases and supporting test helpers in supplier-service/tests/integration/test_supplier_updates.py. Production service, repository, and route behavior were not changed for this increment.
+- Verification: Agent checks passed all 57 update integration cases and 174 selected API regression cases, with one existing dependency deprecation warning. Syntax and whitespace checks passed. Tests observed real PostgreSQL transaction lock contention, used independent sessions and commits, and verified complete rollback snapshots. Disposable databases were confirmed removed and the temporary PostGIS container was stopped. An initial edit command used the wrong relative path and was corrected before verification. No requested checks remained blocked. Authentication used controlled User Service responses; broader suites and live authentication were not run. No human test rerun is claimed.
+- Author review: Keith confirmed review of the retained concurrency and rollback test changes.
+
+
+### Prompt 1
+
+````text
+Prove update concurrency and rollback behavior on real PostgreSQL/PostGIS through the mounted PATCH endpoint and `update_supplier` service. Use the conditional update and transaction implementation in `supplier-service/app/services/suppliers.py` and `supplier-service/app/repositories/suppliers.py`. Extend `supplier-service/tests/integration/test_supplier_updates.py`, which should already cover ordinary service updates. Read the disposable database, controlled authentication, and synchronized competing-transaction patterns in `supplier-service/tests/integration/test_supplier_creates.py` as references. Use independent sessions and real commits for concurrency tests instead of relying on an outer rollback transaction.
+
+Files to edit:
+- `supplier-service/tests/integration/test_supplier_updates.py`
+
+Acceptance criteria:
+- Two requests start from the same supplier version in independent database sessions. Synchronize the competing writes with bounded waits so the test exercises an actual race. Exactly one returns 200 and the other returns 409 with `VERSION_CONFLICT`.
+- Give contenders distinct scalar values and category selections. A fresh session observes only the winner's values and assignments, one version increment, and no partial effects from the loser.
+- A stale request is rejected even when it changes a different field or requests values already stored. A fresh category-only or unchanged-value request still increments the version.
+- Force assignment replacement to fail after a successful conditional supplier UPDATE. A fresh session confirms rollback restores the original scalar values, schedule offset, version, update timestamp, and complete assignment set, including assignments removed during replacement.
+- A rename that violates the active unique index rolls back scalar changes, version, timestamp, and category replacement together. Unrelated integrity failures are not reported as duplicate or version conflicts.
+- Verify PATCH response equality with a subsequent public detail read after commit, including canonical category order, nullable values, schedule offset, and version.
+- Missing/deleted targets produce 404 while stale active targets produce 409, including the classification path reached after a conditional write loses the race with a competing deletion-state change. Set up deletion state through test database operations without adding a DELETE endpoint.
+- Test cleanup releases sessions, workers, and disposable resources even on failure. Tests require explicit test database configuration and never target development data.
+- In your answer, recommend the appropriate test commands for these completed database and API scenarios, including working directory and database prerequisites. Report observed results and any checks that could not run.
+````
+
+### Key response 1
+
+Verbatim relevant final-response excerpt:
+
+Added 13 PostGIS-backed cases in `test_supplier_updates.py`, proving synchronized PATCH races, complete winner state, rollback restoration, stale-version rejection, deletion-race classification, and canonical public-read equality.
+
+**Verified:** 57 update integration tests and 174 API regression tests passed. Syntax and whitespace checks passed. Disposable databases and container were cleaned up.
+
+Run from `supplier-service/`:
+
+```sh
+.venv/bin/python -m pytest tests/integration/test_supplier_updates.py -q
+.venv/bin/python -m pytest tests/api/test_supplier_updates.py tests/api/test_supplier_creates.py tests/api/test_supplier_reads.py tests/api/test_validation_errors.py -q
+```
+
+Prerequisites: Python 3.12 and development dependencies. Integration tests require explicit isolated PostGIS `TEST_DATABASE_URL` using `postgresql+psycopg`, a database name ending `_test`, distinct from development, and permissions to create/drop databases and install PostGIS.
+
+No requested checks were blocked. Authentication used controlled User Service responses; broader suites were not rerun.
+
+### Scope
+
+- `supplier-service/tests/integration/test_supplier_updates.py`: Writing implementation code; Boilerplate generation — extend the specified mounted PATCH and existing service tests with 13 real PostGIS cases, reuse disposable database and controlled authentication fixtures, track request-session cleanup, synchronize independent writes with bounded barriers and observed PostgreSQL locks, and verify complete winner state, rollback snapshots, stale/no-op behavior, canonical public reads, and deletion-race classification.
+
+### Usage summary
+
+The added tests prove a single complete winner when independent PATCH requests compete from the same version, fresh-state not-found classification after a competing deletion commits, and full restoration after assignment replacement or duplicate rename failures. They also cover stale edits to different or equal values, successful category-only and unchanged-value version increments, and canonical equality with anonymous public reads. Bounded synchronization and database timeouts support worker cleanup; request sessions and disposable database resources are released. Keith reviewed the retained test work. Agent verification passed 231 selected integration/API cases; no human rerun is claimed.
+
+
+## ai-20261001-009
+
+- Recorded at: 2026-10-01T11:25:31+08:00
+- Exchange time: Original message timestamp unavailable; assistance occurred on 2026-10-01.
+- Source: Codex; model GPT-6.
+- Mode and scenario: Refactoring and documentation improvements for the implemented administrator PATCH contract and version-check behavior, grounded in the actual route, service, and update tests.
+- Outcome: Retained README corrections for mounted PATCH, authentication, field presence and category replacement, immutable coordinates, derived schedule offsets, version increments and conflicts, atomic failure behavior, canonical examples, coverage links, and verification commands. DELETE and administrative reads remain planned; unrelated contract decisions were preserved.
+- Verification: Agent checked the PATCH request through merged validation against the existing creation example and compared the entire saved example with SupplierResponse.from_read. The conflict body, linked test paths, final summary placement, and whitespace checks passed. No application suites or live administrator smoke checks were rerun for this documentation edit. Previously observed 820 unit/API tests and the separate 57 update integration plus 174 selected API cases remain historical results. No human test rerun is claimed.
+- Author review: Keith confirmed review of the retained PATCH documentation changes.
+
+### Prompt 1
+
+````text
+Update `supplier-service/README.md` to document the implemented administrator PATCH endpoint and its version-check behavior. Inspect the actual route, `update_supplier` service, and API/integration update tests before describing supported behavior or verification. Keep deletion and administrative reads marked as future work.
+
+Files to edit:
+- `supplier-service/README.md`
+
+Acceptance criteria:
+- Replace stale claims that supplier updates are unmounted in the service overview, API status, validation guidance, error reference, and verification sections without changing unrelated contract decisions.
+- Document administrator authentication, the required positive `expected_version` query parameter, editable fields, omission versus null, replacement categories, immutable coordinates, and server-derived schedule offsets.
+- Include a concrete successful PATCH example with its complete saved response and a stale-version 409 example that instructs reload without exposing the current version or automatically retrying.
+- Explain that category-only, unchanged-value, and empty-object updates advance the version. Describe atomic rollback and distinguish 404, duplicate 409, version-conflict 409, validation 422, and availability 503 outcomes.
+- Link relevant implemented test coverage and state database prerequisites. Distinguish observed verification from recommended future checks. Do not invent successful test runs or author review.
+- In your answer, recommend test scripts or commands appropriate to the completed PATCH implementation and existing project setup, including working directory and prerequisites.
+````
+
+### Key response 1
+
+Verbatim final response:
+
+Updated [supplier-service/README.md](supplier-service/README.md) with implemented PATCH behavior, complete success/conflict examples, atomic rollback, error outcomes, and test guidance. DELETE and administrative reads remain planned.
+
+Validated the example against merged validation and canonical response conversion. Links and whitespace checks passed. No application suites were rerun.
+
+Recommended from `supplier-service/`:
+
+```sh
+./.venv/bin/python -m pytest tests/unit tests/api -q
+./.venv/bin/python -m pytest tests/integration/test_supplier_updates.py tests/integration/test_supplier_creates.py -q
+```
+
+Use Python 3.12 with development dependencies. Integration tests require isolated PostGIS `TEST_DATABASE_URL` using `postgresql+psycopg`, a database name ending `_test`, distinct from development, and database creation/drop and PostGIS installation permissions.
+
+### Scope
+
+- `supplier-service/README.md`: Refactoring and documentation improvements — replace stale PATCH implementation-status claims using the mounted route, update service, and API/integration tests; document administrator authentication, positive expected versions, editable fields and merged validation, complete saved/conflict examples, atomic rollback and safe errors, test links and prerequisites, and separate historical results from recommended reruns while retaining planned DELETE and administrative-read boundaries.
+
+### Usage summary
+
+The README now describes the implemented administrator PATCH endpoint using production code and test evidence. It includes a successful partial edit and complete canonical version-2 response, a safe stale-version conflict, and version advancement for category-only, unchanged-value, and empty updates. It explains transaction ownership, rollback, error distinctions, and database prerequisites without claiming a new suite run. Keith reviewed the retained documentation; no human test rerun is claimed.

@@ -1,16 +1,17 @@
 # AI Assistance Disclosure:
-# Tool: Codex (model: GPT-6), date: 2026-09-30
+# Tool: Codex (model: GPT-6), date: 2026-09-30, 2026-10-01
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement synchronous active detail reads with a safe transport-independent availability exception, preserving programming errors and caller-owned session cleanup.
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement default/bounded pagination with shared validation issues before queries and reuse the safe availability boundary for listing and detail reads. (ai-20260930-014)
 # Scope: Writing implementation code; Refactoring and documentation improvements — expose controlled categories through the safe availability boundary and immutable approved areas in declared order without database access. (ai-20260930-015)
-# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Refactoring and documentation improvements — implement the specified service-owned update transaction, explicit editable snapshot and merged validation, presence-aware scalar/category edits, detached post-commit results, fresh conflict classification, and safe database-failure translation without retries. (ai-20261001-006)
 # Scope: Writing implementation code; Refactoring and documentation improvements — implement atomic creation with category validation, shared inserts, detached post-commit results, exact duplicate translation, and shared availability classification. (ai-20261001-002)
 # Author review: Keith confirmed review of earlier work and the creation implementation (ai-20261001-002).
-# Details: ../../ai/usage-log.md; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-002
+# Author review: Keith confirmed review of the retained atomic update changes (ai-20261001-006).
+# Details: ../../ai/usage-log.md; ai-20260930-013; ai-20260930-014; ai-20260930-015; ai-20261001-002; ai-20261001-006
 
-"""Transport-independent supplier reads and atomic creation on caller sessions."""
+"""Transport-independent supplier reads and atomic mutations on caller sessions."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -20,11 +21,13 @@ from sqlalchemy.orm import Session
 
 from app.repositories.suppliers import (
     CategoryRead, SupplierPage, SupplierRead, find_active_detail, list_active_suppliers,
-    insert_category_assignments, insert_supplier,
+    insert_category_assignments, insert_supplier, active_supplier_exists,
+    replace_category_assignments, update_active_supplier,
     list_categories as read_categories,
 )
+from app.schemas import SupplierPatch
 from app.validation.errors import DomainValidationError, ValidationIssue
-from app.validation.suppliers import validate_supplier_create
+from app.validation.suppliers import validate_supplier_create, validate_supplier_patch
 from app.validation.vocabulary import APPROVED_AREAS
 
 
@@ -76,6 +79,80 @@ def create_supplier(session: Session, payload: object) -> SupplierRead:
             raise SupplierDuplicate() from None
         if _database_unavailable(error):
             raise SupplierCreateUnavailable() from None
+        raise
+
+
+class SupplierNotFound(Exception):
+    """The requested supplier is missing or no longer active."""
+
+    def __init__(self) -> None:
+        super().__init__("Supplier not found.")
+
+
+class SupplierVersionConflict(Exception):
+    """The active supplier changed since the caller loaded it."""
+
+    def __init__(self) -> None:
+        super().__init__("Supplier has changed. Reload before trying again.")
+
+
+class SupplierUpdateUnavailable(Exception):
+    """Safe write failure, including uncertain commit acknowledgement."""
+
+    def __init__(self) -> None:
+        super().__init__("Supplier update is temporarily unavailable.")
+
+
+def update_supplier(
+    session: Session, supplier_id: UUID, expected_version: int, payload: object,
+) -> SupplierRead:
+    """Validate merged edits and compare-and-swap in one owned transaction."""
+    if isinstance(payload, SupplierPatch):
+        payload = payload.model_dump(exclude_unset=True)
+    categories_supplied = isinstance(payload, Mapping) and "category_ids" in payload
+    try:
+        with session.begin():
+            stored = find_active_detail(session, supplier_id, refresh=True)
+            if stored is None:
+                raise SupplierNotFound()
+            snapshot = {
+                "name": stored.name, "area": stored.area,
+                "category_ids": [category.id for category in stored.categories],
+                "description": stored.description, "building": stored.building,
+                "floor": stored.floor, "image_key": stored.image_key,
+                "opening_time": stored.opening_time, "closing_time": stored.closing_time,
+            }
+            categories = read_categories(session)
+            values = validate_supplier_patch(
+                payload, snapshot, (category.id for category in categories),
+            )
+            scalars = values.model_dump(exclude={"category_ids", "closing_day_offset"})
+            scalars = {key: value for key, value in scalars.items() if key in payload}
+            if "opening_time" in payload or "closing_time" in payload:
+                scalars["closing_day_offset"] = values.closing_day_offset
+            if not update_active_supplier(
+                session, supplier_id, expected_version, scalars, datetime.now(timezone.utc),
+            ):
+                if not active_supplier_exists(session, supplier_id):
+                    raise SupplierNotFound()
+                raise SupplierVersionConflict()
+            if categories_supplied:
+                replace_category_assignments(session, supplier_id, tuple(values.category_ids))
+            session.flush()
+            result = find_active_detail(session, supplier_id, refresh=True)
+            if result is None:
+                raise RuntimeError("Updated supplier could not be loaded.")
+        return result
+    except TimeoutError:
+        raise SupplierUpdateUnavailable() from None
+    except DBAPIError as error:
+        if (isinstance(error, IntegrityError)
+                and getattr(error.orig, "sqlstate", None) == "23505"
+                and getattr(getattr(error.orig, "diag", None), "constraint_name", None)
+                == "uq_supplier_active_name_location"):
+            raise SupplierDuplicate() from None
+        if _database_unavailable(error):
+            raise SupplierUpdateUnavailable() from None
         raise
 
 

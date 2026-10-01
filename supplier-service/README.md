@@ -9,7 +9,9 @@ Tool: Codex (model: GPT-6), date: 2026-10-01
 Scope: Refactoring and documentation improvements; Writing implementation code — document implemented administrator POST, canonical examples, validation and atomic persistence, future feature boundaries, verification results, and a mounted-route live smoke procedure with authorized provisioning prerequisites. (ai-20261001-005)
 Author review: Keith confirmed review of all affected changes, including the dry-run documentation (ai-20260930-008). Keith confirmed review of the packaging changes (ai-20260930-012). Keith confirmed review of public-read registration changes (ai-20260930-022).
 Author review: Keith confirmed review of the retained creation documentation and smoke procedure for ai-20261001-005.
-Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012; ai-20260930-022; ai-20261001-005
+Scope: Refactoring and documentation improvements — replace stale PATCH implementation-status claims using the mounted route, update service, and API/integration tests; document administrator authentication, positive expected versions, editable fields and merged validation, complete saved/conflict examples, atomic rollback and safe errors, test links and prerequisites, and separate historical results from recommended reruns while retaining planned DELETE and administrative-read boundaries. (ai-20261001-009)
+Author review: Keith confirmed review of the retained PATCH documentation (ai-20261001-009).
+Details: ai/usage-log.md; ai-20260929-001; ai-20260929-004; ai-20260930-003; ai-20260930-008; ai-20260930-012; ai-20260930-022; ai-20261001-005; ai-20261001-009
 -->
 
 # Supplier Service
@@ -35,7 +37,7 @@ and four controlled categories; startup and probes do not create tables.
 See [schema operations](docs/migrations.md) for ordered installation, deployment
 to an existing volume, role grants, recovery rehearsals, and integration tests.
 Public supplier and reference-data reads and administrator-only `POST /suppliers`
-are mounted. Supplier updates, deletion, and administrative reads remain future work.
+and `PATCH /suppliers/{id}` are mounted. Deletion and administrative reads remain future work.
 
 ## Local Development
 
@@ -109,9 +111,9 @@ the required Psycopg driver scheme, rejection of invalid startup
 configuration, database engine initialization and disposal, revision matching,
 configuration/connection failures, connection release, and readiness recovery.
 They also cover standalone domain checks, creation and merged PATCH validation,
-the mounted administrator creation endpoint, and shared HTTP 422 handlers.
-POST tests exercise real authentication dependencies with controlled User Service
-responses; PATCH validation is tested without a production PATCH endpoint.
+the mounted administrator creation and PATCH endpoints, and shared HTTP 422 handlers.
+POST and PATCH tests exercise real authentication dependencies with controlled
+User Service responses, canonical output, safe errors, and request-session cleanup.
 Explicit CSV import is available below.
 
 ### Integration-test database configuration
@@ -129,7 +131,7 @@ These checks guard against accidental development-database use. Configure
 the URL to point to a separate database reserved for tests.
 
 Fixtures validate configuration and apply Alembic migrations to the explicitly
-configured test database. Creation and seed-import tests also create and drop
+configured test database. Creation, update, and seed-import tests also create and drop
 per-test databases because independent connections commit real transactions; an
 outer rollback cannot isolate those writes. The test role must connect to the
 `postgres` maintenance database, create/drop databases, install PostGIS, and apply
@@ -274,8 +276,8 @@ verification.
 The administrator bootstrap enables PostGIS; migrations create the schema.
 The API initializes its database engine and gates readiness on connectivity and
 installed migration revisions. Public reads do not authenticate. The mounted
-`POST /suppliers` endpoint uses the reusable User Service administrator dependency;
-updates, deletion, and administrative reads are not yet mounted.
+`POST /suppliers` and `PATCH /suppliers/{id}` endpoints use the reusable User
+Service administrator dependency. Deletion and administrative reads are not yet mounted.
 Compose gates new API startup on database health and successful migration completion.
 
 Deployment verification on disposable data covered fresh bootstrap and grants,
@@ -290,12 +292,12 @@ limits, and project-scoped cleanup commands.
 Implemented:
 
 - Administrator creation with one or more categories.
+- Version-checked administrator updates and atomic replacement of category assignments.
 - Public active-only listing and detail reads, with area/category filters.
 - Explicit initial-dataset import and general daily opening schedules.
 
 Planned:
 
-- Supplier updates and replacement of category assignments.
 - Soft-deletion endpoints.
 - Administrative reads of active and deleted suppliers.
 
@@ -416,7 +418,7 @@ concurrent requests: after a competing commit one create succeeds and the other
 conflicts; after rollback the waiting create can succeed. Deleted records do not
 block a new supplier with a new UUID. Their values and category assignments remain
 unchanged, and historical references continue to identify the deleted record.
-The future update service must apply the same duplicate rule to renames.
+The update service applies the same duplicate rule to renames.
 
 The seed importer must use stable seed identifiers or a persistent mapping
 to existing supplier UUIDs. It must not generate fresh UUIDs for the same
@@ -686,39 +688,116 @@ historical retrieval is planned and is not exposed by the current API.
 
 ### Update
 
-Planned: no supplier PATCH endpoint is mounted. The following describes the
-intended contract; pure PATCH validation helpers already exist.
+Implemented: `PATCH /suppliers/{id}?expected_version=1` requires a UUID supplier
+ID, `Authorization: Bearer <session-token>`, and an active account whose `admin`
+role is verified through User Service. The query parameter `expected_version` is
+required and must be a positive integer: supply the version on which the edit is
+based, obtained from a supplier response. Missing, malformed, zero, or negative
+values return the shared 422 envelope with `query.expected_version` paths.
+Invalid supplier UUIDs use `path.id`; malformed JSON uses `INVALID_JSON`.
 
-The PATCH allowlist is `name`, `description`, `area`, `building`, `floor`,
-`image_key`, `opening_time`, `closing_time`, and `category_ids`. This expands
-D1's name-and-description-only updates. Coordinates, identity, timestamps,
-deletion state, version, and derived offset are not client-editable.
+The body must be a JSON object. The editable fields are `name`, `description`,
+`area`, `building`, `floor`, `image_key`, `opening_time`, `closing_time`, and
+`category_ids`. This expands D1's name-and-description-only updates.
 
-For partial updates:
+- Omitted fields preserve stored values and category assignments.
+- Explicit null clears optional text; blank optional text normalizes to null.
+  Required `name`, `area`, and `category_ids` cannot be null.
+- Supplied `category_ids` replaces the complete selection. It must be nonempty;
+  valid repeated IDs are deduplicated. Unknown IDs retain their original input
+  positions in validation issues. Obtain choices from `GET /categories`.
+- One supplied schedule time is validated against the other stored time. The
+  server derives `closing_day_offset`: 0 for later closing, 1 for earlier or equal
+  closing. Clear both times together for unknown hours; clearing only one fails.
+- Coordinates are immutable. `location`, `id`, timestamps, `deleted_at`, `version`,
+  `closing_day_offset`, and body `expected_version` are forbidden, as are unknown
+  fields. The query version is a precondition, not an editable body value.
 
-- Omitted fields remain unchanged.
-- Explicit null clears a nullable field, subject to validation.
-- Required fields cannot be cleared.
-- `category_ids`, when supplied, replaces the current category selection.
-- An empty category selection is rejected.
-- Server-managed fields cannot be set directly by the caller.
-- Geographic coordinates remain immutable under the current requirement.
+For example, start from the version-1 supplier in the [creation example](#create).
+This request clears the floor, replaces both categories with Coffee, and changes
+only the closing time, using stored opening time `22:30:00`:
 
-PATCH and DELETE require a positive `expected_version` query parameter.
-The client supplies the version on which its edit is based. The service
-applies the update only if that version still matches the stored version.
+```http
+PATCH /suppliers/a98f9ffd-1d20-4b9d-88f0-585039d5949a?expected_version=1 HTTP/1.1
+Authorization: Bearer <session-token>
+Content-Type: application/json
 
-A successful update changes `updated_at` and increments `version`,
-including category-only changes and requests whose values equal the saved
-values. Every successful PATCH increments the version. Stale active-record versions
-return `409`, even when the competing edits affect different fields.
+{
+  "floor": null,
+  "category_ids": ["92f0136e-5617-4380-9367-b2991ceda339"],
+  "closing_time": "23:30:00"
+}
+```
 
-Supplier updates and category changes occur in one transaction.
+Complete HTTP 200 response (the update timestamp is illustrative):
+
+```json
+{
+  "id": "a98f9ffd-1d20-4b9d-88f0-585039d5949a",
+  "name": "Campus Café",
+  "area": "Science",
+  "location": {"latitude": 1.291876, "longitude": 103.781234},
+  "categories": [
+    {"id": "92f0136e-5617-4380-9367-b2991ceda339", "name": "Coffee"}
+  ],
+  "description": null,
+  "building": "S16",
+  "floor": null,
+  "image_key": null,
+  "opening_time": "22:30:00",
+  "closing_time": "23:30:00",
+  "closing_day_offset": 0,
+  "created_at": "2026-10-01T02:03:04.123456Z",
+  "updated_at": "2026-10-01T02:04:05.123456Z",
+  "deleted_at": null,
+  "version": 2
+}
+```
+
+Submitting the same valid edit again with `expected_version=1` returns HTTP 409:
+
+```json
+{
+  "error": {
+    "code": "VERSION_CONFLICT",
+    "message": "This supplier has changed. Reload it before trying again."
+  }
+}
+```
+
+Reload the supplier and let the administrator review the latest values before
+submitting another edit. The conflict response includes neither the current
+version nor supplier data. Do not automatically retry. Stale versions conflict
+even when editing a different field or asking for values already stored. With a
+matching version, category-only edits, unchanged-value edits, and `{}` each
+increment `version` exactly once and set a new aware UTC `updated_at`.
+
+`update_supplier` owns one transaction: it loads an active editable snapshot,
+validates the merged body against existing categories, then executes a conditional
+UPDATE matching ID, expected version, and active state. That statement changes
+scalars, derived offset when a time is supplied, version, and update timestamp.
+Category replacement runs only after the conditional write succeeds. Scalars and
+relationships are refreshed into a detached `SupplierRead`, exposed only after
+commit; the canonical response matches a subsequent public detail read.
+
+A missing/deleted target returns 404 `SUPPLIER_NOT_FOUND`. After a failed
+conditional write, a fresh database lookup distinguishes an unavailable target
+(404) from an active stale target (409 `VERSION_CONFLICT`). Duplicate renames
+return 409 `SUPPLIER_DUPLICATE`. Invalid bodies return aggregate 422
+`VALIDATION_ERROR`. Known storage failures return 503 `DATABASE_UNAVAILABLE`;
+authentication failures use the separate [error contract](#authentication-and-http-contract).
+Validation and pre-commit failures roll back all edits, including assignments
+removed during replacement, scalar values, schedule offset, version, and timestamp.
+Only the active-name/location unique violation is translated to a duplicate;
+unrelated integrity/programming errors are not mislabeled as conflicts.
+If commit acknowledgement is lost, the database may already have committed:
+503 does not prove rollback. Writes are never retried automatically; reload to
+inspect the result before deciding on another edit.
 
 ### Delete
 
 Planned: no supplier DELETE endpoint is mounted. The following describes the
-intended contract.
+intended contract. DELETE will require a positive `expected_version` query parameter.
 
 Removal uses soft deletion. The supplier stays in the `supplier` table.
 
@@ -746,8 +825,8 @@ Ordinary browsing is public. `GET /suppliers`, `GET /suppliers/{id}`,
 Service. They ignore Authorization headers, including invalid or expired
 credentials. Ordinary supplier reads expose active suppliers only.
 
-The implemented creation endpoint requires an authenticated account with a
-verified `admin` role. Future updates, deletion, and administrative reads will use
+The implemented creation and update endpoints require an authenticated account
+with a verified `admin` role. Future deletion and administrative reads will use
 the same authorization requirement. For protected operations,
 forward opaque bearer tokens to User Service `GET /users/me`. Do not decode
 JWTs or query its database. Use bounded timeouts and no authentication caching
@@ -767,8 +846,8 @@ construction and application startup must not contact User Service. Neither
 still depend on User Service and fail closed during an authentication outage.
 All four public read adapters are mounted in the production application, with
 no authentication dependencies or OpenAPI security requirements. The mounted
-`POST /suppliers` uses `require_admin` and declares HTTP bearer security. Updates,
-deletion, and administrative reads remain unimplemented.
+`POST /suppliers` and `PATCH /suppliers/{id}` use `require_admin` and declare
+HTTP bearer security. Deletion and administrative reads remain unimplemented.
 
 Each application lifespan creates one reusable synchronous `UserServiceClient`
 from the existing settings and stores it at `app.state.user_service_client`.
@@ -796,23 +875,25 @@ Use the `error.code` and `error.message` envelope with
 `WWW-Authenticate: Bearer` on 401.
 
 POST returns `201 Created` with the complete saved supplier shown in the
-[creation example](#create). The planned PATCH response is `200 OK` with the same
-representation; planned DELETE returns `204 No Content`. Version checks and
-`VERSION_CONFLICT` belong to those future mutations.
+[creation example](#create). PATCH returns `200 OK` with the complete saved
+representation shown in the [update example](#update), after checking the expected
+version. Planned DELETE returns `204 No Content`.
 
-Implemented POST failures use these envelopes:
+Implemented POST and PATCH failures use these envelopes:
 
 | HTTP | `error.code` | Meaning |
 | --- | --- | --- |
 | 401 | `AUTHENTICATION_REQUIRED` | Missing, malformed, expired, revoked, or rejected credentials; includes `WWW-Authenticate: Bearer`. |
 | 403 | `FORBIDDEN` | User Service verified a regular user rather than an administrator. |
+| 404 | `SUPPLIER_NOT_FOUND` | PATCH target is missing or deleted. |
+| 409 | `VERSION_CONFLICT` | PATCH target is active but its version no longer matches; reload before another edit. |
 | 409 | `SUPPLIER_DUPLICATE` | An active supplier already has the normalized name and exact stored point, regardless of area. |
 | 422 | `VALIDATION_ERROR` | Invalid JSON or request values; includes safe field-level `details`. Independent issues in a usable object are aggregated. |
 | 503 | `AUTHENTICATION_UNAVAILABLE` | Identity cannot be verified because User Service failed or returned an untrusted response. |
-| 503 | `DATABASE_UNAVAILABLE` | A recognized database availability failure; creation returns the fixed message `Supplier creation is temporarily unavailable.` |
+| 503 | `DATABASE_UNAVAILABLE` | A recognized database availability failure; POST returns `Supplier creation is temporarily unavailable.`; PATCH returns `Supplier update is temporarily unavailable.` |
 
-Authentication/authorization failures never invoke creation or issue supplier
-queries. Service errors expose no SQL, parameters, constraint names, or private
+Authentication/authorization failures never invoke creation/update services or
+issue supplier queries. Service errors expose no SQL, parameters, constraint names, or private
 exception details. Unrelated integrity/programming failures are not relabelled as
 duplicate conflicts. Example duplicate response:
 
@@ -825,13 +906,13 @@ duplicate conflicts. Example duplicate response:
 }
 ```
 
-### Creation, public-read, and authentication verification
+### Creation, update, public-read, and authentication verification
 
 From `supplier-service/`, with Python 3.12 and `requirements-dev.txt` installed
 in `.venv`, run these database-independent checks:
 
 ```bash
-./.venv/bin/python -m pytest tests/api/test_supplier_creates.py tests/api/test_validation_errors.py tests/api/test_supplier_reads.py tests/api/test_health.py tests/api/test_readiness.py -q
+./.venv/bin/python -m pytest tests/api/test_supplier_updates.py tests/api/test_supplier_creates.py tests/api/test_validation_errors.py tests/api/test_supplier_reads.py tests/api/test_health.py tests/api/test_readiness.py -q
 ./.venv/bin/python -m pytest tests/unit/test_user_service_client.py tests/api/test_auth.py tests/api/test_startup.py tests/api/test_validation_errors.py -q
 ./.venv/bin/python -m pytest tests/unit tests/api -q
 ```
@@ -844,13 +925,14 @@ or transport calls. Probe tests run with an unavailable authentication transport
 readiness still depends only on Supplier database/revision health. `/areas`
 remains independent of both database access and session validation.
 
-To verify actual mounted POST/public detail routes, atomic persistence, exact
-duplicates, deleted-history preservation, and competing commit/rollback outcomes:
+To verify mounted POST/PATCH/public detail routes, atomic persistence, exact
+duplicates, rollback restoration, stale versions, and competing transaction outcomes:
 
 ```bash
-./.venv/bin/python -m pytest tests/integration/test_supplier_creates.py -q
+./.venv/bin/python -m pytest tests/integration/test_supplier_updates.py tests/integration/test_supplier_creates.py -q
 # Focus only on explicitly synchronized independent-connection transaction races:
 ./.venv/bin/python -m pytest tests/integration/test_supplier_creates.py -k post_concurrent -q
+./.venv/bin/python -m pytest tests/integration/test_supplier_updates.py -k patch_concurrent -q
 # Existing read and seed-import contracts:
 ./.venv/bin/python -m pytest tests/integration/test_supplier_reads.py tests/integration/test_seed_import.py -q
 ```
@@ -864,18 +946,39 @@ controlled administrator authentication, real request-scoped sessions, explicit
 barriers, observed PostgreSQL blocking locks, and bounded waits. Fixtures clean up
 committed data by dropping their disposable databases.
 
-Observed implementation verification on 1 October 2026: all **765 unit/API tests**
-passed after POST was mounted. After the concurrency coverage was added, **199
-selected tests** passed: **51 creation integration cases** and **148 API cases**.
-An earlier service run passed 878 creation/read/seed/unit/API cases before the
-POST and concurrency additions. These are separate runs, not cumulative counts.
-They reported one existing Starlette/AnyIO deprecation warning; syntax and scoped
-whitespace checks passed. The README update does not claim a new full-suite run.
-For this documentation edit, the request example was validated against the
-migrated category IDs and its complete response matched the canonical conversion.
-The live-smoke script was syntax-checked, and referenced test paths were checked.
-Live administrator creation has not been checked; the account/provisioning
-limitation below remains distinct from the passing controlled-authentication tests.
+Implemented PATCH coverage is linked in
+[API update tests](tests/api/test_supplier_updates.py) and
+[PostGIS update tests](tests/integration/test_supplier_updates.py). API cases cover
+administrator authorization, required positive versions, raw aggregate validation,
+canonical output, safe errors, cleanup, and OpenAPI. Integration cases prove
+same-version contenders have one complete winner, rollback restores deleted
+assignments, duplicate renames preserve all stored values, stale/no-op rules hold,
+and a competing deletion produces 404 after the conditional write fails. Deletion
+state is set directly in test storage; these tests do not imply a DELETE endpoint.
+
+Observed implementation verification on 1 October 2026 (separate historical runs):
+
+- The PATCH adapter run passed **55 new API cases** and **820 unit/API tests**.
+- The update concurrency run passed **57 update integration cases** (including
+  13 added mounted-route/service cases) and **174 selected API regression cases**.
+- Earlier POST concurrency verification passed **51 creation integration cases**
+  and **148 API cases**; an earlier service run passed 878 creation/read/seed/unit/API
+  cases before the POST and concurrency additions.
+
+These counts are not cumulative. Runs reported one existing Starlette/AnyIO
+warning; syntax and whitespace checks passed. Update integration tests used
+controlled administrator authentication and real PostGIS; disposable databases
+and the temporary container were removed. Broader suites were not rerun during
+the update concurrency increment. The commands above are recommended reruns,
+not results from this documentation edit. No new application-suite or live
+administrator smoke run is claimed here. Prior creation-documentation checks
+validated its example and smoke-script syntax; live account/provisioning
+limitations below remain separate from the passing controlled-authentication tests.
+
+For this README edit, the PATCH request passed merged validation against the
+creation example, and the complete saved response matched `SupplierResponse.from_read`.
+The conflict example, linked test paths, and whitespace checks also passed.
+No application tests were rerun for the documentation edit.
 
 ### Live administrator creation smoke check
 
@@ -992,11 +1095,11 @@ of deleted suppliers. The UI starts with Active and offers Deleted and All.
 
 Errors contain an `error` object with a stable machine-readable `code` and a
 human-readable `message`. Frontend logic branches on the code, not message text.
-The implemented POST uses `SUPPLIER_DUPLICATE` for duplicate conflicts. The
-planned update/delete contract uses `VERSION_CONFLICT` for stale versions
-(also `409`); the following is a future response example. It instructs the frontend
-to reload; omit the current version and supplier data and do not automatically
-retry the edit.
+Implemented POST and PATCH use `SUPPLIER_DUPLICATE` for duplicate conflicts.
+PATCH uses `VERSION_CONFLICT` for stale active versions (also `409`), as shown
+below. The planned DELETE contract also uses version checks. Reload on a PATCH
+conflict; the response omits the current version and supplier data, and the edit
+must not be retried automatically.
 
 ```json
 {
@@ -1013,8 +1116,8 @@ Report all independently detectable issues together. Use paths such as `area`,
 `location.latitude`, and `category_ids.1`; array
 positions are zero-based and refer to the original request before deduplication.
 Identify each unknown category entry separately. Never save part of an invalid
-mutation. Future versioned mutations will use `query.expected_version` for
-expected-version query errors.
+mutation. PATCH uses `query.expected_version` for expected-version query errors
+and `path.id` for invalid supplier UUIDs.
 
 ```json
 {
@@ -1037,7 +1140,7 @@ highlights the pair and displays the message once. Single-field issues also
 use a `fields` array. An optional frontend "Hours unknown" control may clear
 both times together; server validation remains mandatory.
 
-### Reusing validation in creation, seeds, and future PATCH code
+### Reusing validation in creation, seeds, and PATCH
 
 `app/schemas.py` defines separate client inputs and cleaned results.
 `app/validation/suppliers.py` provides the entry points that collect parsing
@@ -1051,27 +1154,24 @@ from app.validation.suppliers import (
 
 # Implemented inside create_supplier after category lookup in its transaction.
 created_values = validate_supplier_create(raw_create_body, existing_category_ids)
-# Future PATCH service: merge with explicitly selected stored editable values.
+# Implemented inside update_supplier using explicitly selected stored editable values.
 updated_values = validate_supplier_patch(
     raw_patch_body, stored_editable_values, existing_category_ids,
 )
 ```
 
-The creation caller is implemented in `app/services/suppliers.py`: the mounted
-POST passes raw JSON and the service obtains category UUIDs through repository
-`list_categories` inside its transaction. The PATCH line illustrates a future
-caller; no supplier PATCH route or persistence service is mounted. Callers pass
+Both callers are implemented in [app/services/suppliers.py](app/services/suppliers.py):
+the mounted POST and PATCH routes pass raw JSON, and each service obtains category
+UUIDs through repository `list_categories` inside its own transaction. Callers pass
 existing category UUIDs as an iterable of `UUID` objects.
 Every supplied category is checked at its original zero-based position before
 valid duplicates are removed in first-seen order. A supplied PATCH category list
 replaces the stored selection. Category definitions remain migration-managed.
 Only successful validation returns cleaned values; any issue raises
-`DomainValidationError`. Creation rolls back without saving partial input; the
-future PATCH caller must preserve the same atomic behavior.
+`DomainValidationError`. Creation and update roll back without saving partial input.
 
-The implemented POST accepts a raw JSON value through `Annotated[Any, Body()]`
-and delegates to the service. Future update routes should use the same aggregate
-validation pattern. Do not use
+Implemented POST and PATCH accept raw JSON through `Annotated[Any, Body()]`
+and delegate to their services for aggregate validation. Do not use
 `SupplierCreateInput` or `SupplierPatch` as an automatic route-body parser before
 calling the aggregate validator: an early parsing failure would stop category
 membership or schedule checks that could still find errors. Likewise, do not
@@ -1080,12 +1180,15 @@ JSON cannot reach domain validation because no usable input object exists.
 
 Creation validates complete input. PATCH must merge with a snapshot of stored
 editable values first: name, area, category UUIDs, optional text, and both times.
-The update service should build that mapping explicitly from the stored record;
+The update service builds that mapping explicitly from the stored active record;
 do not pass an ORM object with server-managed fields through the creation schema.
 `validate_supplier_patch` copies editable values, applies the raw patch, validates
 the merged result, and recalculates the closing-day offset. It does not mutate
 the supplied mapping or category list. Persistence, concurrency checks, and
-version increments (including for empty patches) belong to the future service.
+version increments (including for empty patches) belong to `update_supplier`.
+The service tracks whether categories were supplied separately from the complete
+validated result, so omitted assignments are preserved. It conditionally writes
+scalars before replacing supplied categories in the same transaction.
 
 Omitted PATCH fields retain stored values. Explicit null clears nullable fields;
 null required text or category lists is invalid. Blank optional text becomes
@@ -1112,8 +1215,7 @@ paths retain `query.`. Malformed JSON returns `INVALID_JSON` with an empty
 `fields` array. Responses contain only issue `fields`, `code`, and safe `message`
 values; raw bodies, rejected values, exception context, and internal messages
 are not copied into the response. This handler unifies request-error formatting;
-it complements aggregate validation in the implemented creation service and
-future mutation services.
+it complements aggregate validation in the implemented creation and update services.
 
 The seed parser applies reviewed source mappings and calls
 `validate_supplier_seed_values` for shared scalar rules without category UUIDs.
@@ -1150,7 +1252,7 @@ Coverage reviewed against [the domain-input guide](reference/08-validate-supplie
 
 The original validation-only increment passed 357 unit/API tests without database
 integration. Current creation/API and PostGIS results are recorded under
-[verification](#creation-public-read-and-authentication-verification); do not treat
+[verification](#creation-update-public-read-and-authentication-verification); do not treat
 that earlier validation-only count as the current implementation status.
 
 ## Explicit seed import
@@ -1311,15 +1413,14 @@ state using a named volume and keep database access private to the service.
 Manage schema changes through versioned migrations.
 
 Implemented verification covers required fields and schedules, administrator
-creation with multiple deduplicated categories, exact duplicates, atomic rollback,
-concurrent commit/rollback races, public exclusion of stored deleted rows, and
-repeatable seed imports. Deployment checks additionally cover persistence across
+creation and PATCH with deduplicated categories, partial updates and null clearing,
+exact duplicates, atomic rollback, stale versions, concurrent writes and deletion
+state races, public exclusion of stored deleted rows, and repeatable seed imports. Deployment checks additionally cover persistence across
 container recreation. See the commands and observed results above.
 
-When PATCH, DELETE, and administrative reads are implemented, add end-to-end
-checks for partial updates and null clearing, stale versions, soft-deletion
-requests, and authorized deleted-record access. Pure PATCH validation tests do
-not establish that those endpoints exist.
+DELETE and administrative reads remain future work. When implemented, add
+end-to-end checks for soft-deletion requests and authorized deleted-record access.
+Existing PATCH tests cover database-set deletion state, not a DELETE endpoint.
 
 ## Requirements to Reconcile
 
@@ -1872,3 +1973,66 @@ approved administrator credentials or agreed provisioning procedure were supplie
 Keith confirmed review of the README and retained procedure; no human test rerun
 is claimed for this increment. The exact prompt and verbatim final response are
 recorded; original timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [atomic versioned supplier updates](ai/usage-log.md#ai-20261001-006),
+Codex (GPT-6) provided Writing implementation code and Refactoring and
+documentation improvements for `app/services/suppliers.py` and
+`app/repositories/suppliers.py`, plus Writing implementation code and Boilerplate
+generation for `tests/integration/test_supplier_updates.py`. Retained work adds
+merged validation, conditional active/version writes, atomic category replacement,
+fresh conflict classification, and refreshed detached results returned after commit.
+Agent checks passed 44 update cases, 51 creation integration cases, and 765 unit/API
+tests, with one existing dependency warning; syntax and whitespace checks passed.
+Temporary PostGIS resources were removed. Broader read/seed/schema integration
+suites were not run; no checks remained blocked. Keith confirmed review of all
+three files; no human test rerun is claimed. The exact prompt and verbatim final
+response are recorded; original message timestamp unavailable. No redactions or
+header exceptions apply.
+
+
+For the [administrator supplier PATCH adapter](ai/usage-log.md#ai-20261001-007),
+Codex (GPT-6) provided Writing implementation code and Refactoring and
+documentation improvements for `app/routes/suppliers.py`, Writing implementation
+code and Boilerplate generation for `tests/api/test_supplier_updates.py`, and
+Writing implementation code and Debugging assistance for the stale registration
+assertion in `tests/api/test_validation_errors.py`. Retained changes expose
+administrator-only PATCH with raw aggregate validation, positive expected versions,
+canonical saved output, and safe error mappings through the existing atomic service.
+Agent checks passed 55 new PATCH cases and all 820 unit/API tests after correcting
+the registration assertion; syntax and whitespace checks passed, with one existing
+dependency warning. Tests used controlled dependencies; live-service and PostGIS
+checks were not rerun for this adapter change. Keith confirmed review of all three
+files; no human test rerun is claimed. The exact prompt and verbatim final response
+are recorded; original timestamp unavailable. No redactions or header exceptions apply.
+
+
+For [PATCH concurrency and rollback verification](ai/usage-log.md#ai-20261001-008),
+Codex (GPT-6) provided Writing implementation code and Boilerplate generation for
+13 additional cases in `tests/integration/test_supplier_updates.py`. Retained tests
+use mounted PATCH/public GET routes, controlled administrator authentication,
+independent transactions, bounded barriers, and observed PostgreSQL locks. They
+verify a single complete winner, restored scalar/assignment snapshots after
+failure, stale/no-op behavior, canonical public reads, and deletion-race 404s.
+Agent checks passed all 57 update integration cases and 174 selected API cases,
+with one existing dependency warning; syntax and whitespace checks passed.
+Disposable databases and the temporary container were removed. No requested checks
+were blocked; broader suites and live authentication were not run. Keith confirmed
+review of the retained test changes; no human test rerun is claimed. The exact
+prompt and verbatim relevant final-response excerpt are recorded; original timestamp
+unavailable. No redactions or header exceptions apply.
+
+
+For the [implemented PATCH documentation](ai/usage-log.md#ai-20261001-009),
+Codex (GPT-6) provided Refactoring and documentation improvements for this README.
+Retained changes replace stale update-status claims, document administrator
+PATCH and version checks, show complete saved/conflict examples, explain atomic
+rollback and errors, and link coverage with isolated PostGIS prerequisites.
+DELETE and administrative reads remain planned. The PATCH example passed merged
+validation and exact canonical response comparison; the conflict body, linked
+test paths, final summary placement, and whitespace checks passed. No application
+suite or live administrator smoke check was rerun for this documentation edit;
+prior suite results remain historical. Keith confirmed review of the retained
+README changes; no human test rerun is claimed. The exact prompt and verbatim
+final response are recorded; original timestamp unavailable. No redactions or
+header exceptions apply.
