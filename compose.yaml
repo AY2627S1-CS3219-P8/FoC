@@ -32,6 +32,8 @@ services:
         condition: service_healthy
       user-migrate:
         condition: service_completed_successfully
+      user-bootstrap:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready')"]
       interval: 30s
@@ -48,6 +50,23 @@ services:
     depends_on:
       user-db:
         condition: service_healthy
+    restart: "no"
+
+  user-bootstrap:
+    build: ./user-service
+    command: ["python", "-m", "scripts.bootstrap_admin"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      BOOTSTRAP_ADMIN_NUS_STUDENT_NUMBER: ${BOOTSTRAP_ADMIN_NUS_STUDENT_NUMBER:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+    depends_on:
+      user-db:
+        condition: service_healthy
+      user-migrate:
+        condition: service_completed_successfully
     restart: "no"
 
   frontend-service:
