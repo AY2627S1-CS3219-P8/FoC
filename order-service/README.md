@@ -76,33 +76,6 @@ Queues this service declares:
 
 Do not redeclare those two downstream queues with different arguments. Consume them, or the broker will reject the declaration. Each is capped at 100,000 messages; past that the broker refuses the publish and the event stays in the outbox until the queue drains, which also holds up every event behind it. A handler that still fails after retries at 0.5s, 1s, 2s, and 4s is dead-lettered to `<queue>.dlq`. There is one worker replica, so events for an order stay in outbox id order.
 
-## Tests
-
-From `order-service/`, with the dev requirements installed:
-
-```bash
-python -m pytest -q
-```
-
-That is level 1: SQLite, FastAPI's test client, and fakes. A bearer token `user:<uuid>` or `admin:<uuid>` stands in for User Service. No Docker.
-
-Level 2 uses a real Postgres database whose name ends in `_test`, and RabbitMQ. It checks that the Alembic migration matches the models, that ten concurrent accepts produce one winner, that a fake Credit reply completes an ordered round trip, that the one-hour queue expires an order exactly once, that a bad message lands in the dead-letter queue, and that a feed page and a transition of 22,500 open orders stay inside the latency limits.
-
-```bash
-docker run -d --name foc-order-test-db \
-  -e POSTGRES_USER=foc -e POSTGRES_PASSWORD=foc_ci -e POSTGRES_DB=foc_orders_test \
-  -p 54329:5432 postgres:16-alpine
-docker run -d --name foc-order-test-mq \
-  -e RABBITMQ_DEFAULT_USER=foc -e RABBITMQ_DEFAULT_PASS=foc_ci \
-  -p 5672:5672 rabbitmq:4.1.8-management-alpine
-export TEST_DATABASE_URL=postgresql+psycopg://foc@127.0.0.1:54329/foc_orders_test
-export PGPASSWORD=foc_ci
-export RABBITMQ_HOST=127.0.0.1 RABBITMQ_USER=foc RABBITMQ_PASSWORD=foc_ci
-python -m pytest -q
-```
-
-Without those variables the integration file is skipped. CI sets them and also runs `alembic upgrade head`, `alembic check`, and `docker build`.
-
 ## Develop
 
 Python 3.12. Schema changes go in `alembic/versions/` as `YYYYMMDD_NNNN_snake.py`. Do not call `create_all` at startup. Tunables such as the one-hour TTL, the HTTP timeout, the relay batch, and the retry delays are constants in `app/messaging.py`, not environment variables.
