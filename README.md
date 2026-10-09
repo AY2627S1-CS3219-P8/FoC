@@ -15,10 +15,10 @@ withdrawn, or exchanged for money, and only circulate within the platform.
 | Name        | Role             |
 | ----------- | ---------------- |
 | Swee Kah Ho | Frontend Service |
-| Your Name   | Your ownership   |
-| Your Name   | Your ownership   |
-| Your Name   | Your ownership   |
-| Your Name   | Your ownership   |
+| Max Khoo    | User Service     |
+| Keith Shen  | Supplier Service |
+| Chen Chi    | Credit Service   |
+| Ewen Low    | Order Service    |
 
 ---
 
