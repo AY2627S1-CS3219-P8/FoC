@@ -53,7 +53,7 @@ def validate_supplier_patch(
 ) -> SupplierPatchResult:
     """Merge a PATCH with a stored editable snapshot and validate before saving.
 
-    The future update service must build a mapping containing the stored name,
+    The update service must build a mapping containing the stored name,
     area, category UUIDs, optional text, and both daily times, then call
     validate_supplier_patch(raw_body, stored_editable_values, existing_ids).
     Save only the returned result after this call succeeds. Version increments
