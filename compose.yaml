@@ -157,11 +157,114 @@ services:
       retries: 10
       start_period: 10s
 
+  order-db:
+    image: postgres:16-alpine
+    container_name: order-db
+    environment:
+      POSTGRES_DB: foc_orders
+      POSTGRES_USER: ${ORDER_DB_USER:?Set ORDER_DB_USER in .env}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+    networks:
+      - order-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d foc_orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  order-migrate:
+    image: foc-order-service:local
+    build: ./order-service
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
+      PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - order-private
+    healthcheck:
+      disable: true
+
+  order-service:
+    image: foc-order-service:local
+    build: ./order-service
+    container_name: order-service
+    environment:
+      DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
+      PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+      USER_SERVICE_URL: http://user-service:8080
+      SUPPLIER_SERVICE_URL: http://supplier-service:8080
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      order-db:
+        condition: service_healthy
+      order-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - order-private
+    ports:
+      - "127.0.0.1:8082:8080"
+
+  order-worker:
+    image: foc-order-service:local
+    build: ./order-service
+    container_name: order-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
+      PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      order-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - order-private
+    healthcheck:
+      disable: true
+
+  rabbitmq:
+    image: rabbitmq:4.1.8-management-alpine
+    container_name: foc-rabbitmq
+    hostname: foc-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
 networks:
   default: {}
   supplier-private:
+    internal: true
+  order-private:
     internal: true
 
 volumes:
   supplier-db-data:
   user-db-data:
+  order-db-data:
+  rabbitmq-data:

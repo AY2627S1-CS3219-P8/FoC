@@ -28,6 +28,10 @@ jobs:
       SUPPLIER_POSTGRES_PASSWORD: supplierCiPassword123
       SUPPLIER_MIGRATION_PASSWORD: supplierMigrationCiPassword123
       SUPPLIER_RUNTIME_PASSWORD: supplierRuntimeCiPassword123
+      ORDER_DB_USER: foc_orders
+      ORDER_DB_PASSWORD: focOrdersCiPassword123
+      RABBITMQ_USER: foc
+      RABBITMQ_PASSWORD: focRabbitCiPassword123
 
     steps:
       - name: Check out repository
