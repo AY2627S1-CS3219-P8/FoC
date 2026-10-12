@@ -1,8 +1,17 @@
 # AI Assistance Disclosure:
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — add factory-based test-only routes covering aggregate create/PATCH failures, original category positions, single schedule-pair issues, safe request errors, invalid JSON, and unchanged stored values without live services.
-# Author review: Keith confirmed review of all affected HTTP validation changes.
-# Details: ../../ai/usage-log.md; ai-20260930-003
+# Scope: Writing implementation code — correct the stale route-exclusion regression assertion to permit supplier GET routes while continuing to reject supplier mutation and test-only routes. (ai-20260930-022)
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code — permit supplier POST in production route assertions while excluding unimplemented mutations and test-only routes. (ai-20261001-003)
+# Author review: Keith confirmed review of all affected HTTP validation changes. Keith confirmed review of public-read registration changes (ai-20260930-022).
+# Author review: Keith confirmed review of all retained changes for ai-20261001-003.
+# Tool: Codex (model: GPT-6), date: 2026-10-01
+# Scope: Writing implementation code; Debugging assistance — correct the stale production route-registration assertion to permit the implemented PATCH endpoint while retaining exclusion of test-only and unimplemented supplier routes. (ai-20261001-007)
+# Author review: Keith confirmed review of the retained PATCH adapter changes (ai-20261001-007).
+# Scope: Writing implementation code; Debugging assistance — correct the existing production route-registration expectation to include the newly mounted DELETE endpoint while preserving the test-only route exclusion. (ai-20261001-011)
+# Author review: Keith confirmed review of the retained DELETE adapter changes (ai-20261001-011).
+# Details: ../../ai/usage-log.md; ai-20260930-003; ai-20260930-022; ai-20261001-003; ai-20261001-007; ai-20261001-011
 
 from copy import deepcopy
 from datetime import time
@@ -219,5 +228,10 @@ def test_successful_patch_merges_stored_times(validation_client, stored, patch, 
     assert stored == original
 
 
-def test_factory_has_no_test_or_supplier_mutation_routes(app):
-    assert all(not route.path.startswith(('/test/', '/suppliers')) for route in app.routes)
+def test_factory_has_no_test_or_unimplemented_supplier_mutation_routes(app):
+    assert all(not route.path.startswith('/test/') for route in app.routes)
+    assert {(route.path, method) for route in app.routes
+            if route.path.startswith('/suppliers') for method in route.methods} == {
+        ('/suppliers', 'GET'), ('/suppliers', 'POST'), ('/suppliers/{id}', 'GET'),
+        ('/suppliers/{id}', 'PATCH'), ('/suppliers/{id}', 'DELETE'),
+    }

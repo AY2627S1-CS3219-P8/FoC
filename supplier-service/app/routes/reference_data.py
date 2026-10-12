@@ -1,10 +1,11 @@
 # AI Assistance Disclosure:
 # Tool: Codex (model: GPT-6), date: 2026-09-30
 # Scope: Writing implementation code — write unregistered category and area GET adapters with explicit category conversion, injected category sessions, safe 503 errors, and database-independent area access.
-# Author review: Keith confirmed review of the reference-data GET adapters.
-# Details: ../../ai/usage-log.md; ai-20260930-018
+# Scope: Refactoring and documentation improvements — replace the stale unregistered-router docstring with the public controlled-choice description. (ai-20260930-022)
+# Author review: Keith confirmed review of the reference-data GET adapters. Keith confirmed review of public-read registration changes (ai-20260930-022).
+# Details: ../../ai/usage-log.md; ai-20260930-018; ai-20260930-022
 
-"""Controlled read choices; remain unregistered until authentication is added."""
+"""Public controlled category and area choices."""
 
 from typing import Annotated
 

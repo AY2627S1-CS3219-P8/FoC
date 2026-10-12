@@ -218,6 +218,6 @@ class SupplierPatch(SupplierEditableValues):
 
 
 class SupplierPatchResult(SupplierEditableValues):
-    """Complete checked mutable values for a future update service."""
+    """Complete checked mutable values for update service."""
 
     closing_day_offset: Literal[0, 1] | None
