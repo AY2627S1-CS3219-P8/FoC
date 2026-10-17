@@ -371,3 +371,31 @@ Milestone 1 document, especially functional requirements F5–F9 and User
 Service non-functional requirements NFR7. The README is a service-level guide;
 the project document remains the authoritative source for the full
 requirements set.
+## User account events
+
+Account creation is integrated with Credit Service through a transactional
+outbox. Registration and administrator bootstrap both stage `user.created` in
+the same PostgreSQL transaction as the new user. `user-worker` publishes the
+event to the durable `foc.events` topic exchange only after commit.
+
+```json
+{
+  "event_id": "uuid",
+  "event_type": "user.created",
+  "schema_version": 1,
+  "occurred_at": "2026-10-17T04:00:00Z",
+  "correlation_id": "uuid",
+  "payload": {
+    "user_id": "uuid",
+    "nus_student_number": "A0123456X"
+  }
+}
+```
+
+The worker publishes `user.created` to the shared exchange but does not declare
+Credit Service's queue. Credit Service owns and binds
+`credit-service.user-events`. If that queue is temporarily unavailable, the
+mandatory publish is not marked complete and the User outbox relay retries it.
+Publishing uses persistent messages and publisher confirms. A broker outage
+does not roll back a successfully registered user; the unpublished outbox row
+is retried when the worker reconnects or restarts.

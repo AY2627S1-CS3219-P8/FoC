@@ -2,12 +2,14 @@
 
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
+from app.events import enqueue_user_created
 from app.schemas import UserCreate
 from app.services.users import hash_password
 
@@ -85,6 +87,7 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
             )
 
         user = User(
+            id=uuid4(),
             nus_student_number=payload.nus_student_number,
             email=str(payload.email).lower(),
             display_name=payload.display_name.strip(),
@@ -93,6 +96,7 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
             status="active",
         )
         db.add(user)
+        enqueue_user_created(db, user)
         lock.bootstrap_completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(user)
