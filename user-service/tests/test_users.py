@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from argon2 import PasswordHasher
 from pydantic import ValidationError
 
-from app.models import User
+from app.models import User, UserOutboxEvent
 from app.schemas import UserCreate, UserLogin
 from app.services.users import hash_password, login_user, reactivate_user, register_user
 
@@ -23,6 +23,7 @@ class FakeSession:
         self.lookup_error = lookup_error
         self.commit_error = commit_error
         self.user = None
+        self.outbox_event = None
         self.rollback_called = False
 
     def scalar(self, _query):
@@ -32,10 +33,13 @@ class FakeSession:
             raise self.lookup_error
         return self.existing
 
-    def add(self, user):
-        """Capture the user passed for persistence."""
+    def add(self, value):
+        """Capture the account and its transactional outbox event."""
 
-        self.user = user
+        if isinstance(value, User):
+            self.user = value
+        elif isinstance(value, UserOutboxEvent):
+            self.outbox_event = value
 
     def commit(self):
         """Simulate a successful commit or raise the configured database error."""
@@ -136,6 +140,12 @@ def test_register_user_hashes_password_before_persistence():
     assert db.user.password_hash != password
     assert db.user.password_hash.startswith("$argon2id$")
     assert PasswordHasher().verify(db.user.password_hash, password)
+    assert db.outbox_event.event_type == "user.created"
+    assert db.outbox_event.user_id == db.user.id
+    assert db.outbox_event.payload == {
+        "user_id": str(db.user.id),
+        "nus_student_number": "A0123456X",
+    }
 
 
 def test_login_user_verifies_password_and_persists_hashed_session_token():

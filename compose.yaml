@@ -69,6 +69,29 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  user-worker:
+    build: ./user-service
+    container_name: user-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      user-db:
+        condition: service_healthy
+      user-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
   frontend-service:
     build:
       context: ./frontend-service
@@ -157,11 +180,151 @@ services:
       retries: 10
       start_period: 10s
 
+  credit-db:
+    image: postgres:16-alpine
+    container_name: credit-db
+    environment:
+      POSTGRES_DB: foc_credits
+      POSTGRES_USER: ${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}
+      POSTGRES_PASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+    volumes:
+      - credit-db-data:/var/lib/postgresql/data
+    networks:
+      - credit-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d foc_credits"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  credit-migrate:
+    image: foc-credit-service:local
+    build: ./credit-service
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+    depends_on:
+      credit-db:
+        condition: service_healthy
+    networks:
+      - credit-private
+    healthcheck:
+      disable: true
+
+  credit-service:
+    image: foc-credit-service:local
+    build: ./credit-service
+    container_name: credit-service
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      USER_SERVICE_URL: http://user-service:8080
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
+      CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      credit-db:
+        condition: service_healthy
+      credit-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - credit-private
+    ports:
+      - "127.0.0.1:8083:8080"
+
+  credit-order-worker:
+    image: foc-credit-service:local
+    build: ./credit-service
+    container_name: credit-order-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      USER_SERVICE_URL: http://user-service:8080
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
+      CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
+      CREDIT_EVENT_STREAM: order
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      credit-db:
+        condition: service_healthy
+      credit-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - credit-private
+    healthcheck:
+      disable: true
+
+  credit-user-worker:
+    image: foc-credit-service:local
+    build: ./credit-service
+    container_name: credit-user-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      USER_SERVICE_URL: http://user-service:8080
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
+      CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
+      CREDIT_EVENT_STREAM: user
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      credit-db:
+        condition: service_healthy
+      credit-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - default
+      - credit-private
+    healthcheck:
+      disable: true
+
+  rabbitmq:
+    image: rabbitmq:4.1.8-management-alpine
+    container_name: foc-rabbitmq
+    hostname: foc-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
 networks:
   default: {}
   supplier-private:
+    internal: true
+  credit-private:
     internal: true
 
 volumes:
   supplier-db-data:
   user-db-data:
+  credit-db-data:
+  rabbitmq-data:
