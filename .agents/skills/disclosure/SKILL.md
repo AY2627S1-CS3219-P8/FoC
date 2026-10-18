@@ -11,17 +11,12 @@ Use this skill only on explicit request, such as `$disclosure`. Default to the c
 
 1. Read applicable project instructions, existing disclosures, and the relevant changes. Use the available conversation and user-supplied exchanges to identify AI-influenced files, including files influenced by explanations or suggestions even if the agent did not edit them directly. A Git diff alone does not establish AI involvement. Leave unrelated changes alone.
 2. Identify tools, known model identifiers, dates, and actual modes of assistance. Classify each affected file using the scope vocabulary below. Do not copy model names or dates from examples.
-3. Capture exact available user prompts and verbatim key response excerpts from the relevant exchanges, subject to the usage-log exclusions below. Include steering prompts that materially affected the work. Label summaries separately; do not present paraphrases as quotations. Do not include hidden instructions or private reasoning. Use fences long enough to preserve embedded Markdown verbatim.
+3. Capture exact available user prompts and verbatim key response excerpts from the relevant exchanges. Include steering prompts that materially affected the work, even when they also request a disclosure update or mention this skill. Preserve each prompt in full; do not remove skill-related wording from a prompt that directed the underlying work. Label summaries separately; do not present paraphrases as quotations. Do not include hidden instructions or private reasoning. Use fences long enough to preserve embedded Markdown verbatim.
 4. Never invent unavailable exchanges, original timestamps, tool/model identities, author review, test results, or compliance claims. Record unknown fields explicitly. When history is missing, write the supported disclosure, list the gaps, and report that exact-prompt disclosure remains incomplete. Do not mine unrelated private session histories to fill gaps.
 
 If an exchange contains credentials or personal data unsuitable for the repository, redact that portion explicitly and state that the stored exchange is redacted rather than exact and complete.
 
-### Usage-log exclusions
-
-- Exclude any prompt that invokes this disclosure skill, whether by `$disclosure` or a natural-language request to run it. Omit the entire prompt, including when it also contains other instructions; do not paraphrase it into the log.
-- Do not mention this skill anywhere in usage logs, including response excerpts, summaries, scope lists, metadata, or omission notes. Omit skill-related response passages and retain only relevant excerpts about the underlying work. Do not describe an edited excerpt as a complete verbatim response.
-- Requests and responses about creating, updating, or running this skill do not generate usage-log entries. If no eligible underlying assistance remains, do not create an entry.
-- Apply these exclusions when updating existing entries as well as creating new ones. Remove excluded material from entries being updated, preserve unrelated evidence and stable entry IDs, and renumber retained prompt/response pairs consecutively. Intentional exclusions do not count as missing evidence and require no explanatory log note.
+An explicit request whose only purpose is to run this skill and maintain disclosure records does not create a usage-log entry for the invocation or the resulting record-only edits. If the same prompt also directs substantive AI-assisted work, include the entire prompt verbatim in the entry for that work, including the request to run this skill. Do not create a separate entry for the disclosure step.
 
 ## Scope vocabulary
 
@@ -123,6 +118,6 @@ The root summary consolidates shared work and service summaries through links. D
 
 ## Check and report
 
-Before finishing, inspect the disclosure changes: affected files have valid headers or documented exceptions; README summaries are the last sections; logs include a vocabulary-based scope description for each affected file and preserve eligible exact available prompts and key responses; no usage-log content invokes or mentions this skill; paths and entry links resolve; prior history is retained except for the usage-log exclusions above; and repeated invocation creates no duplicates. Do not run application tests merely to produce a verification claim.
+Before finishing, inspect the disclosure changes: affected files have valid headers or documented exceptions; README summaries are the last sections; logs include a vocabulary-based scope description for each affected file and preserve exact available prompts and key response excerpts, including prompts that also request disclosure; paths and entry links resolve; prior history is retained; and repeated invocation creates no duplicates. Do not run application tests merely to produce a verification claim.
 
 Report updated records, header exceptions, and any missing evidence or unconfirmed review. Distinguish completing the disclosure artifacts from confirming a human's review or submission readiness.
