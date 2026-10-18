@@ -9,7 +9,7 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("LOG_LEVEL", raising=False)
 
     settings = Settings(
-        database_url="postgresql://test_user:test_password@localhost:5432/test_supplier",
+        database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
         user_service_url="http://localhost:8000",
     )
 
@@ -44,7 +44,7 @@ def test_settings_requires_user_service_url(monkeypatch: pytest.MonkeyPatch):
     # Exclude the required user_service_url field
     with pytest.raises(ValidationError) as exc_info:
         Settings(
-            database_url="postgresql://test_user:test_password@localhost:5432/test_supplier",
+            database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
             auth_timeout_seconds=3.0,
             log_level="INFO",
         )
@@ -65,7 +65,7 @@ def test_settings_requires_user_service_url(monkeypatch: pytest.MonkeyPatch):
 def test_settings_rejects_invalid_auth_timeout(invalid_timeout: float):
     with pytest.raises(ValidationError) as exc_info:
         Settings(
-            database_url="postgresql://test_user:test_password@localhost:5432/test_supplier",
+            database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
             user_service_url="http://localhost:8000",
             auth_timeout_seconds=invalid_timeout,
             log_level="INFO",
@@ -98,7 +98,7 @@ def test_settings_rejects_invalid_auth_timeout(invalid_timeout: float):
 # Test whether text that is not URL and unsupported schemas are caught
 def test_settings_rejects_invalid_urls(field_name: str, invalid_url: str):
     values = {
-        "database_url": "postgresql://test_user:test_password@localhost:5432/test_supplier",
+        "database_url": "postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
         "user_service_url": "http://localhost:8000",
         "auth_timeout_seconds": 3.0,
         "log_level": "INFO",
@@ -127,7 +127,7 @@ def test_settings_rejects_invalid_urls(field_name: str, invalid_url: str):
 def test_settings_rejects_invalid_log_level(invalid_log_level: str):
     with pytest.raises(ValidationError) as exc_info:
         Settings(
-            database_url="postgresql://test_user:test_password@localhost:5432/test_supplier",
+            database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
             user_service_url="http://localhost:8000",
             auth_timeout_seconds=3.0,
             log_level=invalid_log_level,
@@ -135,8 +135,35 @@ def test_settings_rejects_invalid_log_level(invalid_log_level: str):
 
     errors = exc_info.value.errors()
 
-    # TODO: Assert that an error identifies log_level.
+    # Assert that an error identifies log_level
     assert any(
         error["loc"] == ("log_level",)
         for error in errors
     )
+
+@pytest.mark.parametrize(
+    "scheme",
+    ["postgresql", "postgresql+asyncpg"],
+    ids=["unspecified-driver", "async-driver"],
+)
+def test_settings_rejects_unsupported_database_driver(scheme: str):
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            database_url=(
+                f"{scheme}://test_user:test_password@localhost:5432/test_supplier"
+            ),
+            user_service_url="http://localhost:8000",
+            auth_timeout_seconds=3.0,
+            log_level="INFO",
+        )
+
+    errors = exc_info.value.errors()
+
+    # Assert there is exactly one validation error
+    assert len(errors) == 1
+
+    # Assert that error's "loc" equals ("database_url",)
+    assert errors[0]["loc"] == ("database_url",)
+
+    # Assert that error's "msg" contains "postgresql+psycopg"
+    assert "postgresql+psycopg" in errors[0]["msg"]

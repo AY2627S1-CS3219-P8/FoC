@@ -20,6 +20,11 @@ securityDefinitions:
     name: Authorization
     in: header
     description: Use the format `Bearer <access_token>`.
+  internalServiceAuth:
+    type: apiKey
+    name: X-Internal-Service-Token
+    in: header
+    description: Shared secret for trusted service-to-service requests. Never expose this header to clients.
 
 paths:
   /health:
@@ -43,6 +48,68 @@ paths:
             $ref: '#/definitions/StatusResponse'
         "503":
           description: Database is unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /internal/users/{user_id}/admin:
+    get:
+      summary: Check whether a user is an active administrator
+      description: Internal endpoint for trusted services such as Order Service. It returns false for regular, unknown, deactivated, or suspended users.
+      operationId: checkUserAdmin
+      security:
+        - internalServiceAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Administrative authorization result.
+          schema:
+            $ref: '#/definitions/AdminCheckResponse'
+        "401":
+          description: Internal service credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Internal authorization is not configured or the database is unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /internal/users/{user_id}/status:
+    get:
+      summary: Check a user's account status
+      description: Internal endpoint for trusted services. It returns active, deactivated, suspended, or unknown for a missing account. Consumers that only need access authorization should treat only active as allowed.
+      operationId: checkUserStatus
+      security:
+        - internalServiceAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Account status result.
+          schema:
+            $ref: '#/definitions/UserStatusResponse'
+        "401":
+          description: Internal service credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Internal authorization is not configured or the database is unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
 
@@ -220,6 +287,10 @@ paths:
           description: Bearer credentials are missing or invalid.
           schema:
             $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The account is the last active administrator and cannot be deactivated.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
         "503":
           description: Database is temporarily unavailable.
           schema:
@@ -241,8 +312,137 @@ paths:
           description: Bearer credentials are missing or invalid.
           schema:
             $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The account is the last active administrator and cannot be deactivated.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
         "503":
           description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /admin/users/{user_id}/suspend:
+    post:
+      summary: Suspend a user account
+      description: An active administrator suspends an account and all sessions belonging to it. The target cannot log in or use existing sessions afterward.
+      operationId: suspendUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: User account suspended.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator, the target is another administrator, or the caller is attempting to suspend their own account.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /admin/users/{user_id}/revoke-admin:
+    post:
+      summary: Revoke administrator rights
+      description: An active administrator removes administrator rights from another administrator. The caller cannot revoke their own rights, so at least one administrator remains. The target remains an active regular user and existing sessions remain valid.
+      operationId: revokeAdminRights
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Administrator rights revoked.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator or is attempting to revoke their own rights.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The target user is not currently an administrator.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /admin/users/{user_id}/unsuspend:
+    post:
+      summary: Unsuspend a user account
+      description: An active administrator restores another suspended account to active status. The target must authenticate again after restoration because existing sessions are revoked.
+      operationId: unsuspendUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: User account restored to active status.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator or is attempting to unsuspend their own account.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The target user is not suspended.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database or administrator-state locking is temporarily unavailable.
           schema:
             $ref: '#/definitions/ErrorResponse'
 
@@ -576,6 +776,29 @@ definitions:
     properties:
       display_name:
         type: string
+
+  AdminCheckResponse:
+    type: object
+    required:
+      - is_admin
+    properties:
+      is_admin:
+        type: boolean
+        description: True only when the account exists, is active, and has role admin.
+
+  UserStatusResponse:
+    type: object
+    required:
+      - status
+    properties:
+      status:
+        type: string
+        enum:
+          - active
+          - deactivated
+          - suspended
+          - unknown
+        description: Account status. Unknown represents a missing user and avoids disclosing account existence.
 
   LoginResponse:
     type: object

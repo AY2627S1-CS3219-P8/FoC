@@ -1,13 +1,14 @@
-import { Button } from '@/components/ui/button';
+import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
-export default function Home() {
+import { LoginForm } from '@/components/auth/login-form';
+
+export const metadata: Metadata = { title: 'Log In · Friend on Campus' };
+
+export default function LoginPage() {
   return (
-    <div className='flex min-h-screen flex-col items-center justify-center gap-4 p-8'>
-      <h1 className='text-2xl font-semibold'>React + Next.js + shadcn</h1>
-      <p className='text-muted-foreground text-sm'>
-        Edit <code className='font-mono'>app/page.tsx</code> to get started.
-      </p>
-      <Button>shadcn Button</Button>
-    </div>
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

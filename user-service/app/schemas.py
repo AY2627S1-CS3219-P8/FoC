@@ -163,6 +163,18 @@ class BasicProfileResponse(BaseModel):
     display_name: str
 
 
+class AdminCheckResponse(BaseModel):
+    """Minimal authorization result returned to a trusted service."""
+
+    is_admin: bool
+
+
+class UserStatusResponse(BaseModel):
+    """Account status returned to a trusted service."""
+
+    status: Literal["active", "deactivated", "suspended", "unknown"]
+
+
 class LoginResponse(BaseModel):
     """Public result returned after successful authentication."""
 

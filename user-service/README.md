@@ -160,6 +160,37 @@ Consuming services should depend on the User Service API or documented
 authentication events, not on implementation details or direct database
 access.
 
+### Internal administrator checks
+
+Trusted services can check a user's authorization without accessing the User
+Service database directly:
+
+```bash
+curl http://user-service:8080/internal/users/<user-id>/admin \
+  -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
+```
+
+The response is only `{"is_admin": true}` or `{"is_admin": false}`. It is
+`true` only for an existing active account whose persisted role is `admin`;
+regular, unknown, deactivated, and suspended accounts return `false`.
+Requests require the shared `USER_SERVICE_INTERNAL_TOKEN` configured for the
+User Service and trusted callers. Keep this token in deployment secrets and
+never forward it to clients.
+
+Trusted services can also check the lifecycle state of a user:
+
+```bash
+curl http://user-service:8080/internal/users/<user-id>/status \
+  -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
+```
+
+The response is `{"status":"active"}`, `{"status":"deactivated"}`,
+`{"status":"suspended"}`, or `{"status":"unknown"}` for a missing user.
+Services that only need to authorize access should treat only `active` as
+allowed. The exact status is useful when a consuming service needs different
+messaging, workflow, or audit behavior for self-deactivation versus
+administrator suspension.
+
 ## Local development
 
 The service is containerized from this directory. Once the application entry
@@ -187,6 +218,31 @@ multiple application replicas can start safely after the migration job
 completes. In another deployment system, run `alembic upgrade head` as a
 single migration job before starting or rolling out application replicas.
 
+### First administrator bootstrap
+
+The Compose stack includes a one-shot `user-bootstrap` job. Set all of these
+variables in the untracked `.env` file before starting the stack:
+
+```dotenv
+BOOTSTRAP_ADMIN_NUS_STUDENT_NUMBER=A0123456X
+BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+BOOTSTRAP_ADMIN_DISPLAY_NAME=Platform Admin
+BOOTSTRAP_ADMIN_PASSWORD='use-a-long-password-with-1-symbol!'
+```
+
+When all four variables are empty, the job exits successfully without making
+changes. A partially configured set fails so an administrator is never
+silently skipped. The job runs after `user-migrate` and before
+`user-service`.
+
+Bootstrap completion is recorded in the database on the singleton
+administrator-state row in the same transaction as the administrator account.
+The row is locked while the transaction runs, so retries, restarts, and
+multiple bootstrap instances create at most one administrator. A failed
+transaction leaves the marker unset and can be safely retried. Once the marker
+is set, changing or removing the environment variables cannot create another
+initial administrator.
+
 To apply migrations directly during local development, run this from
 `user-service/` with the target database configured in `DATABASE_URL`:
 
@@ -204,6 +260,14 @@ database. Set `TEST_DATABASE_URL` to that database and run:
 ```bash
 TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/foc_users_test \
   python -m pytest -q tests/test_migrations_postgres.py
+```
+
+The administrator-state concurrency tests use the same disposable PostgreSQL
+database and separate connections for each worker:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/foc_users_test \
+  python -m pytest -q tests/test_concurrency_postgres.py
 ```
 
 CI runs this smoke test against a temporary PostgreSQL service. Do not point

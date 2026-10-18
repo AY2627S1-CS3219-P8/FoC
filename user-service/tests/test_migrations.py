@@ -95,8 +95,8 @@ def test_fresh_database_reaches_migration_head(tmp_path):
         }
         version = database.execute("SELECT version_num FROM alembic_version").fetchone()[0]
 
-    assert {"users", "user_sessions", "alembic_version"} <= tables
-    assert version == "20260926_0003"
+    assert {"users", "user_sessions", "admin_state_locks", "alembic_version"} <= tables
+    assert version == "20260927_0005"
 
 
 def test_check_constraint_validation_accepts_postgresql_rendering():
@@ -153,9 +153,13 @@ with Session(engine) as database:
     with sqlite3.connect(database_path) as database:
         version = database.execute("SELECT version_num FROM alembic_version").fetchone()[0]
         user_count = database.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        lock_name = database.execute(
+            "SELECT lock_name FROM admin_state_locks"
+        ).fetchone()[0]
 
-    assert version == "20260926_0003"
+    assert version == "20260927_0005"
     assert user_count == 1
+    assert lock_name == "administrator_state"
 
 
 def test_incompatible_legacy_schema_is_rejected(tmp_path):
