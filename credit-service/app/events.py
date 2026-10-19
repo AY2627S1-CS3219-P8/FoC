@@ -1,6 +1,7 @@
 """Strict v1 event parsing and transactional outbox construction."""
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ from app.messaging import (
 from app.models import OutboxEvent, utc_now
 
 SCHEMA_VERSION = 1
+NUS_STUDENT_NUMBER_PATTERN = re.compile(r"[AU][0-9]{7}[A-Z]")
 
 
 class MalformedMessage(Exception):
@@ -143,7 +145,7 @@ def parse_user_event(body: bytes) -> UserCreatedEvent:
         if not isinstance(student_number, str):
             raise MalformedMessage
         student_number = student_number.strip().upper()
-        if len(student_number) != 9:
+        if NUS_STUDENT_NUMBER_PATTERN.fullmatch(student_number) is None:
             raise MalformedMessage
         occurred_at = datetime.fromisoformat(
             str(data["occurred_at"]).replace("Z", "+00:00")

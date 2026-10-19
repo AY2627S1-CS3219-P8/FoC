@@ -2,7 +2,7 @@
 
 Infrastructure and business rules for FoC's closed credit economy. The service provides the
 database schema, migrations, authenticated read APIs, event contracts,
-transactional-outbox plumbing, RabbitMQ consumer/relay, health checks,
+transactional-outbox plumbing, Kafka consumers/relay, health checks,
 container image, Compose services, and tests. Transport-independent balance and
 reservation rules live in `app/services/credits.py`; event-to-domain and
 domain-to-outbox translation lives in `app/services/event_handlers.py`.
@@ -13,14 +13,14 @@ Numbered `AUDIT` comments and `BUSINESS_LOGIC_AUDIT.md` provide a review map.
 Copy `.env.example` to `.env`, replace the example secrets, then run:
 
 ```bash
-docker compose up --build credit-db credit-migrate credit-service rabbitmq
+docker compose up --build kafka kafka-topics credit-db credit-migrate credit-service
 curl http://127.0.0.1:8083/health
 curl http://127.0.0.1:8083/ready
 ```
 
-The `credit-order-worker` and `credit-user-worker` may be started after the
-database migration. Order Service must own and bind its credit-result queue for
-mandatory `credit.*` publication to succeed.
+The `credit-order-worker` and `credit-user-worker` start after both the database
+migration and Kafka topic creation. Order Service consumes the resulting
+`credit.events` stream with its own consumer group.
 
 ## HTTP surface
 
@@ -46,11 +46,12 @@ second normal registration workflow.
 
 ## Event contract
 
-Durable topic exchange: `foc.events`. The Credit worker consumes two queues:
+Credit Service uses three durable Kafka topics:
 
-- `credit-service.order-events`, bound exactly to `order.created`,
-  `order.completed`, `order.cancelled`, and `order.expired`;
-- `credit-service.user-events`, bound exactly to `user.created`.
+- `order.events`, consumed by group `credit-service-order`, for
+  `order.created`, `order.completed`, `order.cancelled`, and `order.expired`;
+- `user.events`, consumed by group `credit-service-user`, for `user.created`;
+- `credit.events`, where Credit publishes its financial outcomes.
 
 Every v1 event contains:
 
@@ -74,29 +75,63 @@ Consumed events are `order.created`, `order.completed`, `order.cancelled`, and
 `courier_id`. A cancellation whose `previous_status` is `PICKED_UP` must carry
 `courier_id` because its reservation is paid to that courier. The outbox
 publishes `credit.reserved`,
-`credit.reservation_failed`, `credit.transferred`, and `credit.released` to the
-exchange. Order Service owns its queue, bindings, and resulting order-state
-transitions; Credit Service does not declare or mutate them.
+`credit.reservation_failed`, `credit.transferred`, and `credit.released` to
+`credit.events`. Order Service owns its consumer group and resulting order-state
+transitions; Credit Service does not mutate them.
 
-Both incoming queues use bounded retries and explicit durable dead-letter
-queues. `credit-user-worker` consumes only account-creation events and
+Both incoming streams use bounded retries and explicit dead-letter topics.
+`credit-user-worker` consumes only account-creation events and
 `credit-order-worker` consumes only Order lifecycle events, so a retry in one
 stream cannot prevent the other stream from progressing.
 
 The retry schedule is configured through `CREDIT_RETRY_BACKOFF_SECONDS`; the
 default `0.5,1,2,4` means five total attempts, a longest individual wait of
-four seconds, and 7.5 seconds of total waiting. Malformed messages bypass retry
-and go directly to the relevant DLQ. Other exceptions are treated as
-transient; business rejections such as insufficient balance must be committed
-outcomes, not raised exceptions.
+four seconds, and 7.5 seconds of total waiting. Only recognized SQLAlchemy
+connection, operational, disconnection, and pool-timeout failures use this
+schedule. Failure handling is deliberately narrower:
+
+| Failure category | Worker behavior |
+| --- | --- |
+| Expected reservation rejection, such as `INSUFFICIENT_CREDIT`, `ACCOUNT_NOT_ACTIVE`, or `ACCOUNT_NOT_FOUND` | Commit the audit and `credit.reservation_failed` outbox event, then ACK |
+| Malformed event or invalid event payload | Roll back, skip retry, and quarantine in the stream DLQ |
+| Deterministic Credit-domain or input violation | Roll back, skip retry, and quarantine in the stream DLQ |
+| Recognized transient database/infrastructure failure | Roll back and retry on the configured schedule; quarantine if all attempts fail |
+| Unexpected or unclassified exception | Roll back, skip blind retry, and quarantine for investigation |
+
+Quarantined records retain their exact original body, key, and existing
+headers. Credit Service adds `x-credit-failure-code`, `x-credit-failed-at`,
+`x-credit-failed-attempts`, `x-credit-source-topic`,
+`x-credit-source-partition`, and `x-credit-source-offset`. The source offset is
+committed only after Kafka confirms the DLQ publication. The two quarantine
+topics, retained for seven days in local Compose, are
+`credit-service.order-events.dlq` and `credit-service.user-events.dlq`.
+
+### DLQ investigation runbook
+
+1. An authorized operator uses Kafka tooling from the broker container, for
+   example `kafka-console-consumer.sh`, with a new investigation consumer group.
+2. Inspect `credit-service.order-events.dlq` or
+   `credit-service.user-events.dlq`. Record the failure code, attempt count,
+   failure timestamp, source topic/partition/offset, event type, event ID,
+   relevant order/user ID, and correlation ID when available.
+3. Correlate those identifiers with Credit worker logs and the relevant
+   account, reservation, and transaction-audit records. The existing admin API
+   can inspect accounts and transactions, but it does not expose either DLQ.
+4. Resolve the underlying cause before considering an explicitly authorized
+   manual replay or administrator adjustment. Never automatically replay a
+   permanent business-rule violation.
+5. Record the disposition: corrected and replayed, manually compensated, or
+   retained and escalated.
+
+A DLQ is quarantine and diagnostic evidence. It is not an administrator UI or
+an automatic repair mechanism.
 
 ### Order Service integration requirement
 
-Order Service must declare `order-service.credit-events`, bind it to all four
-`credit.*` outcomes above, and apply
-the corresponding order-state changes. It must also stop adding an `order.#`
-binding to `credit-service.order-events`: RabbitMQ bindings accumulate, so that
-wildcard would defeat the exact four-event contract declared here.
+Order Service must consume all four `credit.*` outcomes above from
+`credit.events` and apply the corresponding order-state changes. Credit Service
+filters valid unrelated `order.events` records before its strict domain parser;
+malformed records and header/envelope mismatches are quarantined.
 
 ## Persistence model
 
@@ -122,8 +157,9 @@ wildcard would defeat the exact four-event contract declared here.
 - Duplicate event UUIDs are ignored by the inbox. A second event for the same
   order cannot repeat a balance mutation because the reservation state is also
   checked.
-- Contradictory lifecycle events raise without committing, allowing retries and
-  eventual DLQ investigation rather than silently changing credit state.
+- Contradictory lifecycle events raise without committing and are quarantined
+  immediately for investigation rather than retried or silently changing
+  credit state.
 
 Schema changes must be added as Alembic migrations; the application never runs
 `create_all` at startup.

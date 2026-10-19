@@ -1,8 +1,8 @@
-"""RabbitMQ contract and relay settings for User Service domain events."""
+"""Kafka topic and relay settings for User Service domain events."""
 
-EXCHANGE = "foc.events"
+USER_TOPIC = "user.events"
 USER_CREATED_EVENT = "user.created"
 
 RELAY_BATCH_SIZE = 100
 RELAY_POLL_SECONDS = 0.5
-RABBITMQ_PORT = 5672
+PUBLISH_TIMEOUT_SECONDS = 10

@@ -1,21 +1,21 @@
-"""Publish committed User Service outbox events to RabbitMQ."""
+"""Publish committed User Service outbox events to Kafka."""
 
 import logging
 import os
 import time
 from typing import Protocol
 
-import pika
+from confluent_kafka import KafkaException, Producer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.events import dump_event
 from app.messaging import (
-    EXCHANGE,
-    RABBITMQ_PORT,
+    PUBLISH_TIMEOUT_SECONDS,
     RELAY_BATCH_SIZE,
     RELAY_POLL_SECONDS,
+    USER_TOPIC,
 )
 from app.models import UserOutboxEvent, utc_now
 
@@ -33,32 +33,44 @@ class Publisher(Protocol):
     def publish(self, event: UserOutboxEvent) -> None: ...
 
 
-class PikaPublisher:
-    def __init__(self, channel: pika.adapters.blocking_connection.BlockingChannel):
-        self._channel = channel
+class _Delivery:
+    """Delivery callback state for one Kafka produce call."""
+
+    def __init__(self) -> None:
+        self.error = None
+        self.done = False
+
+    def __call__(self, error, _message) -> None:
+        self.error = error
+        self.done = True
+
+
+class KafkaPublisher:
+    def __init__(self, producer: Producer) -> None:
+        self._producer = producer
 
     def publish(self, event: UserOutboxEvent) -> None:
-        self._channel.basic_publish(
-            exchange=EXCHANGE,
-            routing_key=event.event_type,
-            body=dump_event(event),
-            properties=pika.BasicProperties(
-                content_type="application/json",
-                delivery_mode=2,
-                message_id=str(event.event_id),
-                headers={"user_id": str(event.user_id)},
-            ),
-            mandatory=True,
+        delivery = _Delivery()
+        self._producer.produce(
+            topic=USER_TOPIC,
+            key=str(event.user_id).encode("utf-8"),
+            value=dump_event(event),
+            headers=[
+                ("event_type", event.event_type.encode("utf-8")),
+                ("event_id", str(event.event_id).encode("utf-8")),
+            ],
+            on_delivery=delivery,
         )
-
-
-def declare_topology(channel: pika.adapters.blocking_connection.BlockingChannel) -> None:
-    """Declare the producer-owned exchange; consumers own their queues."""
-
-    channel.exchange_declare(exchange=EXCHANGE, exchange_type="topic", durable=True)
+        remaining = self._producer.flush(PUBLISH_TIMEOUT_SECONDS)
+        if delivery.error is not None:
+            raise KafkaException(delivery.error)
+        if remaining or not delivery.done:
+            raise RuntimeError("Kafka did not acknowledge the record")
 
 
 def relay_once(db: Session, publisher: Publisher) -> int:
+    """Publish outbox rows in order and mark each only after confirmation."""
+
     statement = (
         select(UserOutboxEvent)
         .where(UserOutboxEvent.published_at.is_(None))
@@ -75,43 +87,33 @@ def relay_once(db: Session, publisher: Publisher) -> int:
     return len(pending)
 
 
-def connection() -> pika.BlockingConnection:
-    return pika.BlockingConnection(
-        pika.ConnectionParameters(
-            host=required_env("RABBITMQ_HOST"),
-            port=RABBITMQ_PORT,
-            credentials=pika.PlainCredentials(
-                required_env("RABBITMQ_USER"), required_env("RABBITMQ_PASSWORD")
-            ),
-            heartbeat=60,
-            socket_timeout=10,
-        )
-    )
-
-
 def main() -> None:
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    broker = connection()
-    channel = broker.channel()
-    channel.confirm_delivery()
-    declare_topology(channel)
-    publisher = PikaPublisher(channel)
-    logger.info("user_outbox_worker_started")
+    producer = Producer(
+        {
+            "bootstrap.servers": required_env("KAFKA_BOOTSTRAP_SERVERS"),
+            "enable.idempotence": True,
+            "acks": "all",
+            "message.timeout.ms": PUBLISH_TIMEOUT_SECONDS * 1000,
+        }
+    )
+    publisher = KafkaPublisher(producer)
+    logger.info("user_outbox_worker_started topic=%s", USER_TOPIC)
 
-    while True:
-        with SessionLocal() as db:
-            try:
-                relay_once(db, publisher)
-            except Exception:
-                db.rollback()
-                logger.exception("user_outbox_relay_failed")
-                if not broker.is_open:
-                    raise
-        broker.process_data_events(time_limit=RELAY_POLL_SECONDS)
-        time.sleep(RELAY_POLL_SECONDS)
+    try:
+        while True:
+            with SessionLocal() as db:
+                try:
+                    relay_once(db, publisher)
+                except Exception:
+                    db.rollback()
+                    logger.exception("user_outbox_relay_failed")
+            time.sleep(RELAY_POLL_SECONDS)
+    finally:
+        producer.flush(PUBLISH_TIMEOUT_SECONDS)
 
 
 if __name__ == "__main__":

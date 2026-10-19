@@ -4,7 +4,7 @@
 
 `app/services/credits.py` contains transport-independent Credit rules. Its
 operations accept UUIDs, amounts, and domain reasons; it does not import event
-envelopes, RabbitMQ code, HTTP schemas, or outbox helpers.
+envelopes, Kafka code, HTTP schemas, or outbox helpers.
 
 `app/services/event_handlers.py` is the application-layer adapter. It translates
 incoming events into domain calls and translates domain results into outbox

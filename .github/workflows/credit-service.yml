@@ -5,10 +5,16 @@ on:
     branches: [main]
     paths:
       - "credit-service/**"
+      - "contracts/**"
+      - "event-broker/**"
+      - "compose.yaml"
       - ".github/workflows/credit-service.yml"
   pull_request:
     paths:
       - "credit-service/**"
+      - "contracts/**"
+      - "event-broker/**"
+      - "compose.yaml"
       - ".github/workflows/credit-service.yml"
 
 permissions:

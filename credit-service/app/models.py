@@ -160,7 +160,7 @@ class CreditTransaction(Base):
 
 
 class ProcessedEvent(Base):
-    """Inbox deduplication record for at-least-once RabbitMQ delivery."""
+    """Inbox deduplication record for at-least-once broker delivery."""
 
     __tablename__ = "processed_events"
 

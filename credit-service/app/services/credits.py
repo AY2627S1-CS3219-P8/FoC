@@ -1,7 +1,7 @@
 """Transport-independent Credit domain operations.
 
 The numbered ``AUDIT`` comments expose validation, locking, mutation, and
-ledger stages. This module knows nothing about RabbitMQ event names, event
+ledger stages. This module knows nothing about broker event names, event
 parsing, HTTP request schemas, or outbox publication. Callers own transactions.
 """
 

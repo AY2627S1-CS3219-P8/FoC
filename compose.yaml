@@ -5,6 +5,9 @@
 # Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
 # Details: supplier-service/ai/usage-log.md; ai-20260929-001; ai-20260929-003; ai-20260930-012
 
+include:
+  - event-broker/compose.yaml
+
 services:
   user-db:
     image: postgres:16-alpine
@@ -77,9 +80,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -87,8 +88,8 @@ services:
         condition: service_healthy
       user-migrate:
         condition: service_completed_successfully
-      rabbitmq:
-        condition: service_healthy
+      kafka-topics:
+        condition: service_completed_successfully
     healthcheck:
       disable: true
 
@@ -249,9 +250,7 @@ services:
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       CREDIT_EVENT_STREAM: order
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -259,8 +258,8 @@ services:
         condition: service_healthy
       credit-migrate:
         condition: service_completed_successfully
-      rabbitmq:
-        condition: service_healthy
+      kafka-topics:
+        condition: service_completed_successfully
     networks:
       - default
       - credit-private
@@ -280,9 +279,7 @@ services:
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       CREDIT_EVENT_STREAM: user
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -290,31 +287,13 @@ services:
         condition: service_healthy
       credit-migrate:
         condition: service_completed_successfully
-      rabbitmq:
-        condition: service_healthy
+      kafka-topics:
+        condition: service_completed_successfully
     networks:
       - default
       - credit-private
     healthcheck:
       disable: true
-
-  rabbitmq:
-    image: rabbitmq:4.1.8-management-alpine
-    container_name: foc-rabbitmq
-    hostname: foc-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-    ports:
-      - "127.0.0.1:15672:15672"
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 20s
 
 networks:
   default: {}
@@ -327,4 +306,3 @@ volumes:
   supplier-db-data:
   user-db-data:
   credit-db-data:
-  rabbitmq-data:

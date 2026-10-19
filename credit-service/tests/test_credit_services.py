@@ -202,6 +202,22 @@ def test_reservation_rejection_is_committed_business_outcome(
     assert outbox.payload["reason"] == reason
 
 
+def test_missing_account_is_committed_reservation_rejection(db: Session) -> None:
+    event = order_event("order.created", amount=20)
+
+    apply_order_event(db, event)
+    db.commit()
+
+    audit = db.scalar(select(CreditTransaction))
+    outbox = db.scalar(select(OutboxEvent))
+    assert db.scalar(select(func.count()).select_from(CreditReservation)) == 0
+    assert audit.outcome == "REJECTED"
+    assert audit.reason == "ACCOUNT_NOT_FOUND"
+    assert audit.affected_user_id == event.requester_id
+    assert outbox.event_type == "credit.reservation_failed"
+    assert outbox.payload["reason"] == "ACCOUNT_NOT_FOUND"
+
+
 def test_completed_order_transfers_reserved_credit_and_audits_both_accounts(
     db: Session,
 ) -> None:

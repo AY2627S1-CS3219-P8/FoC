@@ -376,7 +376,7 @@ requirements set.
 Account creation is integrated with Credit Service through a transactional
 outbox. Registration and administrator bootstrap both stage `user.created` in
 the same PostgreSQL transaction as the new user. `user-worker` publishes the
-event to the durable `foc.events` topic exchange only after commit.
+event to the durable `user.events` Kafka topic only after commit.
 
 ```json
 {
@@ -392,10 +392,9 @@ event to the durable `foc.events` topic exchange only after commit.
 }
 ```
 
-The worker publishes `user.created` to the shared exchange but does not declare
-Credit Service's queue. Credit Service owns and binds
-`credit-service.user-events`. If that queue is temporarily unavailable, the
-mandatory publish is not marked complete and the User outbox relay retries it.
-Publishing uses persistent messages and publisher confirms. A broker outage
-does not roll back a successfully registered user; the unpublished outbox row
-is retried when the worker reconnects or restarts.
+The worker keys `user.created` by `user_id` and supplies matching `event_type`
+and `event_id` Kafka headers. It marks the outbox row published only after a
+delivery acknowledgement. Credit Service independently consumes `user.events`
+as group `credit-service-user`. A broker outage does not roll back a
+successfully registered user; the unpublished outbox row is retried when the
+worker reconnects or restarts.

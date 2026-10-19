@@ -1,0 +1,25 @@
+#!/bin/bash
+# Create the topics shared by Order, Credit, and User Services. Safe to rerun.
+
+set -euo pipefail
+
+bootstrap="${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}"
+topics=/opt/kafka/bin/kafka-topics.sh
+
+create_topic() {
+  local name="$1"
+  local partitions="$2"
+  shift 2
+  "$topics" --bootstrap-server "$bootstrap" --create --if-not-exists \
+    --topic "$name" --partitions "$partitions" --replication-factor 1 "$@"
+}
+
+# Domain streams retain their replay history. Keys preserve per-aggregate order.
+create_topic order.events 3 --config retention.ms=-1
+create_topic credit.events 3 --config retention.ms=-1
+create_topic user.events 3 --config retention.ms=-1
+
+# Quarantine topics deliberately retain records for seven days in local Compose.
+create_topic order-service.credit-events.dlq 1 --config retention.ms=604800000
+create_topic credit-service.order-events.dlq 1 --config retention.ms=604800000
+create_topic credit-service.user-events.dlq 1 --config retention.ms=604800000

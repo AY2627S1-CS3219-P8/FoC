@@ -30,6 +30,22 @@ def event_body(event_type: str = "order.created", **payload_overrides) -> bytes:
     ).encode()
 
 
+def user_event_body(student_number: str) -> bytes:
+    return json.dumps(
+        {
+            "event_id": str(uuid4()),
+            "event_type": "user.created",
+            "schema_version": 1,
+            "occurred_at": "2026-10-17T04:00:00Z",
+            "correlation_id": str(uuid4()),
+            "payload": {
+                "user_id": str(uuid4()),
+                "nus_student_number": student_number,
+            },
+        }
+    ).encode()
+
+
 def test_parses_created_order_contract() -> None:
     event = parse_order_event(event_body())
     assert event.event_type == "order.created"
@@ -89,6 +105,28 @@ def test_parses_user_created_for_initial_allocation() -> None:
 
     assert isinstance(event, UserCreatedEvent)
     assert event.user_id == user_id
+    assert event.nus_student_number == "A0123456X"
+
+
+@pytest.mark.parametrize(
+    "student_number",
+    [
+        "A123",
+        "B0123456X",
+        "A01234ABC",
+        "A１２３４５６７X",
+        "A01234567",
+    ],
+)
+def test_rejects_invalid_user_created_student_number(student_number: str) -> None:
+    with pytest.raises(MalformedMessage):
+        parse_incoming_event(user_event_body(student_number))
+
+
+def test_normalizes_valid_user_created_student_number() -> None:
+    event = parse_incoming_event(user_event_body(" a0123456x "))
+
+    assert isinstance(event, UserCreatedEvent)
     assert event.nus_student_number == "A0123456X"
 
 

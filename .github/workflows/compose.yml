@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "compose.yaml"
+      - "event-broker/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
   pull_request:
     paths:
       - "compose.yaml"
+      - "event-broker/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
 
@@ -30,8 +32,6 @@ jobs:
       SUPPLIER_RUNTIME_PASSWORD: supplierRuntimeCiPassword123
       CREDIT_DB_USER: credit_ci
       CREDIT_DB_PASSWORD: creditCiPassword123
-      RABBITMQ_USER: foc_ci
-      RABBITMQ_PASSWORD: rabbitCiPassword123
 
     steps:
       - name: Check out repository

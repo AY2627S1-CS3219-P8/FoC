@@ -1,23 +1,26 @@
 # FoC asynchronous contracts
 
 `asyncapi.yaml` is the canonical, versioned description of messages published
-to the durable `foc.events` RabbitMQ topic exchange. Producers and consumers
-must update this file before adding fields or event types.
+to the durable Kafka domain topics. Producers and consumers must update this
+file before adding fields or event types.
 
 Version 1 envelopes always carry `event_id`, `event_type`, `schema_version`,
 `occurred_at`, `correlation_id`, and a typed `payload`. Consumers must ignore
 unknown optional payload fields within version 1, deduplicate by `event_id`,
 and treat a breaking change as a new schema version.
 
-Queue ownership:
+Topic and consumer ownership:
 
-- Credit Service owns `credit-service.order-events` and
-  `credit-service.user-events`.
-- Order Service owns `order-service.credit-events`.
+- Order Service publishes `order.events`; Credit Service consumes it as
+  `credit-service-order`.
+- User Service publishes `user.events`; Credit Service consumes it as
+  `credit-service-user`.
+- Credit Service publishes `credit.events`; Order Service consumes it with its
+  own stable group.
 
-Each consumer declares its own queues and bindings. Producers declare the
-shared exchange and publish with confirms and mandatory routing; they do not
-declare downstream services' queues or decide downstream state transitions.
+Topic creation belongs to `event-broker/create-topics.sh`. Producers wait for
+Kafka delivery confirmation; consumers disable automatic commits and commit
+their offsets only after durable processing or confirmed DLQ publication.
 Credit Service reports credit outcomes, while Order Service owns the resulting
 Order state changes.
 
@@ -27,6 +30,8 @@ After `PICKED_UP`, the event must include `courier_id`; Credit Service transfers
 the reservation to that courier and publishes `credit.transferred` with reason
 `ORDER_CANCELLED_AFTER_PICKUP`.
 
-The routing key is currently the event type. Per-order ordering therefore
-depends on a single active consumer for each order queue until the Order Service
-publisher adopts an order-keyed partitioning strategy.
+`order.events` and `credit.events` records are keyed by `order_id`;
+`user.events` records are keyed by `user_id`. Kafka therefore preserves order
+for one aggregate within its partition while allowing different aggregates to
+be processed in parallel. Records also carry `event_type` and `event_id`
+headers matching the JSON envelope.
