@@ -66,13 +66,13 @@ pickup uses transfer, not release.
 
 - `order.created` calls reservation and emits `credit.reserved` or
   `credit.reservation_failed`.
-- `order.completed` calls transfer with `ORDER_COMPLETED` and emits
-  `credit.transferred`.
+- `order.completed` calls transfer with `ORDER_COMPLETED` and emits no event.
 - `order.cancelled` from `PICKED_UP` calls transfer with
-  `ORDER_CANCELLED_AFTER_PICKUP` and emits `credit.transferred`.
-- Other `order.cancelled` events and `order.expired` call release and emit
-  `credit.released`.
+  `ORDER_CANCELLED_AFTER_PICKUP` and emits no event.
+- Other `order.cancelled` events and `order.expired` call release and emit no
+  event.
 - `user.created` calls account creation and initial allocation.
 
-The adapter stages the inbox marker and outbox event in the same transaction as
-the domain mutation and ledger rows. It does not modify Order state.
+The adapter stages the inbox marker, any reservation-result outbox event, the
+domain mutation, and ledger rows in one transaction. It does not modify Order
+state.

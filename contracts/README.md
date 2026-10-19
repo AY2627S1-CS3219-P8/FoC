@@ -27,8 +27,9 @@ Order state changes.
 For `order.cancelled`, Credit Service uses `previous_status` to select the
 financial outcome. Before pickup it releases the reservation to the requester.
 After `PICKED_UP`, the event must include `courier_id`; Credit Service transfers
-the reservation to that courier and publishes `credit.transferred` with reason
-`ORDER_CANCELLED_AFTER_PICKUP`.
+the reservation to that courier and records `ORDER_CANCELLED_AFTER_PICKUP` in
+its audit trail. Completion, cancellation, and expiry do not publish Credit
+outcome events.
 
 `order.events` and `credit.events` records are keyed by `order_id`;
 `user.events` records are keyed by `user_id`. Kafka therefore preserves order

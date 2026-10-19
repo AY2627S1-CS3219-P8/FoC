@@ -52,7 +52,7 @@ def handle_order_created(db: Session, event: OrderEvent) -> None:
 
 
 def handle_order_completed(db: Session, event: OrderEvent) -> None:
-    """Translate completion into normal courier settlement."""
+    """Settle a completed order without publishing another outcome event."""
 
     if event.courier_id is None:
         raise CreditStateConflict("Completed order has no courier")
@@ -65,17 +65,6 @@ def handle_order_completed(db: Session, event: OrderEvent) -> None:
         operation_id=event.event_id,
         correlation_id=event.correlation_id,
         settlement_reason="ORDER_COMPLETED",
-    )
-    enqueue_credit_event(
-        db,
-        event_type="credit.transferred",
-        order_id=event.order_id,
-        correlation_id=event.correlation_id,
-        payload={
-            **_credit_payload(event),
-            "courier_id": str(event.courier_id),
-            "reason": "ORDER_COMPLETED",
-        },
     )
 
 
@@ -97,17 +86,6 @@ def handle_order_cancelled(db: Session, event: OrderEvent) -> None:
             correlation_id=event.correlation_id,
             settlement_reason="ORDER_CANCELLED_AFTER_PICKUP",
         )
-        enqueue_credit_event(
-            db,
-            event_type="credit.transferred",
-            order_id=event.order_id,
-            correlation_id=event.correlation_id,
-            payload={
-                **_credit_payload(event),
-                "courier_id": str(event.courier_id),
-                "reason": "ORDER_CANCELLED_AFTER_PICKUP",
-            },
-        )
         return
 
     release_reserved_credits(
@@ -118,13 +96,6 @@ def handle_order_cancelled(db: Session, event: OrderEvent) -> None:
         operation_id=event.event_id,
         correlation_id=event.correlation_id,
         release_reason="ORDER_CANCELLED",
-    )
-    enqueue_credit_event(
-        db,
-        event_type="credit.released",
-        order_id=event.order_id,
-        correlation_id=event.correlation_id,
-        payload={**_credit_payload(event), "reason": "ORDER_CANCELLED"},
     )
 
 
@@ -139,13 +110,6 @@ def handle_order_expired(db: Session, event: OrderEvent) -> None:
         operation_id=event.event_id,
         correlation_id=event.correlation_id,
         release_reason="ORDER_EXPIRED",
-    )
-    enqueue_credit_event(
-        db,
-        event_type="credit.released",
-        order_id=event.order_id,
-        correlation_id=event.correlation_id,
-        payload={**_credit_payload(event), "reason": "ORDER_EXPIRED"},
     )
 
 

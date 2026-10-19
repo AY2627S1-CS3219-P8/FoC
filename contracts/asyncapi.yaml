@@ -74,8 +74,6 @@ components:
                 enum:
                   - credit.reserved
                   - credit.reservation_failed
-                  - credit.transferred
-                  - credit.released
               payload:
                 $ref: '#/components/schemas/CreditPayload'
   schemas:
@@ -158,11 +156,8 @@ components:
           format: uuid
         reason:
           type: string
-          description: Includes ORDER_CANCELLED_AFTER_PICKUP when credit.transferred is compensatory.
+          description: Present when a credit reservation is rejected.
         requester_id:
-          type: string
-          format: uuid
-        courier_id:
           type: string
           format: uuid
         credit_amount:

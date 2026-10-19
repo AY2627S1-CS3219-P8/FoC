@@ -22,8 +22,6 @@ CREDIT_EVENT_TYPES = frozenset(
     {
         "credit.reserved",
         "credit.reservation_failed",
-        "credit.transferred",
-        "credit.released",
     }
 )
 OUTGOING_EVENT_TYPES = CREDIT_EVENT_TYPES

@@ -9,6 +9,7 @@ from app.events import (
     parse_incoming_event,
     parse_order_event,
 )
+from app.messaging import OUTGOING_EVENT_TYPES
 
 
 def event_body(event_type: str = "order.created", **payload_overrides) -> bytes:
@@ -51,6 +52,12 @@ def test_parses_created_order_contract() -> None:
     assert event.event_type == "order.created"
     assert event.credit_amount == 8
     assert event.courier_id is None
+
+
+def test_outgoing_contract_contains_only_reservation_results() -> None:
+    assert OUTGOING_EVENT_TYPES == frozenset(
+        {"credit.reserved", "credit.reservation_failed"}
+    )
 
 
 def test_completed_order_requires_courier() -> None:

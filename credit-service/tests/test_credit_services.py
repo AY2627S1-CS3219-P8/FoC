@@ -267,11 +267,10 @@ def test_completed_order_transfers_reserved_credit_and_audits_both_accounts(
     total_delta = sum(
         item.available_delta + item.reserved_delta for item in transfer_audits
     )
-    final_outbox = list(
-        db.scalars(select(OutboxEvent).order_by(OutboxEvent.id))
-    )[-1]
     assert total_delta == 0
-    assert final_outbox.event_type == "credit.transferred"
+    assert list(
+        db.scalars(select(OutboxEvent.event_type).order_by(OutboxEvent.id))
+    ) == ["credit.reserved"]
 
 
 def test_cancelled_order_releases_reserved_credit(db: Session) -> None:
@@ -306,10 +305,19 @@ def test_cancelled_order_releases_reserved_credit(db: Session) -> None:
     )
     assert (requester.available_balance, requester.reserved_balance) == (100, 0)
     assert reservation.status == "RELEASED"
-    final_outbox = list(
-        db.scalars(select(OutboxEvent).order_by(OutboxEvent.id))
-    )[-1]
-    assert final_outbox.event_type == "credit.released"
+    release_audit = db.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.transaction_type == "RELEASE"
+        )
+    )
+    assert (release_audit.available_delta, release_audit.reserved_delta) == (
+        40,
+        -40,
+    )
+    assert release_audit.reason == "ORDER_CANCELLED"
+    assert list(
+        db.scalars(select(OutboxEvent.event_type).order_by(OutboxEvent.id))
+    ) == ["credit.reserved"]
 
 
 def test_duplicate_incoming_event_is_a_complete_no_op(db: Session) -> None:
@@ -346,6 +354,19 @@ def test_transfer_after_release_is_rejected_without_mutation(db: Session) -> Non
         ),
     )
     db.commit()
+    release_audit = db.scalar(
+        select(CreditTransaction).where(
+            CreditTransaction.transaction_type == "RELEASE"
+        )
+    )
+    assert (release_audit.available_delta, release_audit.reserved_delta) == (
+        20,
+        -20,
+    )
+    assert release_audit.reason == "ORDER_EXPIRED"
+    assert list(
+        db.scalars(select(OutboxEvent.event_type).order_by(OutboxEvent.id))
+    ) == ["credit.reserved"]
 
     with pytest.raises(CreditStateConflict):
         apply_order_event(
@@ -398,7 +419,6 @@ def test_cancel_after_pickup_credits_the_courier(db: Session) -> None:
     reservation = db.scalar(
         select(CreditReservation).where(CreditReservation.order_id == order_id)
     )
-    outbox = list(db.scalars(select(OutboxEvent).order_by(OutboxEvent.id)))[-1]
     transfer_audits = list(
         db.scalars(
             select(CreditTransaction).where(
@@ -410,8 +430,9 @@ def test_cancel_after_pickup_credits_the_courier(db: Session) -> None:
     assert courier.available_balance == 120
     assert reservation.status == "TRANSFERRED"
     assert reservation.courier_id == courier.user_id
-    assert outbox.event_type == "credit.transferred"
-    assert outbox.payload["reason"] == "ORDER_CANCELLED_AFTER_PICKUP"
+    assert list(
+        db.scalars(select(OutboxEvent.event_type).order_by(OutboxEvent.id))
+    ) == ["credit.reserved"]
     assert all(
         "ORDER_CANCELLED_AFTER_PICKUP" in item.reason
         for item in transfer_audits

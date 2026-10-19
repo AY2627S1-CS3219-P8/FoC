@@ -75,9 +75,11 @@ Consumed events are `order.created`, `order.completed`, `order.cancelled`, and
 `courier_id`. A cancellation whose `previous_status` is `PICKED_UP` must carry
 `courier_id` because its reservation is paid to that courier. The outbox
 publishes `credit.reserved`,
-`credit.reservation_failed`, `credit.transferred`, and `credit.released` to
-`credit.events`. Order Service owns its consumer group and resulting order-state
-transitions; Credit Service does not mutate them.
+`credit.reservation_failed` to `credit.events`. Completion, cancellation, and
+expiry still update Credit balances, reservations, and audit records atomically,
+but they do not publish a follow-up Credit event. Order Service owns its
+consumer group and resulting order-state transitions; Credit Service does not
+mutate them.
 
 Both incoming streams use bounded retries and explicit dead-letter topics.
 `credit-user-worker` consumes only account-creation events and
@@ -128,10 +130,10 @@ an automatic repair mechanism.
 
 ### Order Service integration requirement
 
-Order Service must consume all four `credit.*` outcomes above from
-`credit.events` and apply the corresponding order-state changes. Credit Service
-filters valid unrelated `order.events` records before its strict domain parser;
-malformed records and header/envelope mismatches are quarantined.
+Order Service must consume `credit.reserved` and `credit.reservation_failed`
+from `credit.events` and apply the corresponding order-state changes. Credit
+Service filters valid unrelated `order.events` records before its strict domain
+parser; malformed records and header/envelope mismatches are quarantined.
 
 ## Persistence model
 
@@ -148,12 +150,13 @@ malformed records and header/envelope mismatches are quarantined.
 
 - `order.created` reserves available credit and emits `credit.reserved`, or
   commits a rejected audit row and emits `credit.reservation_failed`.
-- `order.completed` atomically settles an active reservation to the courier and
-  emits `credit.transferred`.
+- `order.completed` atomically settles an active reservation to the courier
+  without publishing another Credit event.
 - `order.cancelled` before pickup and `order.expired` return an active
-  reservation to the requester and emit `credit.released`.
+  reservation to the requester without publishing another Credit event.
 - `order.cancelled` after pickup settles the reservation to the courier and
-  emits `credit.transferred` with reason `ORDER_CANCELLED_AFTER_PICKUP`.
+  records `ORDER_CANCELLED_AFTER_PICKUP` in the audit trail without publishing
+  another Credit event.
 - Duplicate event UUIDs are ignored by the inbox. A second event for the same
   order cannot repeat a balance mutation because the reservation state is also
   checked.
