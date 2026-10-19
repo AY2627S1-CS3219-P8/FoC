@@ -7,11 +7,13 @@ on:
       - "compose.yaml"
       - ".env.example"
       - ".github/workflows/compose.yml"
+      - "event-broker/**"
   pull_request:
     paths:
       - "compose.yaml"
       - ".env.example"
       - ".github/workflows/compose.yml"
+      - "event-broker/**"
 
 permissions:
   contents: read
