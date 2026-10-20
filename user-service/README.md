@@ -160,6 +160,23 @@ Consuming services should depend on the User Service API or documented
 authentication events, not on implementation details or direct database
 access.
 
+### Internal identity checks
+
+Trusted services can validate a caller's bearer session and receive only the
+minimal identity needed for authorization:
+
+```bash
+curl http://user-service:8080/internal/auth/identity \
+  -H 'Authorization: Bearer <access-token>' \
+  -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
+```
+
+The response is `{"id":"<user-id>","role":"user|admin","status":"active"}`.
+Both the active user session and the internal service token are required. The
+endpoint does not return email addresses, student numbers, or other profile
+fields. Keep the internal token in deployment secrets and never forward it to
+clients.
+
 ### Internal administrator checks
 
 Trusted services can check a user's authorization without accessing the User

@@ -163,6 +163,14 @@ class BasicProfileResponse(BaseModel):
     display_name: str
 
 
+class InternalIdentityResponse(BaseModel):
+    """Minimal active identity returned to a trusted consuming service."""
+
+    id: UUID
+    role: Literal["user", "admin"]
+    status: Literal["active"]
+
+
 class AdminCheckResponse(BaseModel):
     """Minimal authorization result returned to a trusted service."""
 
