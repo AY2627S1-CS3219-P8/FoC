@@ -10,6 +10,7 @@ from app.db import get_db
 from app.schemas import (
     AdminCheckResponse,
     BasicProfileResponse,
+    InternalIdentityResponse,
     LoginResponse,
     UserCreate,
     UserLogin,
@@ -35,6 +36,20 @@ from app.services.profiles import own_profile_response
 
 
 router = APIRouter()
+
+
+@router.get("/internal/auth/identity", response_model=InternalIdentityResponse)
+def get_internal_identity(
+    _: None = Depends(require_internal_service),
+    auth: AuthContext = Depends(get_current_session),
+):
+    """Return only the verified active identity to a trusted service."""
+
+    return InternalIdentityResponse(
+        id=auth.user.id,
+        role=auth.user.role,
+        status=auth.user.status,
+    )
 
 
 @router.get("/internal/users/{user_id}/admin", response_model=AdminCheckResponse)

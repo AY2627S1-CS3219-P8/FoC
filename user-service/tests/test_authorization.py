@@ -67,6 +67,79 @@ def create_user(database, **overrides) -> User:
     return register_user(UserCreate(**values), database)
 
 
+def login(client) -> str:
+    """Log in the default authorization-test user and return its bearer token."""
+
+    response = client.post(
+        "/login",
+        json={"nus_student_number": "A0123456X", "password": "Password1!"},
+    )
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+def test_internal_identity_returns_only_the_verified_active_identity(client, database):
+    """Trusted services receive identity fields without profile data."""
+
+    user = create_user(database)
+    token = login(client)
+
+    response = client.get(
+        "/internal/auth/identity",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Internal-Service-Token": INTERNAL_TOKEN,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": str(user.id),
+        "role": "user",
+        "status": "active",
+    }
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Authorization": "Bearer malformed", "X-Internal-Service-Token": INTERNAL_TOKEN},
+        {"X-Internal-Service-Token": INTERNAL_TOKEN},
+        {"Authorization": "Bearer malformed"},
+        {},
+    ],
+)
+def test_internal_identity_requires_both_service_and_user_credentials(
+    client, database, headers
+):
+    """Neither a service secret nor a user bearer token is sufficient alone."""
+
+    create_user(database)
+
+    response = client.get("/internal/auth/identity", headers=headers)
+
+    assert response.status_code == 401
+
+
+def test_internal_identity_rejects_a_user_that_is_no_longer_active(client, database):
+    """A trusted caller cannot use the endpoint to bypass account suspension."""
+
+    user = create_user(database)
+    token = login(client)
+    user.status = "suspended"
+    database.commit()
+
+    response = client.get(
+        "/internal/auth/identity",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Internal-Service-Token": INTERNAL_TOKEN,
+        },
+    )
+
+    assert response.status_code == 401
+
+
 def test_internal_check_returns_true_only_for_an_active_admin(client, database):
     """Trusted services can check an active admin without receiving a profile."""
 
