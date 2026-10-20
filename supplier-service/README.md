@@ -61,6 +61,7 @@ Set configuration in the terminal where you will start the server:
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier'
+export APP_ENV='development'
 export USER_SERVICE_URL='http://localhost:8000'
 export AUTH_TIMEOUT_SECONDS='3'
 export LOG_LEVEL='INFO'
@@ -74,12 +75,19 @@ permission to read its revision state; User Service is not contacted by either p
 | Variable | Requirement |
 | --- | --- |
 | `DATABASE_URL` | Required PostgreSQL connection URL using `postgresql+psycopg` |
-| `USER_SERVICE_URL` | Required HTTP or HTTPS base URL for User Service |
+| `APP_ENV` | `development`, `test`, or `production`; defaults to `production` |
+| `USER_SERVICE_URL` | Required HTTPS base URL for User Service in production; HTTP is also allowed in development and test |
 | `AUTH_TIMEOUT_SECONDS` | Positive, finite number; defaults to `3.0` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`; defaults to `INFO` |
 
 Settings are validated during application startup. Missing required values
-or invalid values prevent startup. The root `.env.example` documents example
+or invalid values prevent startup. Production rejects HTTP User Service URLs
+before creating the client or forwarding a bearer token. Keep certificate
+verification enabled and configure a trusted HTTPS endpoint for production.
+The local Compose Supplier Service, migration, and seed containers explicitly
+use `APP_ENV=development`; production deployments must use `APP_ENV=production`
+(or omit it) and an HTTPS `USER_SERVICE_URL`.
+The root `.env.example` documents example
 values; copying it to `.env` does not automatically load it into this
 application. Export variables explicitly for local runs. Compose reads the
 root `.env` and passes settings into the containers explicitly. Keep real

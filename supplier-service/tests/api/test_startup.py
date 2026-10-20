@@ -92,6 +92,32 @@ def resources(monkeypatch):
     return engine, user_client, build_engine, build_client, build_sessions
 
 
+@pytest.mark.parametrize("app_env", [None, "production"])
+def test_production_http_rejected_before_resources_are_created(
+    monkeypatch, resources, app_env,
+):
+    if app_env is None:
+        monkeypatch.delenv("APP_ENV", raising=False)
+    else:
+        monkeypatch.setenv("APP_ENV", app_env)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
+    )
+    monkeypatch.setenv("USER_SERVICE_URL", "http://users.example.test")
+    monkeypatch.setenv("AUTH_TIMEOUT_SECONDS", "3")
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+
+    with pytest.raises(ValidationError, match="USER_SERVICE_URL must use HTTPS"):
+        with TestClient(create_app()):
+            pytest.fail("Production HTTP configuration must prevent startup")
+
+    _, _, build_engine, build_client, build_sessions = resources
+    build_engine.assert_not_called()
+    build_client.assert_not_called()
+    build_sessions.assert_not_called()
+
+
 @pytest.mark.parametrize("use_environment", [False, True])
 def test_client_created_at_startup_reused_and_closed(
     settings, monkeypatch, resources, use_environment,
