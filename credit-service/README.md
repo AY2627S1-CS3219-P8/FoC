@@ -18,8 +18,8 @@ curl http://127.0.0.1:8083/health
 curl http://127.0.0.1:8083/ready
 ```
 
-The `credit-order-worker` and `credit-user-worker` start after both the database
-migration and Kafka topic creation. Order Service consumes the resulting
+The `credit-order-worker` starts after both the database migration and Kafka
+topic creation. Order Service consumes the resulting
 `credit.events` stream with its own consumer group.
 
 ## HTTP surface
@@ -39,18 +39,17 @@ User status must be active. Admin routes also require `role=admin`.
 | `PUT` | `/admin/credit-accounts/{user_id}` | Idempotent administrator recovery |
 
 The recovery route requires a valid User Service bearer token for an active
-administrator. Normal account creation is exclusively event-driven: User
-Service commits a `user.created` outbox event with the new account and Credit
-Service consumes it. The administrator route is a manual repair path, not a
-second normal registration workflow.
+administrator and accepts `{}` or a matching UUID-only `user_id`. Normal Credit
+account creation is lazy and order-driven. Reads never create an account, so a
+user who has not participated in a qualifying order receives `404`. The
+administrator route remains a manual repair path.
 
 ## Event contract
 
-Credit Service uses three durable Kafka topics:
+Credit Service uses two durable Kafka topics:
 
 - `order.events`, consumed by group `credit-service-order`, for
   `order.created`, `order.completed`, `order.cancelled`, and `order.expired`;
-- `user.events`, consumed by group `credit-service-user`, for `user.created`;
 - `credit.events`, where Credit publishes its financial outcomes.
 
 Every v1 event contains:
@@ -71,7 +70,7 @@ Every v1 event contains:
 ```
 
 Consumed events are `order.created`, `order.completed`, `order.cancelled`, and
-`order.expired`, plus `user.created`. A completed event must also carry
+`order.expired`. `order.picked_up` is intentionally ignored. A completed event must also carry
 `courier_id`. A cancellation whose `previous_status` is `PICKED_UP` must carry
 `courier_id` because its reservation is paid to that courier. The outbox
 publishes `credit.reserved`,
@@ -81,10 +80,9 @@ but they do not publish a follow-up Credit event. Order Service owns its
 consumer group and resulting order-state transitions; Credit Service does not
 mutate them.
 
-Both incoming streams use bounded retries and explicit dead-letter topics.
-`credit-user-worker` consumes only account-creation events and
-`credit-order-worker` consumes only Order lifecycle events, so a retry in one
-stream cannot prevent the other stream from progressing.
+The order stream uses bounded retries and an explicit dead-letter topic.
+User registration does not create a Credit account and Credit Service does not
+consume `user.created`.
 
 The retry schedule is configured through `CREDIT_RETRY_BACKOFF_SECONDS`; the
 default `0.5,1,2,4` means five total attempts, a longest individual wait of
@@ -94,7 +92,7 @@ schedule. Failure handling is deliberately narrower:
 
 | Failure category | Worker behavior |
 | --- | --- |
-| Expected reservation rejection, such as `INSUFFICIENT_CREDIT`, `ACCOUNT_NOT_ACTIVE`, or `ACCOUNT_NOT_FOUND` | Commit the audit and `credit.reservation_failed` outbox event, then ACK |
+| Expected reservation rejection, such as `INSUFFICIENT_CREDIT` or `ACCOUNT_NOT_ACTIVE` | Commit the audit and `credit.reservation_failed` outbox event, then ACK |
 | Malformed event or invalid event payload | Roll back, skip retry, and quarantine in the stream DLQ |
 | Deterministic Credit-domain or input violation | Roll back, skip retry, and quarantine in the stream DLQ |
 | Recognized transient database/infrastructure failure | Roll back and retry on the configured schedule; quarantine if all attempts fail |
@@ -104,16 +102,15 @@ Quarantined records retain their exact original body, key, and existing
 headers. Credit Service adds `x-credit-failure-code`, `x-credit-failed-at`,
 `x-credit-failed-attempts`, `x-credit-source-topic`,
 `x-credit-source-partition`, and `x-credit-source-offset`. The source offset is
-committed only after Kafka confirms the DLQ publication. The two quarantine
-topics, retained for seven days in local Compose, are
-`credit-service.order-events.dlq` and `credit-service.user-events.dlq`.
+committed only after Kafka confirms the DLQ publication. The quarantine topic,
+retained for seven days in local Compose, is
+`credit-service.order-events.dlq`.
 
 ### DLQ investigation runbook
 
 1. An authorized operator uses Kafka tooling from the broker container, for
    example `kafka-console-consumer.sh`, with a new investigation consumer group.
-2. Inspect `credit-service.order-events.dlq` or
-   `credit-service.user-events.dlq`. Record the failure code, attempt count,
+2. Inspect `credit-service.order-events.dlq`. Record the failure code, attempt count,
    failure timestamp, source topic/partition/offset, event type, event ID,
    relevant order/user ID, and correlation ID when available.
 3. Correlate those identifiers with Credit worker logs and the relevant
@@ -138,7 +135,7 @@ parser; malformed records and header/envelope mismatches are quarantined.
 ## Persistence model
 
 - `credit_accounts`: one row per User Service UUID, with non-negative available
-  and reserved balances.
+  and reserved balances. No User Service student identifier is duplicated.
 - `credit_reservations`: one unique reservation per order and an explicit
   ACTIVE/TRANSFERRED/RELEASED state.
 - `credit_transactions`: immutable successful/rejected audit records with
@@ -148,15 +145,23 @@ parser; malformed records and header/envelope mismatches are quarantined.
 
 ## Saga participant behavior
 
-- `order.created` reserves available credit and emits `credit.reserved`, or
-  commits a rejected audit row and emits `credit.reservation_failed`.
-- `order.completed` atomically settles an active reservation to the courier
-  without publishing another Credit event.
+- `order.created` conflict-safely creates and grants the requester's initial
+  allocation exactly once, then reserves credit and emits `credit.reserved`, or
+  commits the allocation plus a rejected audit row and emits
+  `credit.reservation_failed`.
+- `order.completed` validates the active reservation, conflict-safely creates
+  and grants the courier's initial allocation exactly once, then atomically
+  settles to the courier without publishing another Credit event.
 - `order.cancelled` before pickup and `order.expired` return an active
   reservation to the requester without publishing another Credit event.
-- `order.cancelled` after pickup settles the reservation to the courier and
-  records `ORDER_CANCELLED_AFTER_PICKUP` in the audit trail without publishing
-  another Credit event.
+- `order.cancelled` after pickup follows the same validation-first courier
+  initialization and settlement path and records
+  `ORDER_CANCELLED_AFTER_PICKUP` in the audit trail without publishing another
+  Credit event.
+- Pre-pickup cancellation and expiry never initialize an account. Invalid
+  settlement never initializes or grants the proposed courier.
+- Existing accounts are never reset or re-minted. An inactive account with no
+  allocation marker remains inactive and receives no allocation.
 - Duplicate event UUIDs are ignored by the inbox. A second event for the same
   order cannot repeat a balance mutation because the reservation state is also
   checked.
@@ -172,4 +177,12 @@ Schema changes must be added as Alembic migrations; the application never runs
 ```bash
 python -m pip install -r requirements-dev.txt
 pytest
+```
+
+The SQLite suite covers transaction shape and business outcomes. The optional
+PostgreSQL concurrency tests exercise the production `ON CONFLICT` and row-lock
+paths across independent sessions:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://... pytest tests/test_concurrency_postgres.py
 ```

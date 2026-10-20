@@ -5,12 +5,13 @@ ledger stages. This module knows nothing about broker event names, event
 parsing, HTTP request schemas, or outbox publication. Callers own transactions.
 """
 
-import re
 from dataclasses import dataclass
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.models import CreditAccount, CreditReservation, CreditTransaction, utc_now
@@ -22,10 +23,6 @@ class CreditDomainError(RuntimeError):
 
 class CreditAccountNotFound(CreditDomainError):
     """A requested Credit account does not exist."""
-
-
-class CreditIdentifierConflict(CreditDomainError):
-    """User and student identifiers contradict an existing account."""
 
 
 class CreditStateConflict(CreditDomainError):
@@ -122,58 +119,57 @@ def _audit_transaction(
     return transaction
 
 
-def create_account(
+def _insert_credit_account_if_missing(db: Session, user_id: UUID) -> None:
+    """Create a zero-balance UUID account without a check-then-insert race."""
+
+    now = utc_now()
+    values = {
+        "user_id": user_id,
+        "available_balance": 0,
+        "reserved_balance": 0,
+        "status": "active",
+        "initial_allocation_granted_at": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        statement = (
+            postgresql_insert(CreditAccount)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[CreditAccount.user_id])
+        )
+        db.execute(statement)
+        return
+    if dialect == "sqlite":
+        statement = (
+            sqlite_insert(CreditAccount)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[CreditAccount.user_id])
+        )
+        db.execute(statement)
+        return
+
+    # Credit Service runs on PostgreSQL. This fallback keeps alternate test
+    # dialects functional but does not claim the same concurrent-insert safety.
+    if db.get(CreditAccount, user_id) is None:
+        db.add(CreditAccount(**values))
+        db.flush()
+
+
+def _grant_initial_allocation(
     db: Session,
+    account: CreditAccount,
     *,
-    user_id: UUID,
-    nus_student_number: str,
     initial_allocation: int,
-    actor_user_id: UUID | None = None,
-    operation_id: UUID | None = None,
-    correlation_id: UUID | None = None,
-) -> CreditAccount:
-    """Idempotently create one account and grant its initial allocation."""
+    operation_id: UUID,
+    correlation_id: UUID,
+    actor_user_id: UUID | None,
+) -> None:
+    """Grant once to an active, locked account and append its audit row."""
 
-    # AUDIT 1 - Reject invalid inputs before staging database changes.
-    normalized_student_number = nus_student_number.strip().upper()
-    if initial_allocation <= 0:
-        raise ValueError("initial_allocation must be positive")
-    if not re.fullmatch(r"[AU][0-9]{7}[A-Z]", normalized_student_number):
-        raise ValueError("nus_student_number has an invalid format")
-
-    # AUDIT 2 - Lock both account identifiers and reject conflicting mappings.
-    by_user = _locked_account(db, user_id)
-    by_student_number = db.scalar(
-        select(CreditAccount)
-        .where(CreditAccount.nus_student_number == normalized_student_number)
-        .with_for_update()
-    )
-    if by_user is not None and by_user.nus_student_number != normalized_student_number:
-        raise CreditIdentifierConflict(
-            "User already has a different credit account identifier"
-        )
-    if by_student_number is not None and by_student_number.user_id != user_id:
-        raise CreditIdentifierConflict(
-            "Student number already belongs to another credit account"
-        )
-
-    # AUDIT 3 - Create a zero-balance account only on first provisioning.
-    account = by_user or by_student_number
-    if account is None:
-        account = CreditAccount(
-            user_id=user_id,
-            nus_student_number=normalized_student_number,
-            available_balance=0,
-            reserved_balance=0,
-            status="active",
-        )
-        db.add(account)
-
-    # AUDIT 4 - The allocation timestamp is the durable idempotency marker.
-    if account.initial_allocation_granted_at is not None:
-        return account
-
-    # AUDIT 5 - Grant and ledger the initial credits in one transaction.
+    if account.initial_allocation_granted_at is not None or account.status != "active":
+        return
     granted_at = utc_now()
     account.available_balance += initial_allocation
     account.initial_allocation_granted_at = granted_at
@@ -189,7 +185,41 @@ def create_account(
         available_delta=initial_allocation,
         reserved_delta=0,
         reason="INITIAL_ACCOUNT_ALLOCATION",
-        correlation_id=correlation_id or operation_id or uuid4(),
+        correlation_id=correlation_id,
+    )
+
+
+def ensure_credit_account(
+    db: Session,
+    *,
+    user_id: UUID,
+    initial_allocation: int,
+    operation_id: UUID,
+    correlation_id: UUID,
+    actor_user_id: UUID | None = None,
+) -> CreditAccount:
+    """Idempotently create and initialize one UUID-keyed Credit account."""
+
+    # AUDIT 1 - Configuration errors fail before staging database changes.
+    if initial_allocation <= 0:
+        raise ValueError("initial_allocation must be positive")
+
+    # AUDIT 2 - UPSERT closes the missing-row race across Kafka partitions.
+    _insert_credit_account_if_missing(db, user_id)
+
+    # AUDIT 3 - Serialize allocation on the durable account row.
+    account = _locked_account(db, user_id)
+    if account is None:
+        raise CreditStateConflict("Credit account initialization failed")
+
+    # AUDIT 4 - The nullable allocation timestamp is the one-time grant marker.
+    _grant_initial_allocation(
+        db,
+        account,
+        initial_allocation=initial_allocation,
+        operation_id=operation_id,
+        correlation_id=correlation_id,
+        actor_user_id=actor_user_id,
     )
     return account
 
@@ -295,11 +325,14 @@ def transfer_reserved_credits(
     operation_id: UUID,
     correlation_id: UUID,
     settlement_reason: Literal["ORDER_COMPLETED", "ORDER_CANCELLED_AFTER_PICKUP"],
+    initial_allocation: int = 100,
 ) -> ResolutionResult:
     """Settle one active reservation from its requester to its courier."""
 
     if amount <= 0:
         raise ValueError("Settlement amount must be positive")
+    if initial_allocation <= 0:
+        raise ValueError("initial_allocation must be positive")
 
     # AUDIT 1 - Lock and validate the reservation before touching balances.
     reservation = db.scalar(
@@ -320,7 +353,12 @@ def transfer_reserved_credits(
     if reservation.status != "ACTIVE":
         raise CreditStateConflict("A released reservation cannot be transferred")
 
-    # AUDIT 2 - Lock both accounts in database UUID order to avoid deadlocks.
+    # AUDIT 2 - Only a valid active settlement may initialize its courier.
+    # The conflict-safe insert happens before account row locks; no allocation
+    # is granted until both accounts are locked and validated below.
+    _insert_credit_account_if_missing(db, courier_id)
+
+    # AUDIT 3 - Lock both accounts in database UUID order to avoid deadlocks.
     account_rows = list(
         db.scalars(
             select(CreditAccount)
@@ -339,7 +377,17 @@ def transfer_reserved_credits(
     if requester.reserved_balance < reservation.amount:
         raise CreditStateConflict("Requester reserved balance is inconsistent")
 
-    # AUDIT 3 - Settle reserved credit to the courier without minting credit.
+    # AUDIT 4 - Grant a first-time courier allocation only after validation.
+    _grant_initial_allocation(
+        db,
+        courier,
+        initial_allocation=initial_allocation,
+        operation_id=operation_id,
+        correlation_id=correlation_id,
+        actor_user_id=None,
+    )
+
+    # AUDIT 5 - Settle reserved credit to the courier without minting credit.
     requester.reserved_balance -= reservation.amount
     courier.available_balance += reservation.amount
     resolved_at = utc_now()
@@ -349,7 +397,7 @@ def transfer_reserved_credits(
     reservation.status = "TRANSFERRED"
     reservation.resolved_at = resolved_at
 
-    # AUDIT 4 - Ledger each side with the business reason for settlement.
+    # AUDIT 6 - Ledger each side with the business reason for settlement.
     _audit_transaction(
         db,
         operation_id=operation_id,

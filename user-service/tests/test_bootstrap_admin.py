@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User, UserOutboxEvent
+from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
 from app.schemas import UserCreate
 from app.services.bootstrap import BootstrapError, bootstrap_admin
 from app.services.users import verify_password
@@ -58,10 +58,6 @@ def test_bootstrap_creates_an_active_admin_and_records_completion(database):
     assert verify_password("Password1!", user.password_hash)
     assert lock is not None
     assert lock.bootstrap_completed_at is not None
-    event = database.scalar(select(UserOutboxEvent))
-    assert event is not None
-    assert event.event_type == "user.created"
-    assert event.user_id == user.id
 
 
 def test_bootstrap_is_idempotent_after_completion(database):

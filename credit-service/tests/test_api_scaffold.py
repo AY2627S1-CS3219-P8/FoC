@@ -35,7 +35,7 @@ def test_account_recovery_rejects_non_admin_user() -> None:
     with TestClient(app_with_identity("user")) as client:
         response = client.put(
             f"/admin/credit-accounts/{user_id}",
-            json={"user_id": str(user_id), "nus_student_number": "A0123456X"},
+            json={"user_id": str(user_id)},
         )
     assert response.status_code == 403
 
@@ -48,11 +48,10 @@ def test_admin_can_use_idempotent_account_recovery(tmp_path: Path) -> None:
         Base.metadata.create_all(app.state.engine)
         response = client.put(
             f"/admin/credit-accounts/{user_id}",
-            json={"user_id": str(user_id), "nus_student_number": "A0123456X"},
         )
         replay = client.put(
             f"/admin/credit-accounts/{user_id}",
-            json={"user_id": str(user_id), "nus_student_number": "A0123456X"},
+            json={"user_id": str(user_id)},
         )
     assert response.status_code == 201
     assert response.json()["available_balance"] == 100

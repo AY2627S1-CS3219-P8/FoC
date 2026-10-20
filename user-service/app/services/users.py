@@ -21,7 +21,6 @@ from app.auth import (
     hash_session_token,
 )
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User, UserSession
-from app.events import enqueue_user_created
 from app.schemas import LoginResponse, UserCreate, UserLogin, UserUpdate
 
 
@@ -180,7 +179,6 @@ def register_user(payload: UserCreate, db: Session) -> User:
 
     try:
         db.add(user)
-        enqueue_user_created(db, user)
         db.commit()
         db.refresh(user)
     except IntegrityError as exc:

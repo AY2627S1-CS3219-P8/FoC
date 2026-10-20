@@ -5,19 +5,13 @@ from dataclasses import dataclass
 
 ORDER_TOPIC = "order.events"
 CREDIT_TOPIC = "credit.events"
-USER_TOPIC = "user.events"
-
 ORDER_EVENTS_DLQ = "credit-service.order-events.dlq"
-USER_EVENTS_DLQ = "credit-service.user-events.dlq"
 
 ORDER_CONSUMER_GROUP = "credit-service-order"
-USER_CONSUMER_GROUP = "credit-service-user"
 
 ORDER_EVENT_TYPES = frozenset(
     {"order.created", "order.completed", "order.cancelled", "order.expired"}
 )
-USER_EVENT_TYPES = frozenset({"user.created"})
-INCOMING_EVENT_TYPES = ORDER_EVENT_TYPES | USER_EVENT_TYPES
 CREDIT_EVENT_TYPES = frozenset(
     {
         "credit.reserved",
@@ -47,14 +41,6 @@ EVENT_STREAMS = {
         event_types=ORDER_EVENT_TYPES,
         key_field="order_id",
         event_prefix="order.",
-    ),
-    "user": EventStream(
-        topic=USER_TOPIC,
-        group_id=USER_CONSUMER_GROUP,
-        dlq_topic=USER_EVENTS_DLQ,
-        event_types=USER_EVENT_TYPES,
-        key_field="user_id",
-        event_prefix="user.",
     ),
 }
 

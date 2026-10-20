@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.events import OrderEvent, UserCreatedEvent
+from app.events import OrderEvent
 from app.models import (
     CreditAccount,
     CreditReservation,
@@ -17,11 +17,10 @@ from app.models import (
     ProcessedEvent,
 )
 from app.services.credits import (
-    CreditIdentifierConflict,
     CreditStateConflict,
     InvalidCreditAdjustment,
     adjust_account,
-    create_account,
+    ensure_credit_account,
     reserve_credits,
 )
 from app.services.event_handlers import apply_incoming_event, apply_order_event
@@ -62,42 +61,41 @@ def add_account(
     db: Session,
     *,
     user_id=None,
-    student_number: str = "A0123456X",
     available: int = 100,
     reserved: int = 0,
     account_status: str = "active",
 ) -> CreditAccount:
     account = CreditAccount(
         user_id=user_id or uuid4(),
-        nus_student_number=student_number,
         available_balance=available,
         reserved_balance=reserved,
         status=account_status,
+        initial_allocation_granted_at=datetime.now(timezone.utc),
     )
     db.add(account)
     db.commit()
     return account
 
 
-def test_create_account_allocates_and_audits_exactly_once(db: Session) -> None:
+def test_ensure_account_allocates_and_audits_exactly_once(db: Session) -> None:
     user_id = uuid4()
     event_id = uuid4()
     correlation_id = uuid4()
 
-    first = create_account(
+    first = ensure_credit_account(
         db,
         user_id=user_id,
-        nus_student_number="A0123456X",
         initial_allocation=100,
         operation_id=event_id,
         correlation_id=correlation_id,
     )
     db.commit()
-    second = create_account(
+    second = ensure_credit_account(
         db,
         user_id=user_id,
-        nus_student_number="A0123456X",
         initial_allocation=100,
+        operation_id=uuid4(),
+        correlation_id=uuid4(),
     )
     db.commit()
 
@@ -111,21 +109,32 @@ def test_create_account_allocates_and_audits_exactly_once(db: Session) -> None:
     assert audits[0].event_id == event_id
 
 
-def test_create_account_rejects_identifier_conflict_without_partial_write(
+def test_ensure_does_not_reactivate_or_allocate_an_inactive_account(
     db: Session,
 ) -> None:
-    existing = add_account(db)
+    user_id = uuid4()
+    account = CreditAccount(
+        user_id=user_id,
+        available_balance=7,
+        reserved_balance=0,
+        status="suspended",
+        initial_allocation_granted_at=None,
+    )
+    db.add(account)
+    db.commit()
 
-    with pytest.raises(CreditIdentifierConflict):
-        create_account(
-            db,
-            user_id=existing.user_id,
-            nus_student_number="A7654321Z",
-            initial_allocation=100,
-        )
-    db.rollback()
+    ensured = ensure_credit_account(
+        db,
+        user_id=user_id,
+        initial_allocation=100,
+        operation_id=uuid4(),
+        correlation_id=uuid4(),
+    )
+    db.commit()
 
-    assert db.scalar(select(func.count()).select_from(CreditAccount)) == 1
+    assert ensured.status == "suspended"
+    assert ensured.available_balance == 7
+    assert ensured.initial_allocation_granted_at is None
     assert db.scalar(select(func.count()).select_from(CreditTransaction)) == 0
 
 
@@ -202,27 +211,50 @@ def test_reservation_rejection_is_committed_business_outcome(
     assert outbox.payload["reason"] == reason
 
 
-def test_missing_account_is_committed_reservation_rejection(db: Session) -> None:
+def test_first_order_lazily_initializes_then_reserves(db: Session) -> None:
     event = order_event("order.created", amount=20)
 
     apply_order_event(db, event)
     db.commit()
 
-    audit = db.scalar(select(CreditTransaction))
+    account = db.get(CreditAccount, event.requester_id)
+    audits = list(db.scalars(select(CreditTransaction).order_by(CreditTransaction.created_at)))
     outbox = db.scalar(select(OutboxEvent))
-    assert db.scalar(select(func.count()).select_from(CreditReservation)) == 0
-    assert audit.outcome == "REJECTED"
-    assert audit.reason == "ACCOUNT_NOT_FOUND"
-    assert audit.affected_user_id == event.requester_id
+    assert (account.available_balance, account.reserved_balance) == (80, 20)
+    assert db.scalar(select(func.count()).select_from(CreditReservation)) == 1
+    assert [audit.transaction_type for audit in audits] == [
+        "INITIAL_ALLOCATION",
+        "RESERVATION",
+    ]
+    assert outbox.event_type == "credit.reserved"
+
+
+def test_insufficient_first_order_commits_initialization_and_rejection(
+    db: Session,
+) -> None:
+    event = order_event("order.created", amount=150)
+
+    apply_incoming_event(db, event, initial_allocation=100)
+    db.commit()
+
+    account = db.get(CreditAccount, event.requester_id)
+    audits = list(db.scalars(select(CreditTransaction).order_by(CreditTransaction.created_at)))
+    outbox = db.scalar(select(OutboxEvent))
+    assert (account.available_balance, account.reserved_balance) == (100, 0)
+    assert [audit.transaction_type for audit in audits] == [
+        "INITIAL_ALLOCATION",
+        "RESERVATION",
+    ]
+    assert audits[1].outcome == "REJECTED"
+    assert audits[1].reason == "INSUFFICIENT_CREDIT"
     assert outbox.event_type == "credit.reservation_failed"
-    assert outbox.payload["reason"] == "ACCOUNT_NOT_FOUND"
 
 
 def test_completed_order_transfers_reserved_credit_and_audits_both_accounts(
     db: Session,
 ) -> None:
     requester = add_account(db)
-    courier = add_account(db, student_number="U0123456X", available=5)
+    courier = add_account(db, available=5)
     order_id = uuid4()
     apply_order_event(
         db,
@@ -338,7 +370,7 @@ def test_duplicate_incoming_event_is_a_complete_no_op(db: Session) -> None:
 
 def test_transfer_after_release_is_rejected_without_mutation(db: Session) -> None:
     requester = add_account(db)
-    courier = add_account(db, student_number="U0123456X")
+    courier = add_account(db)
     order_id = uuid4()
     created = order_event(
         "order.created",
@@ -388,7 +420,7 @@ def test_transfer_after_release_is_rejected_without_mutation(db: Session) -> Non
 
 def test_cancel_after_pickup_credits_the_courier(db: Session) -> None:
     requester = add_account(db)
-    courier = add_account(db, student_number="U0123456X")
+    courier = add_account(db)
     order_id = uuid4()
     apply_order_event(
         db,
@@ -490,22 +522,55 @@ def test_admin_adjustment_records_actor_and_preserves_nonnegative_balance(
     db.rollback()
 
 
-def test_user_created_event_provisions_account_with_event_trace(db: Session) -> None:
-    event = UserCreatedEvent(
-        event_id=uuid4(),
-        event_type="user.created",
-        occurred_at=datetime.now(timezone.utc),
-        correlation_id=uuid4(),
-        user_id=uuid4(),
-        nus_student_number="A0123456X",
+def test_valid_settlement_lazily_initializes_courier(db: Session) -> None:
+    requester = add_account(db)
+    courier_id = uuid4()
+    order_id = uuid4()
+    apply_order_event(
+        db,
+        order_event(
+            "order.created", requester_id=requester.user_id, order_id=order_id
+        ),
     )
-
-    apply_incoming_event(db, event, initial_allocation=100)
     db.commit()
 
-    account = db.get(CreditAccount, event.user_id)
-    audit = db.scalar(select(CreditTransaction))
-    assert account.available_balance == 100
-    assert audit.event_id == event.event_id
-    assert audit.correlation_id == event.correlation_id
-    assert db.get(ProcessedEvent, event.event_id) is not None
+    apply_order_event(
+        db,
+        order_event(
+            "order.completed",
+            requester_id=requester.user_id,
+            courier_id=courier_id,
+            order_id=order_id,
+        ),
+        initial_allocation=100,
+    )
+    db.commit()
+
+    courier = db.get(CreditAccount, courier_id)
+    assert courier.available_balance == 120
+    assert courier.initial_allocation_granted_at is not None
+    assert db.scalar(
+        select(func.count()).select_from(CreditTransaction).where(
+            CreditTransaction.affected_user_id == courier_id,
+            CreditTransaction.transaction_type == "INITIAL_ALLOCATION",
+        )
+    ) == 1
+
+
+def test_invalid_settlement_does_not_initialize_courier(db: Session) -> None:
+    requester = add_account(db)
+    courier_id = uuid4()
+
+    with pytest.raises(CreditStateConflict):
+        apply_order_event(
+            db,
+            order_event(
+                "order.completed",
+                requester_id=requester.user_id,
+                courier_id=courier_id,
+            ),
+            initial_allocation=100,
+        )
+    db.rollback()
+
+    assert db.get(CreditAccount, courier_id) is None

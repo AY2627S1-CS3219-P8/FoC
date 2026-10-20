@@ -17,7 +17,6 @@ from app.db import make_engine, make_session_factory
 from app.routes.credits import router as credits_router
 from app.services.credits import (
     CreditAccountNotFound,
-    CreditIdentifierConflict,
     InvalidCreditAdjustment,
 )
 
@@ -52,15 +51,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             status_code=404,
             content={"detail": str(error), "code": "CREDIT_ACCOUNT_NOT_FOUND"},
-        )
-
-    @app.exception_handler(CreditIdentifierConflict)
-    async def credit_identifier_conflict_handler(
-        _request: Request, error: CreditIdentifierConflict
-    ) -> JSONResponse:
-        return JSONResponse(
-            status_code=409,
-            content={"detail": str(error), "code": "CREDIT_IDENTIFIER_CONFLICT"},
         )
 
     @app.exception_handler(InvalidCreditAdjustment)

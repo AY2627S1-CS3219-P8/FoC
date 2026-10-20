@@ -2,16 +2,11 @@
 
 from sqlalchemy.orm import Session
 
-from app.events import (
-    IncomingEvent,
-    OrderEvent,
-    UserCreatedEvent,
-    enqueue_credit_event,
-)
+from app.events import IncomingEvent, OrderEvent, enqueue_credit_event
 from app.models import ProcessedEvent, utc_now
 from app.services.credits import (
     CreditStateConflict,
-    create_account,
+    ensure_credit_account,
     release_reserved_credits,
     reserve_credits,
     transfer_reserved_credits,
@@ -25,9 +20,18 @@ def _credit_payload(event: OrderEvent) -> dict[str, str | int]:
     }
 
 
-def handle_order_created(db: Session, event: OrderEvent) -> None:
+def handle_order_created(
+    db: Session, event: OrderEvent, *, initial_allocation: int
+) -> None:
     """Translate order creation into a Credit reservation decision."""
 
+    ensure_credit_account(
+        db,
+        user_id=event.requester_id,
+        initial_allocation=initial_allocation,
+        operation_id=event.event_id,
+        correlation_id=event.correlation_id,
+    )
     result = reserve_credits(
         db,
         order_id=event.order_id,
@@ -51,7 +55,9 @@ def handle_order_created(db: Session, event: OrderEvent) -> None:
     )
 
 
-def handle_order_completed(db: Session, event: OrderEvent) -> None:
+def handle_order_completed(
+    db: Session, event: OrderEvent, *, initial_allocation: int
+) -> None:
     """Settle a completed order without publishing another outcome event."""
 
     if event.courier_id is None:
@@ -65,10 +71,13 @@ def handle_order_completed(db: Session, event: OrderEvent) -> None:
         operation_id=event.event_id,
         correlation_id=event.correlation_id,
         settlement_reason="ORDER_COMPLETED",
+        initial_allocation=initial_allocation,
     )
 
 
-def handle_order_cancelled(db: Session, event: OrderEvent) -> None:
+def handle_order_cancelled(
+    db: Session, event: OrderEvent, *, initial_allocation: int
+) -> None:
     """Release before pickup, or compensate the courier after pickup."""
 
     if (event.previous_status or "").upper() == "PICKED_UP":
@@ -85,6 +94,7 @@ def handle_order_cancelled(db: Session, event: OrderEvent) -> None:
             operation_id=event.event_id,
             correlation_id=event.correlation_id,
             settlement_reason="ORDER_CANCELLED_AFTER_PICKUP",
+            initial_allocation=initial_allocation,
         )
         return
 
@@ -99,7 +109,9 @@ def handle_order_cancelled(db: Session, event: OrderEvent) -> None:
     )
 
 
-def handle_order_expired(db: Session, event: OrderEvent) -> None:
+def handle_order_expired(
+    db: Session, event: OrderEvent, *, initial_allocation: int
+) -> None:
     """Translate expiry into release of the requester's hold."""
 
     release_reserved_credits(
@@ -113,7 +125,9 @@ def handle_order_expired(db: Session, event: OrderEvent) -> None:
     )
 
 
-def apply_order_event(db: Session, event: OrderEvent) -> None:
+def apply_order_event(
+    db: Session, event: OrderEvent, *, initial_allocation: int = 100
+) -> None:
     """Route an integration event without placing transport concerns in domain code."""
 
     handlers = {
@@ -128,20 +142,7 @@ def apply_order_event(db: Session, event: OrderEvent) -> None:
         raise CreditStateConflict(
             f"Unsupported order event: {event.event_type}"
         ) from exc
-    handler(db, event)
-
-
-def apply_user_created_event(
-    db: Session, event: UserCreatedEvent, *, initial_allocation: int
-) -> None:
-    create_account(
-        db,
-        user_id=event.user_id,
-        nus_student_number=event.nus_student_number,
-        initial_allocation=initial_allocation,
-        operation_id=event.event_id,
-        correlation_id=event.correlation_id,
-    )
+    handler(db, event, initial_allocation=initial_allocation)
 
 
 def apply_incoming_event(
@@ -151,10 +152,7 @@ def apply_incoming_event(
 
     if db.get(ProcessedEvent, event.event_id) is not None:
         return
-    if isinstance(event, UserCreatedEvent):
-        apply_user_created_event(db, event, initial_allocation=initial_allocation)
-    else:
-        apply_order_event(db, event)
+    apply_order_event(db, event, initial_allocation=initial_allocation)
     db.add(
         ProcessedEvent(
             event_id=event.event_id,

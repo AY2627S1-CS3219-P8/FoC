@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
-from app.events import enqueue_user_created
 from app.schemas import UserCreate
 from app.services.users import hash_password
 
@@ -96,7 +95,6 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
             status="active",
         )
         db.add(user)
-        enqueue_user_created(db, user)
         lock.bootstrap_completed_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(user)

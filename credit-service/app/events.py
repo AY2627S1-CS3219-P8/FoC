@@ -1,7 +1,6 @@
 """Strict v1 event parsing and transactional outbox construction."""
 
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -9,15 +8,12 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from app.messaging import (
-    INCOMING_EVENT_TYPES,
     ORDER_EVENT_TYPES,
     OUTGOING_EVENT_TYPES,
-    USER_EVENT_TYPES,
 )
 from app.models import OutboxEvent, utc_now
 
 SCHEMA_VERSION = 1
-NUS_STUDENT_NUMBER_PATTERN = re.compile(r"[AU][0-9]{7}[A-Z]")
 
 
 class MalformedMessage(Exception):
@@ -37,17 +33,7 @@ class OrderEvent:
     previous_status: str | None = None
 
 
-@dataclass(frozen=True)
-class UserCreatedEvent:
-    event_id: UUID
-    event_type: str
-    occurred_at: datetime
-    correlation_id: UUID
-    user_id: UUID
-    nus_student_number: str
-
-
-IncomingEvent = OrderEvent | UserCreatedEvent
+IncomingEvent = OrderEvent
 
 
 def isoformat_utc(value: datetime) -> str:
@@ -117,69 +103,10 @@ def parse_order_event(body: bytes) -> OrderEvent:
         raise MalformedMessage from exc
 
 
-def parse_user_event(body: bytes) -> UserCreatedEvent:
-    """Validate an account-creation event from User Service."""
-
-    try:
-        data = json.loads(body)
-        if not isinstance(data, dict):
-            raise MalformedMessage
-        required = {
-            "event_id",
-            "event_type",
-            "schema_version",
-            "occurred_at",
-            "correlation_id",
-            "payload",
-        }
-        if not required.issubset(data):
-            raise MalformedMessage
-        if type(data["schema_version"]) is not int or data["schema_version"] != 1:
-            raise MalformedMessage
-        if data["event_type"] not in USER_EVENT_TYPES:
-            raise MalformedMessage
-        payload = data["payload"]
-        if not isinstance(payload, dict):
-            raise MalformedMessage
-        student_number = payload.get("nus_student_number")
-        if not isinstance(student_number, str):
-            raise MalformedMessage
-        student_number = student_number.strip().upper()
-        if NUS_STUDENT_NUMBER_PATTERN.fullmatch(student_number) is None:
-            raise MalformedMessage
-        occurred_at = datetime.fromisoformat(
-            str(data["occurred_at"]).replace("Z", "+00:00")
-        )
-        if occurred_at.tzinfo is None:
-            raise MalformedMessage
-        common = {
-            "event_id": UUID(str(data["event_id"])),
-            "event_type": data["event_type"],
-            "occurred_at": occurred_at,
-            "correlation_id": UUID(str(data["correlation_id"])),
-            "user_id": UUID(str(payload["user_id"])),
-            "nus_student_number": student_number,
-        }
-        return UserCreatedEvent(**common)
-    except MalformedMessage:
-        raise
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise MalformedMessage from exc
-
-
 def parse_incoming_event(body: bytes) -> IncomingEvent:
-    """Route a v1 envelope to its domain-specific strict parser."""
+    """Parse one supported Order Service event."""
 
-    try:
-        data = json.loads(body)
-        event_type = data.get("event_type") if isinstance(data, dict) else None
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise MalformedMessage from exc
-    if event_type not in INCOMING_EVENT_TYPES:
-        raise MalformedMessage
-    if event_type in ORDER_EVENT_TYPES:
-        return parse_order_event(body)
-    return parse_user_event(body)
+    return parse_order_event(body)
 
 
 def enqueue_credit_event(

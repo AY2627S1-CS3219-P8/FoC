@@ -16,9 +16,6 @@ from app.messaging import (
     ORDER_CONSUMER_GROUP,
     ORDER_EVENTS_DLQ,
     ORDER_TOPIC,
-    USER_CONSUMER_GROUP,
-    USER_EVENTS_DLQ,
-    USER_TOPIC,
 )
 from app.models import (
     CreditAccount,
@@ -27,7 +24,7 @@ from app.models import (
     OutboxEvent,
     ProcessedEvent,
 )
-from app.services.credits import CreditIdentifierConflict, CreditStateConflict
+from app.services.credits import CreditStateConflict
 from app.worker import (
     DeliveryResult,
     KafkaPublisher,
@@ -156,13 +153,6 @@ def kafka_message(
     )
 
 
-def user_created_body(student_number: str = "A0123456X") -> bytes:
-    return event_body(
-        "user.created",
-        {"user_id": str(uuid4()), "nus_student_number": student_number},
-    )
-
-
 def order_created_body(requester_id, amount: int = 20) -> bytes:
     return event_body(
         "order.created",
@@ -176,20 +166,14 @@ def order_created_body(requester_id, amount: int = 20) -> bytes:
 
 def test_streams_use_stable_groups_and_owned_dlqs(monkeypatch) -> None:
     order = EVENT_STREAMS["order"]
-    user = EVENT_STREAMS["user"]
     assert (order.topic, order.group_id, order.dlq_topic) == (
         ORDER_TOPIC,
         ORDER_CONSUMER_GROUP,
         ORDER_EVENTS_DLQ,
     )
-    assert (user.topic, user.group_id, user.dlq_topic) == (
-        USER_TOPIC,
-        USER_CONSUMER_GROUP,
-        USER_EVENTS_DLQ,
-    )
-
-    monkeypatch.setenv("CREDIT_EVENT_STREAM", "user")
-    assert selected_stream() == ("user", user)
+    assert set(EVENT_STREAMS) == {"order"}
+    monkeypatch.setenv("CREDIT_EVENT_STREAM", "order")
+    assert selected_stream() == ("order", order)
 
 
 def test_valid_unrelated_order_event_is_filtered_before_domain_parser() -> None:
@@ -215,16 +199,16 @@ def test_header_envelope_mismatch_is_quarantined() -> None:
 
 
 def test_missing_header_or_wrong_key_is_quarantined() -> None:
-    body = user_created_body()
-    message = kafka_message(body, topic=USER_TOPIC, key_field="user_id")
+    body = order_created_body(uuid4())
+    message = kafka_message(body)
     message._headers = []
-    assert inspect_transport_record(EVENT_STREAMS["user"], message).action == (
+    assert inspect_transport_record(EVENT_STREAMS["order"], message).action == (
         "QUARANTINE"
     )
 
-    message = kafka_message(body, topic=USER_TOPIC, key_field="user_id")
+    message = kafka_message(body)
     message._key = str(uuid4()).encode()
-    assert inspect_transport_record(EVENT_STREAMS["user"], message).action == (
+    assert inspect_transport_record(EVENT_STREAMS["order"], message).action == (
         "QUARANTINE"
     )
 
@@ -271,7 +255,7 @@ def test_malformed_event_is_dead_lettered_without_retry() -> None:
 
 
 def test_malformed_event_retains_safe_envelope_identifiers() -> None:
-    body = user_created_body("B0123456X")
+    body = order_created_body(uuid4(), amount=0)
     envelope = json.loads(body)
 
     outcome = process_delivery(
@@ -283,34 +267,28 @@ def test_malformed_event_retains_safe_envelope_identifiers() -> None:
     )
 
     assert outcome.failure_code == "MALFORMED_MESSAGE"
-    assert outcome.event_type == "user.created"
+    assert outcome.event_type == "order.created"
     assert outcome.event_id == UUID(envelope["event_id"])
     assert outcome.correlation_id == UUID(envelope["correlation_id"])
-    assert outcome.user_id == UUID(envelope["payload"]["user_id"])
+    assert outcome.order_id == UUID(envelope["payload"]["order_id"])
 
 
-@pytest.mark.parametrize(
-    ("create_account", "expected_reason"),
-    [(True, "INSUFFICIENT_CREDIT"), (False, "ACCOUNT_NOT_FOUND")],
-)
 def test_expected_reservation_rejection_is_committed_and_acknowledged(
-    create_account: bool, expected_reason: str
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
     requester_id = uuid4()
-    if create_account:
-        with Session(engine) as db:
-            db.add(
-                CreditAccount(
-                    user_id=requester_id,
-                    nus_student_number="A0123456X",
-                    available_balance=5,
-                    reserved_balance=0,
-                    status="active",
-                )
+    with Session(engine) as db:
+        db.add(
+            CreditAccount(
+                user_id=requester_id,
+                available_balance=5,
+                reserved_balance=0,
+                status="active",
+                initial_allocation_granted_at=datetime.now(timezone.utc),
             )
-            db.commit()
+        )
+        db.commit()
 
     outcome = process_delivery(
         lambda: Session(engine),
@@ -326,9 +304,9 @@ def test_expected_reservation_rejection_is_committed_and_acknowledged(
         audit = db.scalar(select(CreditTransaction))
         outbox = db.scalar(select(OutboxEvent))
         assert audit.outcome == "REJECTED"
-        assert audit.reason == expected_reason
+        assert audit.reason == "INSUFFICIENT_CREDIT"
         assert outbox.event_type == "credit.reservation_failed"
-        assert outbox.payload["reason"] == expected_reason
+        assert outbox.payload["reason"] == "INSUFFICIENT_CREDIT"
     engine.dispose()
 
 
@@ -349,7 +327,7 @@ def test_transient_failure_uses_configured_retry_schedule(monkeypatch) -> None:
     monkeypatch.setattr("app.worker.apply_incoming_event", fail_processing)
     outcome = process_delivery(
         session_factory,
-        user_created_body(),
+        order_created_body(uuid4()),
         initial_allocation=100,
         retry_backoff_seconds=(0.25, 0.75),
         sleep=sleeps.append,
@@ -385,7 +363,7 @@ def test_transient_failure_can_recover_on_a_later_attempt(monkeypatch) -> None:
     monkeypatch.setattr("app.worker.apply_incoming_event", fail_then_recover)
     outcome = process_delivery(
         session_factory,
-        user_created_body(),
+        order_created_body(uuid4()),
         initial_allocation=100,
         retry_backoff_seconds=(0.25, 0.75, 2.0),
         sleep=sleeps.append,
@@ -403,7 +381,6 @@ def test_transient_failure_can_recover_on_a_later_attempt(monkeypatch) -> None:
     ("error", "exception_type"),
     [
         (CreditStateConflict("released reservation"), "CreditStateConflict"),
-        (CreditIdentifierConflict("identifier collision"), "CreditIdentifierConflict"),
         (ValueError("invalid deterministic input"), "ValueError"),
     ],
 )
@@ -419,7 +396,7 @@ def test_deterministic_failure_bypasses_retry(
     monkeypatch.setattr("app.worker.apply_incoming_event", fail_processing)
     outcome = process_delivery(
         lambda: session,
-        user_created_body(),
+        order_created_body(uuid4()),
         initial_allocation=100,
         retry_backoff_seconds=(0.25, 0.75),
         sleep=sleeps.append,
@@ -444,7 +421,7 @@ def test_unexpected_runtime_error_is_not_blindly_retried(monkeypatch) -> None:
     )
     outcome = process_delivery(
         lambda: session,
-        user_created_body(),
+        order_created_body(uuid4()),
         initial_allocation=100,
         retry_backoff_seconds=(0.25, 0.75),
         sleep=sleeps.append,
@@ -486,8 +463,8 @@ def test_quarantine_preserves_record_and_adds_source_diagnostics(monkeypatch) ->
     body = b"original-payload"
     message = FakeMessage(
         body,
-        topic=USER_TOPIC,
-        key=b"user-key",
+        topic=ORDER_TOPIC,
+        key=b"order-key",
         headers=[("existing", b"header")],
         partition=1,
         offset=23,
@@ -502,18 +479,18 @@ def test_quarantine_preserves_record_and_adds_source_diagnostics(monkeypatch) ->
         lambda: datetime(2026, 10, 19, 4, 5, 6, tzinfo=timezone.utc),
     )
 
-    publisher.dead_letter(message, dlq_topic=USER_EVENTS_DLQ, result=result)
+    publisher.dead_letter(message, dlq_topic=ORDER_EVENTS_DLQ, result=result)
 
     record = producer.records[0]
-    assert record["topic"] == USER_EVENTS_DLQ
-    assert record["key"] == b"user-key"
+    assert record["topic"] == ORDER_EVENTS_DLQ
+    assert record["key"] == b"order-key"
     assert record["value"] is body
     assert dict(record["headers"]) == {
         "existing": b"header",
         "x-credit-failure-code": b"TRANSIENT_RETRIES_EXHAUSTED",
         "x-credit-failed-at": b"2026-10-19T04:05:06Z",
         "x-credit-failed-attempts": b"3",
-        "x-credit-source-topic": USER_TOPIC.encode(),
+        "x-credit-source-topic": ORDER_TOPIC.encode(),
         "x-credit-source-partition": b"1",
         "x-credit-source-offset": b"23",
     }
@@ -603,10 +580,10 @@ def test_database_commit_then_offset_failure_is_idempotent_on_redelivery() -> No
         db.add(
             CreditAccount(
                 user_id=requester_id,
-                nus_student_number="A0123456X",
                 available_balance=100,
                 reserved_balance=0,
                 status="active",
+                initial_allocation_granted_at=datetime.now(timezone.utc),
             )
         )
         db.commit()

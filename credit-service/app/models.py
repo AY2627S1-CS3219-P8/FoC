@@ -50,16 +50,9 @@ class CreditAccount(Base):
             "status IN ('active', 'suspended', 'deactivated')",
             name="ck_credit_accounts_status",
         ),
-        CheckConstraint(
-            "length(nus_student_number) = 9",
-            name="ck_credit_accounts_student_number_length",
-        ),
     )
 
     user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, nullable=False)
-    nus_student_number: Mapped[str] = mapped_column(
-        String(9), unique=True, nullable=False
-    )
     available_balance: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )

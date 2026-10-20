@@ -72,27 +72,6 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
-  user-worker:
-    build: ./user-service
-    container_name: user-worker
-    command: ["python", "-m", "app.worker"]
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      PYTHONUNBUFFERED: "1"
-    depends_on:
-      user-db:
-        condition: service_healthy
-      user-migrate:
-        condition: service_completed_successfully
-      kafka-topics:
-        condition: service_completed_successfully
-    healthcheck:
-      disable: true
-
   frontend-service:
     build:
       context: ./frontend-service
@@ -250,35 +229,6 @@ services:
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       CREDIT_EVENT_STREAM: order
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      PYTHONUNBUFFERED: "1"
-    depends_on:
-      credit-db:
-        condition: service_healthy
-      credit-migrate:
-        condition: service_completed_successfully
-      kafka-topics:
-        condition: service_completed_successfully
-    networks:
-      - default
-      - credit-private
-    healthcheck:
-      disable: true
-
-  credit-user-worker:
-    image: foc-credit-service:local
-    build: ./credit-service
-    container_name: credit-user-worker
-    command: ["python", "-m", "app.worker"]
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
-      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
-      USER_SERVICE_URL: http://user-service:8080
-      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
-      CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
-      CREDIT_EVENT_STREAM: user
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"

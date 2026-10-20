@@ -10,10 +10,8 @@ automatic topic creation is disabled.
 | --- | ---: | --- | --- | --- |
 | `order.events` | 3 | forever | `order_id` | Order Service |
 | `credit.events` | 3 | forever | `order_id` | Credit Service |
-| `user.events` | 3 | forever | `user_id` | User Service |
 | `order-service.credit-events.dlq` | 1 | 7 days | copied source key | Order Service |
 | `credit-service.order-events.dlq` | 1 | 7 days | copied source key | Credit Service |
-| `credit-service.user-events.dlq` | 1 | 7 days | copied source key | Credit Service |
 
 Records for one aggregate use the same key and therefore remain ordered within
 one partition. Different aggregates can be processed in parallel. Each service

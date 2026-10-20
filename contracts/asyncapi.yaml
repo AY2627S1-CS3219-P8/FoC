@@ -9,12 +9,6 @@ servers:
     host: kafka:9092
     protocol: kafka
 channels:
-  userEvents:
-    address: user.events
-    description: User-domain events keyed by payload.user_id.
-    messages:
-      userCreated:
-        $ref: '#/components/messages/UserCreated'
   orderEvents:
     address: order.events
     description: Order lifecycle events keyed by payload.order_id.
@@ -29,19 +23,6 @@ channels:
         $ref: '#/components/messages/CreditEvent'
 components:
   messages:
-    UserCreated:
-      name: user.created
-      headers:
-        $ref: '#/components/schemas/KafkaHeaders'
-      payload:
-        allOf:
-          - $ref: '#/components/schemas/Envelope'
-          - type: object
-            properties:
-              event_type:
-                const: user.created
-              payload:
-                $ref: '#/components/schemas/UserIdentityPayload'
     OrderEvent:
       name: order.lifecycle
       headers:
@@ -114,16 +95,6 @@ components:
           format: uuid
         payload:
           type: object
-    UserIdentityPayload:
-      type: object
-      required: [user_id, nus_student_number]
-      properties:
-        user_id:
-          type: string
-          format: uuid
-        nus_student_number:
-          type: string
-          pattern: '^[AU][0-9]{7}[A-Z]$'
     OrderPayload:
       type: object
       required: [order_id, requester_id, credit_amount]

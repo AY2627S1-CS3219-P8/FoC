@@ -58,7 +58,6 @@ class DeliveryResult:
     event_id: UUID | None = None
     correlation_id: UUID | None = None
     order_id: UUID | None = None
-    user_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -181,7 +180,6 @@ def _delivery_result(
     raw_event_id = None
     raw_correlation_id = None
     raw_order_id = None
-    raw_user_id = None
     if event is None and body is not None:
         try:
             envelope = json.loads(body)
@@ -198,7 +196,6 @@ def _delivery_result(
             raw_event_id = _safe_uuid(envelope.get("event_id"))
             raw_correlation_id = _safe_uuid(envelope.get("correlation_id"))
             raw_order_id = _safe_uuid(payload.get("order_id"))
-            raw_user_id = _safe_uuid(payload.get("user_id"))
         except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
             pass
     return DeliveryResult(
@@ -210,7 +207,6 @@ def _delivery_result(
         event_id=getattr(event, "event_id", raw_event_id),
         correlation_id=getattr(event, "correlation_id", raw_correlation_id),
         order_id=getattr(event, "order_id", raw_order_id),
-        user_id=getattr(event, "user_id", raw_user_id),
     )
 
 
@@ -250,7 +246,7 @@ def _log_failure(result: DeliveryResult, error: Exception) -> None:
     logger.error(
         "credit_event_quarantined failure_code=%s attempts=%s "
         "exception_type=%s event_type=%s event_id=%s correlation_id=%s "
-        "order_id=%s user_id=%s",
+        "order_id=%s",
         result.failure_code,
         result.attempts,
         result.exception_type,
@@ -258,7 +254,6 @@ def _log_failure(result: DeliveryResult, error: Exception) -> None:
         result.event_id,
         result.correlation_id,
         result.order_id,
-        result.user_id,
         exc_info=(type(error), error, error.__traceback__),
     )
 
@@ -566,10 +561,7 @@ def main() -> None:
                     initial_allocation=settings.initial_credit_allocation,
                     retry_backoff_seconds=settings.retry_backoff_seconds,
                 )
-            # Only the order worker relays credit.* results. This prevents
-            # avoidable duplicate publication when User workers are scaled.
-            if stream_name == "order":
-                _relay(session_factory, publisher)
+            _relay(session_factory, publisher)
     finally:
         consumer.close()
         producer.flush(PUBLISH_TIMEOUT_SECONDS)

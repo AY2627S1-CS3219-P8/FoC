@@ -13,8 +13,6 @@ Topic and consumer ownership:
 
 - Order Service publishes `order.events`; Credit Service consumes it as
   `credit-service-order`.
-- User Service publishes `user.events`; Credit Service consumes it as
-  `credit-service-user`.
 - Credit Service publishes `credit.events`; Order Service consumes it with its
   own stable group.
 
@@ -24,6 +22,12 @@ their offsets only after durable processing or confirmed DLQ publication.
 Credit Service reports credit outcomes, while Order Service owns the resulting
 Order state changes.
 
+Credit accounts are UUID-only and initialized lazily from relevant order
+events. `order.created` initializes the requester before reservation.
+`order.completed`, and `order.cancelled` after pickup, initialize the courier
+only after validating the active reservation. User registration and
+`order.picked_up` do not initialize Credit accounts.
+
 For `order.cancelled`, Credit Service uses `previous_status` to select the
 financial outcome. Before pickup it releases the reservation to the requester.
 After `PICKED_UP`, the event must include `courier_id`; Credit Service transfers
@@ -31,8 +35,7 @@ the reservation to that courier and records `ORDER_CANCELLED_AFTER_PICKUP` in
 its audit trail. Completion, cancellation, and expiry do not publish Credit
 outcome events.
 
-`order.events` and `credit.events` records are keyed by `order_id`;
-`user.events` records are keyed by `user_id`. Kafka therefore preserves order
+`order.events` and `credit.events` records are keyed by `order_id`. Kafka therefore preserves order
 for one aggregate within its partition while allowing different aggregates to
 be processed in parallel. Records also carry `event_type` and `event_id`
 headers matching the JSON envelope.

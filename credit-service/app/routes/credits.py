@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -20,7 +20,7 @@ from app.schemas import (
 )
 from app.services.credits import (
     adjust_account,
-    create_account,
+    ensure_credit_account,
     get_account,
     list_transactions,
 )
@@ -102,20 +102,21 @@ def admin_adjust(
 )
 def provision_account(
     user_id: UUID,
-    payload: CreditAccountCreate,
     admin: CurrentAdmin,
     request: Request,
     db: Db,
+    payload: Annotated[CreditAccountCreate, Body()] = CreditAccountCreate(),
 ) -> CreditBalanceResponse:
-    if payload.user_id != user_id:
+    if payload.user_id is not None and payload.user_id != user_id:
         raise HTTPException(status_code=422, detail="Path and payload user IDs differ")
-    account = create_account(
+    operation_id = uuid4()
+    account = ensure_credit_account(
         db,
-        user_id=payload.user_id,
-        nus_student_number=payload.nus_student_number,
+        user_id=user_id,
         initial_allocation=request.app.state.settings.initial_credit_allocation,
         actor_user_id=admin.id,
-        correlation_id=uuid4(),
+        operation_id=operation_id,
+        correlation_id=operation_id,
     )
     db.commit()
     db.refresh(account)

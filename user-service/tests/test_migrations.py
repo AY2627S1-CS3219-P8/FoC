@@ -99,10 +99,10 @@ def test_fresh_database_reaches_migration_head(tmp_path):
         "users",
         "user_sessions",
         "admin_state_locks",
-        "user_outbox_events",
         "alembic_version",
     } <= tables
-    assert version == "20261017_0006"
+    assert "user_outbox_events" not in tables
+    assert version == "20261020_0007"
 
 
 def test_check_constraint_validation_accepts_postgresql_rendering():
@@ -163,7 +163,7 @@ with Session(engine) as database:
             "SELECT lock_name FROM admin_state_locks"
         ).fetchone()[0]
 
-    assert version == "20261017_0006"
+    assert version == "20261020_0007"
     assert user_count == 1
     assert lock_name == "administrator_state"
 

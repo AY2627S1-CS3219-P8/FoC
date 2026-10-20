@@ -10,13 +10,15 @@ envelopes, Kafka code, HTTP schemas, or outbox helpers.
 incoming events into domain calls and translates domain results into outbox
 events. `app/worker.py` owns retry, commit, acknowledgement, and dead lettering.
 
-## Account creation
+## Lazy account initialization
 
-1. Validate and normalize domain inputs.
-2. Lock and compare the User UUID and NUS student number.
-3. Create a zero-balance account only when neither identifier exists.
-4. Use `initial_allocation_granted_at` as the durable allocation marker.
-5. Grant and ledger the allocation in the caller-owned transaction.
+1. Validate the configured allocation.
+2. Insert the UUID-only account with `ON CONFLICT DO NOTHING`, closing the
+   missing-row race between Kafka partitions.
+3. Lock the durable account row.
+4. Use `initial_allocation_granted_at` as the one-time allocation marker.
+5. Grant only to an active account and ledger the allocation in the
+   caller-owned transaction.
 
 ## Reservation
 
@@ -26,15 +28,18 @@ events. `app/worker.py` owns retry, commit, acknowledgement, and dead lettering.
 4. Move the amount from available to reserved without changing total credit.
 5. Record the signed balance movement.
 
-Stable rejection codes are `ACCOUNT_NOT_FOUND`, `ACCOUNT_NOT_ACTIVE`, and
+Stable lazy-flow rejection codes are `ACCOUNT_NOT_ACTIVE` and
 `INSUFFICIENT_CREDIT`.
 
 ## Transfer
 
 1. Lock and validate the active reservation.
-2. Lock requester and courier accounts in UUID order.
-3. Move requester reserved credit to courier available credit.
-4. Record one signed ledger row for each side with the settlement reason.
+2. Conflict-safely insert a missing courier only after reservation validation.
+3. Lock requester and courier accounts in UUID order.
+4. Validate both locked accounts, then grant the courier's initial allocation
+   exactly once.
+5. Move requester reserved credit to courier available credit.
+6. Record one signed ledger row for each side with the settlement reason.
 
 The same Credit operation supports two domain reasons:
 
@@ -64,14 +69,15 @@ pickup uses transfer, not release.
 
 ## Event adaptation
 
-- `order.created` calls reservation and emits `credit.reserved` or
+- `order.created` initializes the requester, calls reservation, and emits `credit.reserved` or
   `credit.reservation_failed`.
-- `order.completed` calls transfer with `ORDER_COMPLETED` and emits no event.
+- `order.completed` validates the reservation, initializes the courier, calls
+  transfer with `ORDER_COMPLETED`, and emits no event.
 - `order.cancelled` from `PICKED_UP` calls transfer with
   `ORDER_CANCELLED_AFTER_PICKUP` and emits no event.
 - Other `order.cancelled` events and `order.expired` call release and emit no
   event.
-- `user.created` calls account creation and initial allocation.
+- `user.created` is not consumed. `order.picked_up` is ignored.
 
 The adapter stages the inbox marker, any reservation-result outbox event, the
 domain mutation, and ledger rows in one transaction. It does not modify Order

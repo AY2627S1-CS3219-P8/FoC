@@ -371,30 +371,9 @@ Milestone 1 document, especially functional requirements F5–F9 and User
 Service non-functional requirements NFR7. The README is a service-level guide;
 the project document remains the authoritative source for the full
 requirements set.
-## User account events
+## Credit account initialization
 
-Account creation is integrated with Credit Service through a transactional
-outbox. Registration and administrator bootstrap both stage `user.created` in
-the same PostgreSQL transaction as the new user. `user-worker` publishes the
-event to the durable `user.events` Kafka topic only after commit.
-
-```json
-{
-  "event_id": "uuid",
-  "event_type": "user.created",
-  "schema_version": 1,
-  "occurred_at": "2026-10-17T04:00:00Z",
-  "correlation_id": "uuid",
-  "payload": {
-    "user_id": "uuid",
-    "nus_student_number": "A0123456X"
-  }
-}
-```
-
-The worker keys `user.created` by `user_id` and supplies matching `event_type`
-and `event_id` Kafka headers. It marks the outbox row published only after a
-delivery acknowledgement. Credit Service independently consumes `user.events`
-as group `credit-service-user`. A broker outage does not roll back a
-successfully registered user; the unpublished outbox row is retried when the
-worker reconnects or restarts.
+User registration and administrator bootstrap do not provision Credit
+accounts or publish `user.created`. Credit Service owns provisioning and lazily
+initializes its UUID-only accounts from qualifying Order Service events. This
+keeps User Service independent of Credit provisioning state.

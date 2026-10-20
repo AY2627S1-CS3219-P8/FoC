@@ -1,6 +1,5 @@
 """Validated request and response contracts for the Credit Service."""
 
-import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -9,22 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CreditAccountCreate(BaseModel):
-    """Trusted registration handoff from the User Service."""
+    """Optional UUID confirmation for administrator recovery provisioning."""
 
     model_config = ConfigDict(extra="forbid")
 
-    user_id: UUID
-    nus_student_number: str = Field(min_length=9, max_length=9)
-
-    @field_validator("nus_student_number", mode="before")
-    @classmethod
-    def student_number_format(cls, value: object) -> str:
-        if not isinstance(value, str):
-            raise ValueError("must be a string")
-        value = value.strip().upper()
-        if not re.fullmatch(r"[AU][0-9]{7}[A-Z]", value):
-            raise ValueError("must be a valid NUS student number")
-        return value
+    user_id: UUID | None = None
 
 
 class CreditBalanceResponse(BaseModel):
