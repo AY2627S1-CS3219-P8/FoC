@@ -51,6 +51,12 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
 
 Services can be run via the root [`compose.yaml`](./compose.yaml).
 
+If `.env` does not exist, copy `.env.example` to `.env` and configure its required
+credentials. Supplier startup automatically enables PostGIS, provisions its
+database roles, runs migrations, and applies runtime grants before starting the
+API. No manual SQL setup is needed; see the
+[Supplier startup guide](supplier-service/README.md#docker-compose).
+
 Start the services:
 
 ```bash
