@@ -327,4 +327,242 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   redactions or header exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
 
+- [Synchronous Supplier User Service client](supplier-service/ai/usage-log.md#ai-20260930-019):
+  Codex (GPT-6) provided Writing implementation code for the client and mock
+  tests, and Boilerplate generation for the client package and HTTPX dependency
+  relocation. All five files were retained; Keith approved the original
+  implementation. During that exchange, 71 focused tests and all 655 unit/API
+  tests passed with one existing dependency warning; scoped whitespace checks
+  passed. Live-service and database integration checks were not run; no human
+  test rerun is claimed. The exact prompt and final response are recorded;
+  original timestamp unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier User Service client lifecycle](supplier-service/ai/usage-log.md#ai-20260930-020):
+  Codex (GPT-6) provided Writing implementation code for the application factory
+  and startup tests. Retained changes share one client per lifespan and clean up
+  client/database resources on shutdown and startup failures. Agent checks passed
+  10 startup tests and all 666 unit/API tests with one existing dependency warning;
+  scoped whitespace checks passed. Live-service and database integration checks
+  were not run. Keith subsequently confirmed review of both affected files; no
+  human test rerun is claimed. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier authentication and administrator dependencies](supplier-service/ai/usage-log.md#ai-20260930-021):
+  Codex (GPT-6) provided Writing implementation code for authentication
+  dependencies, the dedicated error handler, and isolated API tests. All three
+  files were retained and reviewed by Keith for this implementation. Agent checks
+  passed 47 combined authentication/validation-error tests and all 695 unit/API
+  tests, including 29 new tests, with one existing dependency warning; scoped
+  whitespace checks passed. An initial test-file path error was corrected.
+  Live-service and database integration checks were not run; no human test rerun
+  is claimed. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Public Supplier and reference-data reads](supplier-service/ai/usage-log.md#ai-20260930-022):
+  Codex (GPT-6) provided Writing implementation code for router registration and
+  read/probe regression tests, plus Refactoring and documentation improvements
+  for router descriptions and verification guidance. All eight affected files
+  were retained and reviewed by Keith, including the additional validation-test
+  correction. Agent checks passed 121 focused tests and all 723 unit/API tests
+  after correcting the stale route-exclusion assertion, with one dependency
+  warning; syntax and scoped whitespace checks passed. No Compose services were
+  running, so live login/logout checks were not performed; database integration
+  tests were not run. No human test rerun is claimed. The exact prompt and final
+  response are recorded; original timestamp unavailable, with no redactions or
+  header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Shared supplier seed/create insertion](supplier-service/ai/usage-log.md#ai-20261001-001):
+  Codex (GPT-6) provided Writing implementation code for the repository helper
+  and direct integration coverage, plus Refactoring and documentation improvements
+  for the docstring. Retained work excludes category IDs from supplier inserts and
+  preserves separate assignments and caller-owned transactions. Historical agent
+  checks passed 62 seed integration tests, 723 unit/API tests, two focused SQL
+  cases, and scoped whitespace checks, with one existing dependency warning.
+  Subsequent test edits have unestablished authorship/timing and are not covered
+  by those historical results. Keith confirmed review of both affected files; Keith also confirmed a test rerun, with commands and results unspecified. The exact prompt and
+  final response are recorded; original timestamp unavailable, with no redactions
+  or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Atomic supplier creation service](supplier-service/ai/usage-log.md#ai-20261001-002):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the creation service, plus Writing implementation
+  code and Boilerplate generation for isolated PostGIS coverage. Retained changes
+  validate and persist atomically, return detached values after commit, translate
+  only the exact duplicate constraint, and never retry uncertain writes. Agent
+  checks passed 878 creation/read/seed/unit/API tests, including 39 new creation
+  cases, with one dependency warning; syntax and scoped whitespace checks passed.
+  Keith confirmed review of both files; no human test rerun is claimed for this
+  increment. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Administrator supplier POST adapter](supplier-service/ai/usage-log.md#ai-20261001-003):
+  Codex (GPT-6) provided Writing implementation code for the POST adapter and
+  API regressions, plus Refactoring and documentation improvements for the router
+  docstring. All four files were retained and reviewed by Keith, including the
+  additional GET-registration assertion correction. Agent checks passed 148
+  focused API tests and all 765 unit/API tests, including 42 new POST cases,
+  with one dependency warning; syntax and scoped whitespace checks passed.
+  Controlled User Service responses exercised real authentication dependencies.
+  Live-service and PostGIS checks were not run for this increment; no human test
+  rerun is claimed. The exact prompt and verbatim relevant response excerpt are
+  recorded; original timestamp unavailable, with no redactions or header exceptions.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier POST duplicate-policy and concurrency verification](supplier-service/ai/usage-log.md#ai-20261001-004):
+  Codex (GPT-6) provided Writing implementation code and Boilerplate generation
+  for 12 additional PostGIS-backed cases in the creation integration test file.
+  Retained tests cover exact duplicate rules, deleted-history preservation,
+  canonical public reads, rollback, and synchronized independent commit/rollback
+  races using mounted routes and controlled administrator authentication. Agent
+  checks passed 199 tests, including 51 creation integration and 148 API cases,
+  with one dependency warning; syntax and scoped whitespace checks passed.
+  Disposable migrated databases were cleaned up. Keith confirmed review of the
+  test file; no human test rerun is claimed for this increment. No requested checks
+  were blocked. The exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Supplier creation documentation](supplier-service/ai/usage-log.md#ai-20261001-005):
+  Codex (GPT-6) provided Refactoring and documentation improvements for the service
+  README and Writing implementation code for its live HTTP smoke procedure.
+  Retained content documents implemented POST, canonical examples, safe errors,
+  atomic persistence, seed/API reuse, and planned feature boundaries. Schema and
+  canonical-example checks, script syntax, paths, anchors, and whitespace checks
+  passed. No application suite was rerun; live smoke was not executed without an
+  approved administrator account and agreed provisioning process. Keith confirmed
+  review of the README and procedure; no human test rerun is claimed for this
+  increment. Exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Atomic versioned supplier updates](supplier-service/ai/usage-log.md#ai-20261001-006):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the service/repository layers, plus Writing
+  implementation code and Boilerplate generation for update tests. Retained work
+  adds merged validation, atomic version checks and category replacement, fresh
+  conflict classification, and detached post-commit responses. Agent checks passed
+  44 update cases, 51 creation integration cases, and 765 unit/API tests, with one
+  dependency warning; syntax and whitespace checks passed. Temporary PostGIS
+  resources were removed. Broader read/seed/schema suites were not run; no checks
+  remained blocked. Keith reviewed all three files; no human test rerun is claimed.
+  Exact prompt and final response are recorded; original timestamp unavailable,
+  with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Administrator supplier PATCH adapter](supplier-service/ai/usage-log.md#ai-20261001-007):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the route, Writing implementation code and
+  Boilerplate generation for API tests, and Writing implementation code and
+  Debugging assistance for the stale registration assertion. Retained work adds
+  administrator-only PATCH, aggregate validation, positive expected versions,
+  canonical saved output, and safe errors through the existing atomic service.
+  Agent checks passed 55 new PATCH cases and all 820 unit/API tests after the
+  assertion correction, with one dependency warning; syntax and whitespace checks
+  passed. Live-service and PostGIS checks were not rerun. Keith reviewed all three
+  files; no human test rerun is claimed. Exact prompt and final response are
+  recorded; original timestamp unavailable, with no redactions or header exceptions.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [PATCH concurrency and rollback verification](supplier-service/ai/usage-log.md#ai-20261001-008):
+  Codex (GPT-6) provided Writing implementation code and Boilerplate generation
+  for 13 additional update integration cases. Retained tests exercise mounted
+  routes and real PostGIS with controlled authentication, synchronized independent
+  writes, complete rollback snapshots, stale/no-op behavior, canonical public
+  reads, and deletion-race classification. Agent checks passed 57 update integration
+  cases and 174 selected API cases, with one dependency warning; syntax and
+  whitespace checks passed. Disposable resources were removed. No requested checks
+  were blocked; broader suites and live authentication were not run. Keith reviewed
+  the retained changes; no human test rerun is claimed. The exact prompt and verbatim
+  relevant response excerpt are recorded; original timestamp unavailable, with no
+  redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Implemented PATCH documentation](supplier-service/ai/usage-log.md#ai-20261001-009):
+  Codex (GPT-6) provided Refactoring and documentation improvements for the
+  Supplier Service README. Retained changes document mounted administrator PATCH,
+  version checks, complete saved/conflict examples, atomic failure behavior, and
+  test coverage/prerequisites while preserving planned DELETE and administrative
+  reads. Merged example validation, exact canonical response comparison, conflict
+  body, test paths, summary placement, and whitespace checks passed. No application
+  suite or live smoke check was rerun; prior results remain historical. Keith
+  reviewed the retained README changes; no human test rerun is claimed. Exact
+  prompt and final response are recorded; original timestamp unavailable, with
+  no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Atomic supplier soft deletion](supplier-service/ai/usage-log.md#ai-20261001-010):
+  Codex (GPT-6) provided Writing implementation code and Refactoring and
+  documentation improvements for the supplier repository/service, and Writing
+  implementation code and Boilerplate generation for 31 new integration cases.
+  Retained work adds refreshed row locking, version checks, write-free repeated
+  deletion, preserved columns/assignments, and safe transaction failures without
+  retries. Agent checks passed 88 update/deletion integration cases and 820 unit/API
+  tests, with one dependency warning per suite; scoped whitespace checks passed.
+  Disposable PostGIS resources were removed; broader integration suites were not
+  run. Keith reviewed all three files; no human test rerun is claimed. Exact prompt
+  and final response are recorded; original timestamp unavailable, with no
+  redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Administrator supplier DELETE adapter](supplier-service/ai/usage-log.md#ai-20261001-011):
+  Codex (GPT-6) provided Writing implementation code, Refactoring and documentation
+  improvements, Boilerplate generation, and Debugging assistance across the new
+  administrator router, app registration, API tests, and route assertion correction.
+  Retained work adds positive-version validation, empty 204 after service completion,
+  safe errors, and 31 DELETE cases covering authentication, repeat deletion,
+  transaction failure, cleanup, no retries, and OpenAPI. Agent checks passed
+  86 focused adapter cases and all 851 unit/API tests, with one dependency warning
+  per suite; whitespace checks passed. Controlled dependencies required no external
+  services; PostGIS integration was not rerun for this adapter. Keith reviewed all
+  four files; no human test rerun is claimed. Exact prompt and final response are
+  recorded; original timestamp unavailable, with no redactions or header exceptions.
+  See the [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Protected administrator supplier reads](supplier-service/ai/usage-log.md#ai-20261001-012):
+  Codex (GPT-6) provided Writing implementation code, Refactoring and documentation
+  improvements, and Debugging assistance across the supplier repository/service,
+  administrator router, and API/integration read tests. Retained work adds protected
+  status-filtered listing and complete active/deleted detail reads while preserving
+  anonymous active-only public reads. Agent checks passed 883 unit/API tests
+  (including 91 focused read API cases) and 85 read integration tests against
+  disposable PostGIS, with one dependency warning per suite; scoped whitespace
+  checks passed. Initial route and working-directory errors were corrected and
+  the test container removed. Broader integration suites and live authentication
+  were not run. Keith reviewed all five files; no human test rerun is claimed.
+  Exact prompt and final response are recorded; original timestamp unavailable,
+  with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Deletion lifecycle verification](supplier-service/ai/usage-log.md#ai-20261001-013):
+  Codex (GPT-6) provided Writing implementation code and Boilerplate generation
+  for five integration cases across supplier updates, reads, and seed imports.
+  Retained tests verify mounted deletion visibility, stable repeat deletion,
+  real DELETE/PATCH contention, complete retained state, cleanup, and seed
+  reimport preservation. All 240 integration cases passed against disposable
+  PostGIS, with one dependency warning; collection and whitespace checks passed.
+  Test resources were removed; no requested checks remained blocked. Authentication
+  was controlled, not live. Keith reviewed all three files; no human rerun is
+  claimed. Exact prompt and final response are recorded; original timestamp
+  unavailable, with no redactions or header exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Deletion and administrator-read documentation](supplier-service/ai/usage-log.md#ai-20261001-014):
+  Codex (GPT-6) provided Refactoring and documentation improvements for the
+  Supplier Service README, covering implemented contracts, retention/concurrency,
+  seed preservation, separate service authentication, examples, and verification
+  commands. A follow-up fixed a remaining stale claim with an internal link.
+  Canonical examples, OpenAPI declarations, test links, summary placement, and
+  whitespace checks passed; application suites and live authentication were not
+  rerun. Historical results remain historical. Keith reviewed the retained work
+  and correction; no human rerun is claimed. Exact prompts and relevant responses
+  are recorded; original timestamps unavailable, with no redactions or header
+  exceptions. See the
+  [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
 Disclosure-only updates do not establish submission readiness.
