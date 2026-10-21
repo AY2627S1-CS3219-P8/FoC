@@ -226,7 +226,7 @@ details, so review them before sharing.
 ## Local Alembic commands and revision behavior
 
 From `supplier-service/`, export `DATABASE_URL` for the migration role and
-`USER_SERVICE_URL=http://localhost:8000` (required by shared settings):
+`USER_SERVICE_URL=https://localhost:8000` (required by shared settings):
 
 ```bash
 .venv/bin/python -m alembic upgrade head

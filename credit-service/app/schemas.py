@@ -1,7 +1,6 @@
 """Validated request and response contracts for the Credit Service."""
 
 from datetime import datetime
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -24,7 +23,6 @@ class CreditBalanceResponse(BaseModel):
     available_balance: int
     reserved_balance: int
     total_balance: int
-    status: Literal["active", "suspended", "deactivated"]
     created_at: datetime
     updated_at: datetime
 

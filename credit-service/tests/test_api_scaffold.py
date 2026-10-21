@@ -1,6 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
+import certifi
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_identity
@@ -13,7 +14,8 @@ from app.main import create_app
 def settings(database_url: str = "sqlite+pysqlite:///:memory:") -> Settings:
     return Settings(
         database_url=database_url,
-        user_service_url="http://user-service.test",
+        user_service_url="https://user-service.test",
+        user_service_ca_file=certifi.where(),
         initial_credit_allocation=100,
     )
 
@@ -55,5 +57,7 @@ def test_admin_can_use_idempotent_account_recovery(tmp_path: Path) -> None:
         )
     assert response.status_code == 201
     assert response.json()["available_balance"] == 100
+    assert "status" not in response.json()
     assert replay.status_code == 201
     assert replay.json()["available_balance"] == 100
+    assert "status" not in replay.json()

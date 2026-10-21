@@ -95,8 +95,3 @@ def upgrade() -> None:
         ["id"],
         postgresql_where=sa.text("published_at IS NULL"),
     )
-
-
-def downgrade() -> None:
-    op.drop_index("ix_user_outbox_unpublished", table_name="user_outbox_events")
-    op.drop_table("user_outbox_events")

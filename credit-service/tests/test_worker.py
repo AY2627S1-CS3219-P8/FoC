@@ -284,7 +284,6 @@ def test_expected_reservation_rejection_is_committed_and_acknowledged(
                 user_id=requester_id,
                 available_balance=5,
                 reserved_balance=0,
-                status="active",
                 initial_allocation_granted_at=datetime.now(timezone.utc),
             )
         )
@@ -582,7 +581,6 @@ def test_database_commit_then_offset_failure_is_idempotent_on_redelivery() -> No
                 user_id=requester_id,
                 available_balance=100,
                 reserved_balance=0,
-                status="active",
                 initial_allocation_granted_at=datetime.now(timezone.utc),
             )
         )

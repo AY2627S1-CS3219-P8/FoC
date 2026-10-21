@@ -27,3 +27,10 @@ class Settings(BaseSettings):
 
         # Return the validated URL
         return value
+
+    @field_validator("user_service_url", mode="after")
+    @classmethod
+    def require_https_user_service(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        if value.scheme != "https":
+            raise ValueError("USER_SERVICE_URL must use HTTPS")
+        return value

@@ -35,7 +35,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = active_settings
         app.state.engine = make_engine(active_settings.database_url)
         app.state.session_factory = make_session_factory(app.state.engine)
-        app.state.user_client = UserServiceClient(active_settings.user_service_url)
+        app.state.user_client = UserServiceClient(
+            active_settings.user_service_url,
+            active_settings.user_service_ca_file,
+        )
         try:
             yield
         finally:

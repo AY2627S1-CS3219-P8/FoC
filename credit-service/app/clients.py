@@ -1,5 +1,6 @@
 """HTTP client adapters used by the Credit Service."""
 
+import ssl
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -38,20 +39,25 @@ class UserServiceClient:
     def __init__(
         self,
         base_url: str,
+        ca_file: str,
         *,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._base_url = httpx.URL(base_url).copy_with(
             userinfo=b"", path="", query=None, fragment=None
         )
+        if self._base_url.scheme != "https":
+            raise ValueError("User Service communication requires HTTPS")
         self._identity_url = self._base_url.copy_with(
             userinfo=b"", path="/users/me", query=None, fragment=None
         )
+        tls_context = ssl.create_default_context(cafile=ca_file)
         self._client = httpx.Client(
             timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
             follow_redirects=False,
             trust_env=False,
             transport=transport,
+            verify=tls_context,
         )
 
     def resolve_identity(self, token: str) -> Identity:

@@ -127,7 +127,6 @@ def _insert_credit_account_if_missing(db: Session, user_id: UUID) -> None:
         "user_id": user_id,
         "available_balance": 0,
         "reserved_balance": 0,
-        "status": "active",
         "initial_allocation_granted_at": None,
         "created_at": now,
         "updated_at": now,
@@ -166,9 +165,9 @@ def _grant_initial_allocation(
     correlation_id: UUID,
     actor_user_id: UUID | None,
 ) -> None:
-    """Grant once to an active, locked account and append its audit row."""
+    """Grant once to a locked account and append its audit row."""
 
-    if account.initial_allocation_granted_at is not None or account.status != "active":
+    if account.initial_allocation_granted_at is not None:
         return
     granted_at = utc_now()
     account.available_balance += initial_allocation
@@ -260,8 +259,6 @@ def reserve_credits(
     rejection_reason: str | None = None
     if account is None:
         rejection_reason = "ACCOUNT_NOT_FOUND"
-    elif account.status != "active":
-        rejection_reason = "ACCOUNT_NOT_ACTIVE"
     elif account.available_balance < amount:
         rejection_reason = "INSUFFICIENT_CREDIT"
 
@@ -372,8 +369,6 @@ def transfer_reserved_credits(
     courier = accounts.get(courier_id)
     if requester is None or courier is None:
         raise CreditStateConflict("Requester or courier credit account does not exist")
-    if courier.status != "active":
-        raise CreditStateConflict("Courier credit account must be active")
     if requester.reserved_balance < reservation.amount:
         raise CreditStateConflict("Requester reserved balance is inconsistent")
 

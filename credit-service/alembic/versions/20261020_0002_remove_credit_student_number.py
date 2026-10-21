@@ -29,10 +29,3 @@ def upgrade() -> None:
         type_="unique",
     )
     op.drop_column("credit_accounts", "nus_student_number")
-
-
-def downgrade() -> None:
-    raise RuntimeError(
-        "Downgrade is unsupported: removed NUS student numbers cannot be "
-        "reconstructed from UUID-only Credit accounts"
-    )

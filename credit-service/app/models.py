@@ -19,7 +19,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db import Base
 
 
-ACCOUNT_STATUSES = ("active", "suspended", "deactivated")
 RESERVATION_STATUSES = ("ACTIVE", "TRANSFERRED", "RELEASED")
 TRANSACTION_TYPES = (
     "INITIAL_ALLOCATION",
@@ -46,10 +45,6 @@ class CreditAccount(Base):
         CheckConstraint(
             "reserved_balance >= 0", name="ck_credit_accounts_reserved_nonnegative"
         ),
-        CheckConstraint(
-            "status IN ('active', 'suspended', 'deactivated')",
-            name="ck_credit_accounts_status",
-        ),
     )
 
     user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, nullable=False)
@@ -58,9 +53,6 @@ class CreditAccount(Base):
     )
     reserved_balance: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
-    )
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="active", server_default="active"
     )
     initial_allocation_granted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

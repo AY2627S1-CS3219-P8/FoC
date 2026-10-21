@@ -51,6 +51,16 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
 
 Services can be run via the root [`compose.yaml`](./compose.yaml).
 
+Generate the local internal CA and User Service certificate once before the
+first Compose start:
+
+```powershell
+.\scripts\generate-dev-tls.ps1
+```
+
+See [`docs/internal-https.md`](./docs/internal-https.md) for the internal HTTPS
+trust model and production certificate guidance.
+
 Start the services:
 
 ```bash

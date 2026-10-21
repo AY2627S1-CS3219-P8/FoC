@@ -140,21 +140,3 @@ def upgrade() -> None:
         ["id"],
         postgresql_where=sa.text("published_at IS NULL"),
     )
-
-
-def downgrade() -> None:
-    op.drop_index("ix_credit_outbox_unpublished", table_name="outbox_events")
-    op.drop_table("outbox_events")
-    op.drop_table("processed_events")
-    op.drop_index(
-        "ix_credit_transactions_order_created_at", table_name="credit_transactions"
-    )
-    op.drop_index(
-        "ix_credit_transactions_user_created_at", table_name="credit_transactions"
-    )
-    op.drop_table("credit_transactions")
-    op.drop_index(
-        "ix_credit_reservations_active_requester", table_name="credit_reservations"
-    )
-    op.drop_table("credit_reservations")
-    op.drop_table("credit_accounts")

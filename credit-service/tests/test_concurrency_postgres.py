@@ -163,7 +163,6 @@ def test_concurrent_settlements_initialize_shared_courier_once(postgres_engine) 
                     user_id=requester_id,
                     available_balance=0,
                     reserved_balance=amount,
-                    status="active",
                     initial_allocation_granted_at=now,
                 )
             )

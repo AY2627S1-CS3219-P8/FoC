@@ -17,8 +17,8 @@ events. `app/worker.py` owns retry, commit, acknowledgement, and dead lettering.
    missing-row race between Kafka partitions.
 3. Lock the durable account row.
 4. Use `initial_allocation_granted_at` as the one-time allocation marker.
-5. Grant only to an active account and ledger the allocation in the
-   caller-owned transaction.
+5. Grant only when the one-time marker is absent and ledger the allocation in
+   the caller-owned transaction.
 
 ## Reservation
 
@@ -28,8 +28,7 @@ events. `app/worker.py` owns retry, commit, acknowledgement, and dead lettering.
 4. Move the amount from available to reserved without changing total credit.
 5. Record the signed balance movement.
 
-Stable lazy-flow rejection codes are `ACCOUNT_NOT_ACTIVE` and
-`INSUFFICIENT_CREDIT`.
+The stable lazy-flow rejection code is `INSUFFICIENT_CREDIT`.
 
 ## Transfer
 
@@ -37,7 +36,7 @@ Stable lazy-flow rejection codes are `ACCOUNT_NOT_ACTIVE` and
 2. Conflict-safely insert a missing courier only after reservation validation.
 3. Lock requester and courier accounts in UUID order.
 4. Validate both locked accounts, then grant the courier's initial allocation
-   exactly once.
+   exactly once using the allocation marker.
 5. Move requester reserved credit to courier available credit.
 6. Record one signed ledger row for each side with the settlement reason.
 
@@ -46,8 +45,9 @@ The same Credit operation supports two domain reasons:
 - `ORDER_COMPLETED`
 - `ORDER_CANCELLED_AFTER_PICKUP`
 
-The courier must be active. The requester need not remain active because the
-credit was already reserved and is owed to the courier.
+Credit Service does not own user lifecycle status. User Service performs the
+authoritative status check for authenticated HTTP requests; Order Service must
+enforce user eligibility before producing order events.
 
 ## Release
 

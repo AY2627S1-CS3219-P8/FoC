@@ -26,10 +26,25 @@ services:
 
   user-service:
     build: ./user-service
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ssl-certfile
+      - /run/tls/user-service.crt
+      - --ssl-keyfile
+      - /run/tls/user-service.key
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       USER_SERVICE_INTERNAL_TOKEN: ${USER_SERVICE_INTERNAL_TOKEN:?Set USER_SERVICE_INTERNAL_TOKEN in .env}
+    volumes:
+      - ${USER_SERVICE_TLS_CERT_FILE:-./certs/user-service.crt}:/run/tls/user-service.crt:ro
+      - ${USER_SERVICE_TLS_KEY_FILE:-./certs/user-service.key}:/run/tls/user-service.key:ro
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     depends_on:
       user-db:
         condition: service_healthy
@@ -38,7 +53,7 @@ services:
       user-bootstrap:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready')"]
+      test: ["CMD", "python", "-c", "import ssl, urllib.request; context = ssl.create_default_context(cafile='/run/tls/ca.crt'); urllib.request.urlopen('https://localhost:8080/ready', context=context)"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -84,7 +99,7 @@ services:
       context: ./supplier-service
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -106,7 +121,7 @@ services:
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_migrator:${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -127,7 +142,7 @@ services:
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -201,7 +216,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
       PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -213,6 +229,8 @@ services:
     networks:
       - default
       - credit-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     ports:
       - "127.0.0.1:8083:8080"
 
@@ -225,7 +243,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
       PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       CREDIT_EVENT_STREAM: order
@@ -242,6 +261,8 @@ services:
     networks:
       - default
       - credit-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     healthcheck:
       disable: true
 

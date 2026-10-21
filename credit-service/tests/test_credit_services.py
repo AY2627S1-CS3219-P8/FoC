@@ -63,13 +63,11 @@ def add_account(
     user_id=None,
     available: int = 100,
     reserved: int = 0,
-    account_status: str = "active",
 ) -> CreditAccount:
     account = CreditAccount(
         user_id=user_id or uuid4(),
         available_balance=available,
         reserved_balance=reserved,
-        status=account_status,
         initial_allocation_granted_at=datetime.now(timezone.utc),
     )
     db.add(account)
@@ -109,15 +107,14 @@ def test_ensure_account_allocates_and_audits_exactly_once(db: Session) -> None:
     assert audits[0].event_id == event_id
 
 
-def test_ensure_does_not_reactivate_or_allocate_an_inactive_account(
+def test_ensure_allocates_an_existing_unallocated_account_once(
     db: Session,
 ) -> None:
     user_id = uuid4()
     account = CreditAccount(
         user_id=user_id,
-        available_balance=7,
+        available_balance=0,
         reserved_balance=0,
-        status="suspended",
         initial_allocation_granted_at=None,
     )
     db.add(account)
@@ -132,10 +129,9 @@ def test_ensure_does_not_reactivate_or_allocate_an_inactive_account(
     )
     db.commit()
 
-    assert ensured.status == "suspended"
-    assert ensured.available_balance == 7
-    assert ensured.initial_allocation_granted_at is None
-    assert db.scalar(select(func.count()).select_from(CreditTransaction)) == 0
+    assert ensured.available_balance == 100
+    assert ensured.initial_allocation_granted_at is not None
+    assert db.scalar(select(func.count()).select_from(CreditTransaction)) == 1
 
 
 def test_reservation_stages_balance_audit_reservation_and_outbox(
@@ -180,20 +176,10 @@ def test_domain_reservation_does_not_create_integration_rows(db: Session) -> Non
     assert db.scalar(select(func.count()).select_from(ProcessedEvent)) == 0
 
 
-@pytest.mark.parametrize(
-    ("available", "account_status", "reason"),
-    [
-        (10, "active", "INSUFFICIENT_CREDIT"),
-        (100, "suspended", "ACCOUNT_NOT_ACTIVE"),
-        (100, "deactivated", "ACCOUNT_NOT_ACTIVE"),
-    ],
-)
-def test_reservation_rejection_is_committed_business_outcome(
-    db: Session, available: int, account_status: str, reason: str
+def test_insufficient_reservation_is_committed_business_outcome(
+    db: Session,
 ) -> None:
-    requester = add_account(
-        db, available=available, account_status=account_status
-    )
+    requester = add_account(db, available=10)
     event = order_event("order.created", requester_id=requester.user_id, amount=20)
 
     apply_order_event(db, event)
@@ -202,13 +188,13 @@ def test_reservation_rejection_is_committed_business_outcome(
     db.refresh(requester)
     audit = db.scalar(select(CreditTransaction))
     outbox = db.scalar(select(OutboxEvent))
-    assert requester.available_balance == available
+    assert requester.available_balance == 10
     assert requester.reserved_balance == 0
     assert db.scalar(select(func.count()).select_from(CreditReservation)) == 0
     assert audit.outcome == "REJECTED"
-    assert audit.reason == reason
+    assert audit.reason == "INSUFFICIENT_CREDIT"
     assert outbox.event_type == "credit.reservation_failed"
-    assert outbox.payload["reason"] == reason
+    assert outbox.payload["reason"] == "INSUFFICIENT_CREDIT"
 
 
 def test_first_order_lazily_initializes_then_reserves(db: Session) -> None:

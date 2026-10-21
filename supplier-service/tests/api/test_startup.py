@@ -8,7 +8,7 @@ from app.main import create_app
 
 def test_startup_rejects_invalid_configuration(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier")
-    monkeypatch.setenv("USER_SERVICE_URL", "http://localhost:8000")
+    monkeypatch.setenv("USER_SERVICE_URL", "https://localhost:8000")
     monkeypatch.setenv("AUTH_TIMEOUT_SECONDS", "0")    
     monkeypatch.setenv("LOG_LEVEL", "INFO")
 

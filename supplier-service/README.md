@@ -49,7 +49,7 @@ Set configuration in the terminal where you will start the server:
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier'
-export USER_SERVICE_URL='http://localhost:8000'
+export USER_SERVICE_URL='https://localhost:8000'
 export AUTH_TIMEOUT_SECONDS='3'
 export LOG_LEVEL='INFO'
 ```
@@ -62,7 +62,7 @@ permission to read its revision state; User Service is not contacted by either p
 | Variable | Requirement |
 | --- | --- |
 | `DATABASE_URL` | Required PostgreSQL connection URL using `postgresql+psycopg` |
-| `USER_SERVICE_URL` | Required HTTP or HTTPS base URL for User Service |
+| `USER_SERVICE_URL` | Required HTTPS base URL for User Service |
 | `AUTH_TIMEOUT_SECONDS` | Positive, finite number; defaults to `3.0` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`; defaults to `INFO` |
 
@@ -225,7 +225,7 @@ and have no published host port. A `5432/tcp` entry in `docker compose ps` is no
 port mapping. The API publishes only `127.0.0.1:8081`.
 
 Inside the API container, the database address is `supplier-db:5432` and
-the User Service address is `http://user-service:8080`. These names refer
+the User Service address is `https://user-service:8080`. These names refer
 to Compose services; `localhost` refers to the current container.
 
 The named volume `supplier-db-data`, mounted at `/var/lib/postgresql/data`,
