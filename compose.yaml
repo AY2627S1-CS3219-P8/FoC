@@ -58,6 +58,9 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
+    # Loopback only, so `yarn dev` on the host can reach it.
+    ports:
+      - "127.0.0.1:8080:8080"
 
   user-migrate:
     build: ./user-service
@@ -90,6 +93,13 @@ services:
   frontend-service:
     build:
       context: ./frontend-service
+    environment:
+      USER_SERVICE_URL: http://user-service:8080
+      # Compose serves plain http, where browsers may drop a Secure cookie.
+      COOKIE_SECURE: "false"
+    depends_on:
+      user-service:
+        condition: service_healthy
     ports:
       - "3000:3000"
 

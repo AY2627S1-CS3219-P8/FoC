@@ -1,11 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { SESSION_COOKIE_NAME } from '@/lib/auth';
+import { SESSION_COOKIE_NAME, SESSION_EXPIRED_PATH } from '@/lib/auth';
 
 const PUBLIC_PATHS = new Set(['/', '/signup']);
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  // Clears the cookie itself, with or without one, so never redirect it.
+  if (pathname === SESSION_EXPIRED_PATH) return NextResponse.next();
+
   const isAuthenticated = request.cookies.has(SESSION_COOKIE_NAME);
   const isPublicPath = PUBLIC_PATHS.has(pathname);
 
