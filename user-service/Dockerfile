@@ -13,6 +13,6 @@ COPY scripts ./scripts
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready')"
+    CMD python -c "import ssl, urllib.request; context = ssl.create_default_context(cafile='/run/tls/ca.crt'); urllib.request.urlopen('https://localhost:8080/ready', context=context)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--ssl-certfile", "/run/tls/user-service.crt", "--ssl-keyfile", "/run/tls/user-service.key"]

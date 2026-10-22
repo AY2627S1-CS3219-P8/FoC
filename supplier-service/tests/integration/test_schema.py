@@ -279,7 +279,7 @@ def test_downgrade_round_trip(test_database_url, monkeypatch):
             connection.execute(text(f'CREATE DATABASE "{name}"'))
         created = True
         monkeypatch.setenv("DATABASE_URL", target.render_as_string(hide_password=False))
-        monkeypatch.setenv("USER_SERVICE_URL", "http://localhost:8000")
+        monkeypatch.setenv("USER_SERVICE_URL", "https://localhost:8000")
         command.upgrade(config, "head")
         with engine.connect() as connection:
             original = connection.execute(text("SELECT id, name FROM category ORDER BY name")).all()

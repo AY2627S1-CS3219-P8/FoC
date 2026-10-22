@@ -51,6 +51,16 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
 
 Services can be run via the root [`compose.yaml`](./compose.yaml).
 
+Generate the local internal CA and User Service certificate once before the
+first Compose start:
+
+```powershell
+.\scripts\generate-dev-tls.ps1
+```
+
+See [`docs/internal-https.md`](./docs/internal-https.md) for the internal HTTPS
+trust model and production certificate guidance.
+
 If `.env` does not exist, copy `.env.example` to `.env` and configure its required
 credentials. Supplier startup automatically enables PostGIS, provisions its
 database roles, runs migrations, and applies runtime grants before starting the

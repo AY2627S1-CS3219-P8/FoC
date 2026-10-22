@@ -17,3 +17,4 @@ create_topic() {
 create_topic order.events 3 --config retention.ms=-1
 create_topic credit.events 3 --config retention.ms=-1
 create_topic order-service.credit-events.dlq 1
+create_topic credit-service.order-events.dlq 1

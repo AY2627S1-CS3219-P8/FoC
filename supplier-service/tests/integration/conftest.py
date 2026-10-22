@@ -65,8 +65,8 @@ def migrated_engine(
 ) -> Engine:
     # Temporarily set DATABASE_URL to the validated test URL
     monkeypatch.setenv("DATABASE_URL", test_database_url.render_as_string(hide_password=False))
-    # Set USER_SERVICE_URL to a valid dummy HTTP URL
-    monkeypatch.setenv("USER_SERVICE_URL", "http://localhost:8000")
+    # Set USER_SERVICE_URL to a valid dummy HTTPS URL
+    monkeypatch.setenv("USER_SERVICE_URL", "https://localhost:8000")
 
     # Locate supplier-service/alembic.ini relative to this file
     config_path = Path(__file__).resolve().parents[2] / 'alembic.ini'

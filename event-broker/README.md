@@ -9,6 +9,7 @@ One Kafka node for the Compose network. It listens at `kafka:9092` and does not 
 | `order.events` | 3 | forever | `order_id` | Order Service |
 | `credit.events` | 3 | forever | `order_id` | Credit Service |
 | `order-service.credit-events.dlq` | 1 | broker default (7 days) | copied from the failed record | Order Service, for credit messages it cannot apply |
+| `credit-service.order-events.dlq` | 1 | broker default (7 days) | copied from the failed record | Credit Service, for order messages it cannot apply |
 
 A record for one order always lands on the same partition, so that order's events stay in order. Different orders can be on different partitions.
 

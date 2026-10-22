@@ -5,19 +5,19 @@ on:
     branches: [main]
     paths:
       - "compose.yaml"
+      - "event-broker/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
       - "supplier-service/**"
       - "data/csv/supplier-seed-data.csv"
-      - "event-broker/**"
   pull_request:
     paths:
       - "compose.yaml"
+      - "event-broker/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
       - "supplier-service/**"
       - "data/csv/supplier-seed-data.csv"
-      - "event-broker/**"
 
 permissions:
   contents: read
@@ -36,6 +36,8 @@ jobs:
       SUPPLIER_POSTGRES_PASSWORD: supplierCiPassword123
       SUPPLIER_MIGRATION_PASSWORD: supplierMigrationCiPassword123
       SUPPLIER_RUNTIME_PASSWORD: supplierRuntimeCiPassword123
+      CREDIT_DB_USER: credit_ci
+      CREDIT_DB_PASSWORD: creditCiPassword123
       ORDER_DB_USER: foc_orders
       ORDER_DB_PASSWORD: focOrdersCiPassword123
 

@@ -164,7 +164,7 @@ def test_resources_disposed_and_database_errors_sanitized(monkeypatch, capsys, d
     from app.commands.seed_suppliers import main
 
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://user:secret@localhost/supplier_test")
-    monkeypatch.setenv("USER_SERVICE_URL", "http://localhost:8000")
+    monkeypatch.setenv("USER_SERVICE_URL", "https://localhost:8000")
     disposed, closed = [], []
 
     class Engine:
@@ -222,7 +222,7 @@ def test_resources_disposed_after_success(monkeypatch, capsys, dry_run):
     from app.commands.seed_suppliers import main
 
     monkeypatch.setenv('DATABASE_URL', 'postgresql+psycopg://user:secret@localhost/supplier_test')
-    monkeypatch.setenv('USER_SERVICE_URL', 'http://localhost:8000')
+    monkeypatch.setenv('USER_SERVICE_URL', 'https://localhost:8000')
     disposed, closed = [], []
 
     class Engine:
@@ -271,7 +271,7 @@ def test_command_report_and_import_use_same_snapshot(tmp_path, monkeypatch, caps
         (mappings / path.name).write_bytes(path.read_bytes())
     monkeypatch.setattr(seed_suppliers, 'SEED_ROOT', mappings)
     monkeypatch.setenv('DATABASE_URL', 'postgresql+psycopg://localhost/supplier_test')
-    monkeypatch.setenv('USER_SERVICE_URL', 'http://localhost:8000')
+    monkeypatch.setenv('USER_SERVICE_URL', 'https://localhost:8000')
     original_parse = seed_suppliers.parse_seed_source
     snapshots, imported = [], []
 

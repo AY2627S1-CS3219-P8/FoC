@@ -3,7 +3,12 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base

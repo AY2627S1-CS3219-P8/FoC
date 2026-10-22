@@ -183,7 +183,7 @@ Trusted services can check a user's authorization without accessing the User
 Service database directly:
 
 ```bash
-curl http://user-service:8080/internal/users/<user-id>/admin \
+curl --cacert /run/tls/ca.crt https://user-service:8080/internal/users/<user-id>/admin \
   -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
 ```
 
@@ -197,7 +197,7 @@ never forward it to clients.
 Trusted services can also check the lifecycle state of a user:
 
 ```bash
-curl http://user-service:8080/internal/users/<user-id>/status \
+curl --cacert /run/tls/ca.crt https://user-service:8080/internal/users/<user-id>/status \
   -H 'X-Internal-Service-Token: <USER_SERVICE_INTERNAL_TOKEN>'
 ```
 
@@ -296,9 +296,10 @@ tables are present. Verify the schema and take a backup before migrating any
 production database.
 
 The service is available to other containers on the Compose network at
-`http://user-service:8080`. The current Compose configuration does not publish
-port 8080 to the host. To access the API from the host, temporarily add this
-to the `user-service` definition in `compose.yaml`:
+`https://user-service:8080`. Callers must trust the internal CA described in
+the root `docs/internal-https.md`. The current Compose configuration does not
+publish port 8080 to the host. To access the API from the host, temporarily add
+this to the `user-service` definition in `compose.yaml`:
 
 ```yaml
 ports:
@@ -308,7 +309,7 @@ ports:
 Once the port is published, create a user with:
 
 ```bash
-curl -X POST http://localhost:8080/users \
+curl --cacert certs/ca.crt -X POST https://localhost:8080/users \
   -H 'Content-Type: application/json' \
   -d '{"nus_student_number":"A0123456X","email":"student@example.com","display_name":"Student","password":"Password1!"}'
 ```
@@ -316,7 +317,7 @@ curl -X POST http://localhost:8080/users \
 Log in with the registered NUS student number and password:
 
 ```bash
-curl -X POST http://localhost:8080/login \
+curl --cacert certs/ca.crt -X POST https://localhost:8080/login \
   -H 'Content-Type: application/json' \
   -d '{"nus_student_number":"A0123456X","password":"Password1!"}'
 ```
@@ -330,7 +331,7 @@ non-active accounts return the same generic authentication error.
 Use the returned token for protected requests:
 
 ```bash
-curl http://localhost:8080/users/me \
+curl --cacert certs/ca.crt https://localhost:8080/users/me \
   -H 'Authorization: Bearer <access-token>'
 ```
 
@@ -347,7 +348,7 @@ is accepted as a no-op. The NUS student number, role, status, and timestamps
 are not accepted as update fields:
 
 ```bash
-curl -X PATCH http://localhost:8080/users/me \
+curl --cacert certs/ca.crt -X PATCH https://localhost:8080/users/me \
   -H 'Authorization: Bearer <access-token>' \
   -H 'Content-Type: application/json' \
   -d '{"display_name":"Updated Student","email":"new@example.com"}'
@@ -364,7 +365,7 @@ The service refreshes the inactivity deadline on valid protected requests,
 without extending the 24-hour absolute lifetime. End the session with:
 
 ```bash
-curl -X POST http://localhost:8080/logout \
+curl --cacert certs/ca.crt -X POST https://localhost:8080/logout \
   -H 'Authorization: Bearer <access-token>'
 ```
 
@@ -388,3 +389,9 @@ Milestone 1 document, especially functional requirements F5–F9 and User
 Service non-functional requirements NFR7. The README is a service-level guide;
 the project document remains the authoritative source for the full
 requirements set.
+## Credit account initialization
+
+User registration and administrator bootstrap do not provision Credit
+accounts or publish `user.created`. Credit Service owns provisioning and lazily
+initializes its UUID-only accounts from qualifying Order Service events. This
+keeps User Service independent of Credit provisioning state.

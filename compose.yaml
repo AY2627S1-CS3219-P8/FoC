@@ -26,10 +26,25 @@ services:
 
   user-service:
     build: ./user-service
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --ssl-certfile
+      - /run/tls/user-service.crt
+      - --ssl-keyfile
+      - /run/tls/user-service.key
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       USER_SERVICE_INTERNAL_TOKEN: ${USER_SERVICE_INTERNAL_TOKEN:?Set USER_SERVICE_INTERNAL_TOKEN in .env}
+    volumes:
+      - ${USER_SERVICE_TLS_CERT_FILE:-./certs/user-service.crt}:/run/tls/user-service.crt:ro
+      - ${USER_SERVICE_TLS_KEY_FILE:-./certs/user-service.key}:/run/tls/user-service.key:ro
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     depends_on:
       user-db:
         condition: service_healthy
@@ -38,7 +53,7 @@ services:
       user-bootstrap:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready')"]
+      test: ["CMD", "python", "-c", "import ssl, urllib.request; context = ssl.create_default_context(cafile='/run/tls/ca.crt'); urllib.request.urlopen('https://localhost:8080/ready', context=context)"]
       interval: 30s
       timeout: 5s
       start_period: 10s
@@ -85,7 +100,7 @@ services:
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
       APP_ENV: development
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -132,7 +147,7 @@ services:
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_migrator:${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
       APP_ENV: development
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -176,7 +191,7 @@ services:
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
       APP_ENV: development
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -210,6 +225,97 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  credit-db:
+    image: postgres:16-alpine
+    container_name: credit-db
+    environment:
+      POSTGRES_DB: foc_credits
+      POSTGRES_USER: ${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}
+      POSTGRES_PASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+    volumes:
+      - credit-db-data:/var/lib/postgresql/data
+    networks:
+      - credit-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d foc_credits"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  credit-migrate:
+    image: foc-credit-service:local
+    build: ./credit-service
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+    depends_on:
+      credit-db:
+        condition: service_healthy
+    networks:
+      - credit-private
+    healthcheck:
+      disable: true
+
+  credit-service:
+    image: foc-credit-service:local
+    build: ./credit-service
+    container_name: credit-service
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
+      CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      credit-db:
+        condition: service_healthy
+      credit-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - credit-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
+    ports:
+      - "127.0.0.1:8083:8080"
+
+  credit-order-worker:
+    image: foc-credit-service:local
+    build: ./credit-service
+    container_name: credit-order-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
+      PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
+      CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
+      CREDIT_EVENT_STREAM: order
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      credit-db:
+        condition: service_healthy
+      credit-migrate:
+        condition: service_completed_successfully
+      kafka-topics:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - credit-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
+    healthcheck:
+      disable: true
 
   order-db:
     image: postgres:16-alpine
@@ -251,7 +357,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -294,10 +400,13 @@ networks:
   default: {}
   supplier-private:
     internal: true
+  credit-private:
+    internal: true
   order-private:
     internal: true
 
 volumes:
   supplier-db-data:
   user-db-data:
+  credit-db-data:
   order-db-data:
