@@ -76,6 +76,45 @@ docker run -p 3000:3000 frontend-service
 
 Open [http://localhost:3000](http://localhost:3000) to see the result.
 
+## Supplier Service
+
+The store directory (`/request/store`) and the store preselected on the
+request form (`/request?store=<supplier id>`) come from Supplier Service's
+public reads: `GET /suppliers`, `GET /suppliers/{id}`, `GET /categories` and
+`GET /areas`.
+
+- **Server-side only** (`lib/supplier-service.ts`): Supplier Service sets no
+  CORS headers, so it is called from Server Components and the
+  `loadSuppliers` Server Action (`lib/supplier-actions.ts`), never from the
+  browser. Set `SUPPLIER_SERVICE_URL` at runtime; Compose uses
+  `http://supplier-service:8080`, and `yarn dev` defaults to
+  `http://localhost:8081`, the port Compose publishes on the host.
+- **Filtering**: the directory filters by area and category (any of the
+  selected categories) and pages 20 suppliers at a time, matching what the
+  service supports. There is no free-text search because the service has none.
+- **Display** follows the service's suggested UI behaviour: missing building or
+  floor labels are omitted, null hours show "Hours unknown", equal opening and
+  closing times show "Open 24 hours", and all times are Asia/Singapore.
+- **Images**: Supplier Service returns only an `image_key` filename. The
+  browser loads it directly from `NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL`,
+  defaulting to the seed images the CSV references
+  (`raw.githubusercontent.com/CS3219-AY2627S1/FoC-Template/main/data/images`);
+  the frontend neither stores nor proxies image files. Suppliers without an
+  image show a category icon. `NEXT_PUBLIC_*` values are inlined at build time.
+- **Unavailable service**: the frontend does not depend on Supplier Service to
+  start (no Compose `depends_on`). If the service is down, unreachable, slow
+  (5 s timeout) or returns an invalid response, supplier pages show an error
+  message instead of failing, and the rest of the app works as normal.
+  `docker compose up frontend-service` therefore does not start Supplier
+  Service; use `docker compose up` for the full stack.
+
+Supplier Service never seeds itself. To fill an empty local database, run from
+the repository root:
+
+```bash
+docker compose --profile tools run --rm supplier-seed
+```
+
 ## Authentication
 
 Authentication goes through User Service, but the browser never talks to it
@@ -86,7 +125,11 @@ never sees the token and User Service needs no CORS configuration.
 - **User Service client** (`lib/user-service.ts`): typed `fetch` wrapper for
   the User Service endpoints the app uses. Its base URL comes from
   `USER_SERVICE_URL`, which is read at runtime on the server and defaults to
-  `http://localhost:8080`. Compose sets it to `http://user-service:8080`.
+  `https://localhost:8080`. Compose sets it to `https://user-service:8080`.
+  User Service only serves HTTPS with a certificate from the local internal
+  CA (see [`docs/internal-https.md`](../docs/internal-https.md)), so Node
+  must trust that CA through `NODE_EXTRA_CA_CERTS`. Compose mounts `ca.crt`
+  into the container and sets it.
   It builds every request body field by field, so nothing extra from the
   browser reaches User Service. It and `lib/session.ts` import
   `server-only`, so importing either from a client component fails the build.
@@ -139,16 +182,23 @@ Vitest covers the User Service client, the auth Server Actions and the
 ### Running against User Service locally
 
 With `yarn dev`, start User Service from the repo root. Compose publishes it
-on `127.0.0.1:8080`:
+on `127.0.0.1:8080`. Generate the development certificates once first
+(`.\scripts\generate-dev-tls.ps1`); User Service will not start without them:
 
 ```bash
 docker compose up --build user-db user-migrate user-bootstrap user-service
 ```
 
+Then start the dev server trusting the internal CA, from `frontend-service/`:
+
+```bash
+NODE_EXTRA_CA_CERTS=../certs/ca.crt yarn dev
+```
+
 Create an account at `/signup`, or set the `BOOTSTRAP_ADMIN_*` values in
 `.env` to create an administrator. The full stack (`docker compose up`)
-needs no extra setup: the frontend container reaches User Service over the
-Compose network.
+needs only the certificates: the frontend container reaches User Service over
+the Compose network and trusts its CA through the mounted `ca.crt`.
 
 Chrome and Firefox keep the `Secure` session cookie on `http://localhost`.
 If you open the dev server another way, such as Safari or a LAN address,

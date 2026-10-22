@@ -10,7 +10,7 @@
 
 import 'server-only';
 
-const BASE_URL = process.env.USER_SERVICE_URL ?? 'http://localhost:8080';
+const BASE_URL = process.env.USER_SERVICE_URL ?? 'https://localhost:8080';
 const TIMEOUT_MS = 5000;
 
 export type UserRole = 'user' | 'admin';

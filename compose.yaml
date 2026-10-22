@@ -94,9 +94,15 @@ services:
     build:
       context: ./frontend-service
     environment:
-      USER_SERVICE_URL: http://user-service:8080
+      USER_SERVICE_URL: https://user-service:8080
+      # Node trusts only public CAs; add the internal CA for User Service.
+      NODE_EXTRA_CA_CERTS: /run/tls/ca.crt
       # Compose serves plain http, where browsers may drop a Secure cookie.
       COOKIE_SECURE: "false"
+      # Not in depends_on: supplier pages show an error until it is reachable.
+      SUPPLIER_SERVICE_URL: http://supplier-service:8080
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     depends_on:
       user-service:
         condition: service_healthy

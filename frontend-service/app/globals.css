@@ -135,4 +135,10 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Tailwind v4's preflight resets buttons to cursor: default; restore the
+     pointer for enabled buttons, as recommended in its upgrade guide. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
 }
