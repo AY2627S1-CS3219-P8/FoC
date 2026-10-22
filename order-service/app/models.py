@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Float,
     Index,
     Integer,
     JSON,
+    LargeBinary,
     String,
     UniqueConstraint,
     Uuid,
@@ -110,6 +112,26 @@ class OutboxEvent(Base):
     correlation_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     order_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ParkedMessage(Base):
+    """Credit message the DLQ could not accept. The worker relays it to the DLQ later."""
+
+    __tablename__ = "parked_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_topic", "source_partition", "source_offset", name="uq_parked_messages_source"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_partition: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    key: Mapped[bytes | None] = mapped_column(LargeBinary)
+    value: Mapped[bytes | None] = mapped_column(LargeBinary)
+    headers: Mapped[list | None] = mapped_column(JSON)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

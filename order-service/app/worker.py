@@ -3,6 +3,7 @@
 The API process does not connect to Kafka. A broker outage cannot fail a request.
 """
 
+import base64
 import logging
 import os
 import time
@@ -11,6 +12,7 @@ from typing import Protocol
 
 from confluent_kafka import Consumer, KafkaException, Message, Producer, TopicPartition
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import required_env
@@ -27,7 +29,7 @@ from app.messaging import (
     RELAY_POLL_SECONDS,
     RETRY_BACKOFF_SECONDS,
 )
-from app.models import OutboxEvent, utc_now
+from app.models import OutboxEvent, ParkedMessage, utc_now
 from app.services.orders import expire_overdue_orders, handle_delivery
 
 logger = logging.getLogger(__name__)
@@ -72,15 +74,15 @@ class KafkaPublisher:
         )
         self._require_delivery(delivery)
 
-    def dead_letter(self, message: Message) -> None:
+    def dead_letter(self, key: bytes | None, value: bytes | None, headers: list | None) -> None:
         """Copy a credit message that could not be applied onto the dead-letter topic."""
 
         delivery = _Delivery()
         self._producer.produce(
             topic=CREDIT_DLQ_TOPIC,
-            key=message.key(),
-            value=message.value(),
-            headers=message.headers(),
+            key=key,
+            value=value,
+            headers=headers,
             on_delivery=delivery,
         )
         self._require_delivery(delivery)
@@ -112,6 +114,25 @@ def relay_once(db: Session, publisher: Publisher) -> int:
         db.commit()
         published += 1
     return published
+
+
+def relay_parked_once(db: Session, publisher: KafkaPublisher) -> int:
+    """Move parked credit messages onto the DLQ in id order. Stop at the first broker failure."""
+
+    pending = list(
+        db.scalars(
+            select(ParkedMessage)
+            .where(ParkedMessage.published_at.is_(None))
+            .order_by(ParkedMessage.id)
+            .limit(RELAY_BATCH_SIZE)
+        )
+    )
+    for parked in pending:
+        headers = [(name, value and base64.b64decode(value)) for name, value in parked.headers or []]
+        publisher.dead_letter(parked.key, parked.value, headers or None)
+        parked.published_at = utc_now()
+        db.commit()
+    return len(pending)
 
 
 def process_delivery(
@@ -160,22 +181,58 @@ def _handle_message(
         return
     if process_delivery(session_factory, message.value() or b"") == "nack":
         try:
-            publisher.dead_letter(message)
+            publisher.dead_letter(message.key(), message.value(), message.headers())
         except (KafkaException, RuntimeError):
-            # Rewind so the message is retried instead of skipped by a later commit.
             logger.exception("dead_letter_failed")
-            consumer.seek(TopicPartition(message.topic(), message.partition(), message.offset()))
-            return
+            if not _park(session_factory, message):
+                # Rewind so the message is retried instead of skipped by a later commit.
+                consumer.seek(TopicPartition(message.topic(), message.partition(), message.offset()))
+                return
     consumer.commit(message=message, asynchronous=False)
 
 
-def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> None:
+def _park(session_factory: Callable[[], Session], message: Message) -> bool:
+    """Keep a message the DLQ refused in Postgres so its partition can move on."""
+
     db = session_factory()
     try:
-        relay_once(db, publisher)
+        db.add(
+            ParkedMessage(
+                source_topic=message.topic(),
+                source_partition=message.partition(),
+                source_offset=message.offset(),
+                key=message.key(),
+                value=message.value(),
+                headers=[
+                    [name, value and base64.b64encode(value).decode("ascii")]
+                    for name, value in message.headers() or []
+                ],
+            )
+        )
+        db.commit()
+    except IntegrityError:
+        # Parked before a crash that skipped the offset commit.
+        db.rollback()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("park_failed")
+        return False
+    finally:
+        db.close()
+    return True
+
+
+def _relay(
+    session_factory: Callable[[], Session],
+    publisher: Publisher,
+    relay: Callable[[Session, Publisher], int] = relay_once,
+) -> None:
+    db = session_factory()
+    try:
+        relay(db, publisher)
     except Exception:
         db.rollback()
-        logger.exception("outbox_relay_failed")
+        logger.exception("relay_failed", extra={"relay": relay.__name__})
     finally:
         db.close()
 
@@ -228,6 +285,7 @@ def main() -> None:
             if message is not None:
                 _handle_message(session_factory, publisher, consumer, message)
             _relay(session_factory, publisher)
+            _relay(session_factory, publisher, relay_parked_once)
             next_sweep = _sweep(session_factory, next_sweep)
     finally:
         consumer.close()

@@ -68,7 +68,7 @@ Consumed events, which Credit Service must publish to `credit.events` with the s
 | --- | --- | --- |
 | `order.events` | produces, keyed by `order_id` | retained with no time limit, so a new consumer can read from offset 0 |
 | `credit.events` | consumes as group `order-service` | offsets are committed after the message is applied or dead-lettered |
-| `order-service.credit-events.dlq` | produces | a credit message that still fails after retries at 0.5s, 1s, 2s, and 4s |
+| `order-service.credit-events.dlq` | produces | a credit message that still fails after retries at 0.5s, 1s, 2s, and 4s; if the DLQ is unavailable it is parked in `parked_messages` and relayed later |
 
 Topics are created by `event-broker`, not by this service. One order's events stay in order because they share a key. The worker also sweeps the database every 10 seconds and expires pending or open orders whose `expires_at` has passed.
 
