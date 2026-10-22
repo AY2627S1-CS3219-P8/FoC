@@ -90,6 +90,11 @@ services:
   frontend-service:
     build:
       context: ./frontend-service
+    environment:
+      SUPPLIER_SERVICE_URL: http://supplier-service:8080
+    depends_on:
+      supplier-service:
+        condition: service_healthy
     ports:
       - "3000:3000"
 

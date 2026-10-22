@@ -23,6 +23,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Run on everything except static assets/image optimizer output.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // Run on everything except static assets/image optimizer output. Public
+  // images are excluded too: the optimizer fetches them without cookies.
+  matcher: ['/((?!_next/static|_next/image|images/|favicon.ico).*)'],
 };

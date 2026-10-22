@@ -7,3 +7,4 @@
 # Leave images as binary
 *.png binary
 *.jpg binary
+*.jpeg binary
