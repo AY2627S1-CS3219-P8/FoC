@@ -5,6 +5,9 @@
 # Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
 # Details: supplier-service/ai/usage-log.md; ai-20260929-001; ai-20260929-003; ai-20260930-012
 
+include:
+  - event-broker/compose.yaml
+
 services:
   user-db:
     image: postgres:16-alpine

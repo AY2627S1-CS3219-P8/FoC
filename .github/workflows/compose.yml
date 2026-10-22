@@ -9,6 +9,7 @@ on:
       - ".github/workflows/compose.yml"
       - "supplier-service/**"
       - "data/csv/supplier-seed-data.csv"
+      - "event-broker/**"
   pull_request:
     paths:
       - "compose.yaml"
@@ -16,6 +17,7 @@ on:
       - ".github/workflows/compose.yml"
       - "supplier-service/**"
       - "data/csv/supplier-seed-data.csv"
+      - "event-broker/**"
 
 permissions:
   contents: read
