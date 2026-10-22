@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.auth import cleanup_sessions, hash_session_token
+from app.auth import SESSION_REFRESH_INTERVAL, cleanup_sessions, hash_session_token
 from app.db import Base, get_db
 from app.main import app
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User, UserSession
@@ -152,6 +152,48 @@ def test_activity_refresh_is_capped_by_absolute_expiry(client, database):
     assert refreshed_activity > now - timedelta(seconds=5)
     assert refreshed_expiry <= refreshed_absolute_expiry
     assert refreshed_expiry > now + timedelta(minutes=4)
+
+
+def test_recent_activity_does_not_write_a_session_heartbeat(client, database):
+    """A valid request within the refresh interval does not update the row."""
+
+    create_user(database)
+    token = login(client)
+    session = database.scalar(
+        select(UserSession).where(UserSession.token_hash == hash_session_token(token))
+    )
+    original_activity = session.last_activity_at
+    original_expiry = session.expires_at
+
+    response = client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
+
+    database.refresh(session)
+    assert response.status_code == 200
+    assert session.last_activity_at == original_activity
+    assert session.expires_at == original_expiry
+
+
+def test_activity_refreshes_after_the_refresh_interval(client, database):
+    """A valid request after the interval persists a new heartbeat."""
+
+    create_user(database)
+    token = login(client)
+    session = database.scalar(
+        select(UserSession).where(UserSession.token_hash == hash_session_token(token))
+    )
+    now = datetime.now(timezone.utc)
+    session.last_activity_at = now - SESSION_REFRESH_INTERVAL - timedelta(seconds=1)
+    session.expires_at = now + timedelta(minutes=20)
+    database.commit()
+    previous_activity = session.last_activity_at
+
+    response = client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
+
+    database.refresh(session)
+    assert response.status_code == 200
+    assert session.last_activity_at > previous_activity
+    refreshed_expiry = session.expires_at.replace(tzinfo=timezone.utc)
+    assert refreshed_expiry > now + timedelta(minutes=29)
 
 
 def test_logout_revokes_the_current_session(client, database):

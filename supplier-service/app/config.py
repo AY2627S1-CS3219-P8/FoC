@@ -1,9 +1,11 @@
 from typing import Literal
-from pydantic import AnyHttpUrl, Field, PostgresDsn, field_validator
+from pydantic import AnyHttpUrl, Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    app_env: Literal["development", "test", "production"] = "production"
+
     database_url: PostgresDsn
 
     user_service_url: AnyHttpUrl
@@ -15,6 +17,12 @@ class Settings(BaseSettings):
     )
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    @model_validator(mode="after")
+    def require_production_https(self) -> "Settings":
+        if self.app_env == "production" and self.user_service_url.scheme != "https":
+            raise ValueError("USER_SERVICE_URL must use HTTPS when APP_ENV is production")
+        return self
 
     @field_validator("database_url", mode="after")
     @classmethod

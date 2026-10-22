@@ -7,9 +7,16 @@ from collections.abc import Iterator
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def test_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # HTTP is explicitly permitted for test settings and subprocesses.
+    monkeypatch.setenv("APP_ENV", "test")
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
+        app_env="test",
         database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",      # A valid dummy PostgreSQL URL
         user_service_url="http://localhost:8000",                                              # A valid dummy HTTP URL
         auth_timeout_seconds=5,                                                                # A positive, finite number
