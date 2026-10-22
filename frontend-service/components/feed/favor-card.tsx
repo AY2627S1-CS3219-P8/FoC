@@ -1,74 +1,53 @@
-import { ArrowRight, Check, Clock, MapPin, Star } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRight, Check, Clock, MapPin } from 'lucide-react';
 
 import { CreditBadge } from '@/components/credit-badge';
+import {
+  OrderStoreThumbnail,
+  orderPickupLocation,
+  orderStoreName,
+} from '@/components/orders/order-store';
 import { Button } from '@/components/ui/button';
-import type { Favor } from '@/lib/mock-data';
+import { minutesSince, type OrderView } from '@/lib/orders';
 import { cn } from '@/lib/utils';
 
-const AVATAR_COLOURS = [
-  'bg-rose-100 text-rose-700',
-  'bg-sky-100 text-sky-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-violet-100 text-violet-700',
-  'bg-amber-100 text-amber-700',
-];
-
-// Orders still OPEN after this long expire (FR13.5.1).
-export const EXPIRY_MINUTES = 60;
+// Orders still OPEN an hour after creation expire (FR13.5.1).
+const EXPIRY_MINUTES = 60;
 // Visual hint only, not a lifecycle state
 const STALE_MINUTES = EXPIRY_MINUTES / 2;
 
-function initials(name: string) {
-  return name
-    .split(' ')
-    .map((part) => part[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
-}
-
-function avatarColour(name: string) {
-  const hash = [...name].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-  return AVATAR_COLOURS[hash % AVATAR_COLOURS.length];
-}
+export type AcceptState =
+  | { kind: 'idle' }
+  | { kind: 'pending' }
+  | { kind: 'accepted' }
+  | { kind: 'failed'; message: string };
 
 type FavorCardProps = {
-  favor: Favor;
-  accepted: boolean;
+  order: OrderView;
+  state: AcceptState;
+  now: number;
   onAccept: (id: string) => void;
 };
 
-export function FavorCard({ favor, accepted, onAccept }: FavorCardProps) {
-  const { requester } = favor;
-  const stale = favor.minutesAgo >= STALE_MINUTES;
+export function FavorCard({ order, state, now, onAccept }: FavorCardProps) {
+  const minutesAgo = minutesSince(order.created_at, now);
+  const stale = minutesAgo >= STALE_MINUTES;
 
   return (
     <article className='flex flex-col rounded-2xl border bg-white p-4 shadow-sm'>
       <div className='flex items-start justify-between gap-3'>
         <div className='flex min-w-0 items-center gap-3'>
-          <span
-            aria-hidden
-            className={cn(
-              'grid size-11 shrink-0 place-items-center rounded-full text-sm font-bold',
-              avatarColour(requester.name),
-            )}
-          >
-            {initials(requester.name)}
-          </span>
+          <OrderStoreThumbnail order={order} />
           <div className='min-w-0'>
             <p className='truncate font-bold text-slate-900'>
-              {requester.name}
+              {orderStoreName(order)}
             </p>
-            <p className='flex items-center gap-1 text-xs text-slate-500'>
-              <Star
-                className='size-3 fill-amber-400 text-amber-400'
-                aria-hidden
-              />
-              {requester.rating.toFixed(1)} ({requester.favors} favors)
+            <p className='truncate text-xs text-slate-500'>
+              {order.supplier?.area ?? 'Campus errand'}
             </p>
           </div>
         </div>
-        <CreditBadge credits={favor.credits} />
+        <CreditBadge credits={order.credit_amount} />
       </div>
 
       <dl className='mt-4 space-y-2 text-sm'>
@@ -78,7 +57,7 @@ export function FavorCard({ favor, accepted, onAccept }: FavorCardProps) {
             aria-hidden
           />
           <dt className='font-semibold text-slate-900'>Pickup:</dt>
-          <dd className='text-slate-600'>{favor.pickup}</dd>
+          <dd className='text-slate-600'>{orderPickupLocation(order)}</dd>
         </div>
         <div className='flex items-start gap-2'>
           <ArrowRight
@@ -86,13 +65,24 @@ export function FavorCard({ favor, accepted, onAccept }: FavorCardProps) {
             aria-hidden
           />
           <dt className='font-semibold text-slate-900'>Deliver:</dt>
-          <dd className='text-slate-600'>{favor.deliverTo}</dd>
+          <dd className='min-w-0 text-slate-600'>
+            {order.delivery_label}
+            <span className='block text-xs break-words text-slate-500'>
+              {order.delivery_details}
+            </span>
+          </dd>
         </div>
       </dl>
 
-      <p className='border-brand-soft bg-brand-tint text-brand-strong mt-4 rounded-lg border px-3 py-2.5 text-sm font-medium'>
-        {favor.items}
+      <p className='border-brand-soft bg-brand-tint text-brand-strong mt-4 rounded-lg border px-3 py-2.5 text-sm font-medium break-words whitespace-pre-line'>
+        {order.item_description}
       </p>
+
+      {state.kind === 'failed' && (
+        <p role='alert' className='mt-3 text-sm text-red-600'>
+          {state.message}
+        </p>
+      )}
 
       <div className='mt-auto flex items-center justify-between gap-3 pt-4'>
         <span
@@ -102,26 +92,26 @@ export function FavorCard({ favor, accepted, onAccept }: FavorCardProps) {
           )}
         >
           <Clock className='size-3.5' aria-hidden />
-          {favor.minutesAgo} mins ago
+          {minutesAgo} mins ago
         </span>
-        <Button
-          onClick={() => onAccept(favor.id)}
-          disabled={accepted}
-          className={cn(
-            'h-10 rounded-lg px-5 font-semibold',
-            accepted
-              ? 'bg-emerald-600 text-white disabled:opacity-100'
-              : 'bg-courier hover:bg-courier/90 text-white',
-          )}
-        >
-          {accepted ? (
-            <>
+        {state.kind === 'accepted' ? (
+          <Button
+            asChild
+            className='h-10 rounded-lg bg-emerald-600 px-5 font-semibold text-white hover:bg-emerald-700'
+          >
+            <Link href='/orders?role=courier'>
               <Check aria-hidden /> Accepted
-            </>
-          ) : (
-            'Accept Favor'
-          )}
-        </Button>
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            onClick={() => onAccept(order.id)}
+            disabled={state.kind === 'pending'}
+            className='bg-courier hover:bg-courier/90 h-10 rounded-lg px-5 font-semibold text-white'
+          >
+            {state.kind === 'pending' ? 'Accepting…' : 'Accept Favor'}
+          </Button>
+        )}
       </div>
     </article>
   );

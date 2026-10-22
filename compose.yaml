@@ -92,6 +92,8 @@ services:
       context: ./frontend-service
     environment:
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
+      ORDER_SERVICE_URL: http://order-service:8080
+      CREDIT_SERVICE_URL: http://credit-service:8080
     depends_on:
       supplier-service:
         condition: service_healthy

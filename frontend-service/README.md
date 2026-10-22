@@ -110,14 +110,58 @@ the repository root:
 docker compose --profile tools run --rm supplier-seed
 ```
 
+## Order and Credit Services
+
+The feed (`/home`), the request form (`/request`), the errand list (`/orders`)
+and the credit page (`/credits`) are backed by Order Service and Credit
+Service. Both require the User Service bearer token, which is read from the
+`foc_session` cookie on the server and forwarded as `Authorization: Bearer`.
+
+- **Server-side only** (`lib/order-service.ts`, `lib/credit-service.ts`):
+  neither service sets CORS headers, and the token must stay out of the
+  browser. Pages call them from Server Components; client components use the
+  Server Actions in `lib/order-actions.ts` and `lib/credit-actions.ts`. Set
+  `ORDER_SERVICE_URL` and `CREDIT_SERVICE_URL` at runtime; Compose uses
+  `http://order-service:8080` and `http://credit-service:8080`, and `yarn dev`
+  defaults to `http://localhost:8082` and `http://localhost:8083`.
+- **Creating an errand**: `POST /orders` takes the supplier UUID from the store
+  directory, an item description, a credit amount (1–1000) and a delivery
+  location. Order Service needs coordinates inside the NUS campus box, so the
+  requester picks one of the drop-off points in `lib/orders.ts` and describes
+  the exact spot. The form sends one `Idempotency-Key` per errand, so a retry
+  cannot post it twice. There is no delivery-time option, because the service
+  has none: an errand expires one hour after it is posted.
+- **Credit reservation is asynchronous**: a new order is `PENDING_CREDIT` until
+  Credit Service reserves the amount over Kafka. The confirmation screen polls
+  the order until it is `OPEN` or `REJECTED` (for example
+  `INSUFFICIENT_CREDIT`).
+- **Feed**: `GET /orders/open` lists other users' open errands, newest first.
+  Orders carry only ids, so the store is looked up in Supplier Service; there
+  are no requester names, ratings or distances. Accepting an errand that
+  another courier took first shows the `409` as a message.
+- **Errand list**: `GET /orders?role=requester|courier` for each tab, with the
+  actions each role is allowed: the requester can change the drop-off or
+  cancel before pickup and confirm delivery after pickup; the courier marks
+  the errand as picked up.
+- **Credits**: `GET /credits/me` and `GET /credits/me/transactions`. A user has
+  no credit account (Credit Service answers `404`) until their first errand,
+  when the starting allocation is granted, so the balance shows "No credits
+  yet". Balances change only through order events; the frontend never writes
+  to Credit Service. Administrator credit routes have no UI yet.
+- **Errors**: a `401` shows "Your session has expired"; any other failure shows
+  the service's message instead of failing the page.
+
 ## Authentication
 
 > **⚠️ Temporary: authentication is stubbed out on this branch.**
-> The frontend makes **no backend calls at all** right now. `login()` in
+> Login makes **no backend call** right now. `login()` in
 > `lib/auth.ts` accepts any email and password, writes the `foc_session`
 > cookie client-side, and routes to `/home`. Nothing is verified and no
 > credentials leave the browser. This is only so the post-login pages can be
-> built and reviewed — it must be removed before anything ships.
+> built and reviewed — it must be removed before anything ships. Because the
+> cookie holds a placeholder instead of a User Service token, Order and Credit
+> Service answer every request with `401` until real login is wired up, and
+> `getSessionToken()` in `lib/session-token.ts` is the one place to change.
 
 The intended design is cookie-based auth where the frontend never manages
 tokens: the User Service issues and validates the session, and the frontend
