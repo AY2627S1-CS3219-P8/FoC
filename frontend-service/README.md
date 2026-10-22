@@ -76,6 +76,40 @@ docker run -p 3000:3000 frontend-service
 
 Open [http://localhost:3000](http://localhost:3000) to see the result.
 
+## Supplier Service
+
+The store directory (`/request/store`) and the store preselected on the
+request form (`/request?store=<supplier id>`) come from Supplier Service's
+public reads: `GET /suppliers`, `GET /suppliers/{id}`, `GET /categories` and
+`GET /areas`.
+
+- **Server-side only** (`lib/supplier-service.ts`): Supplier Service sets no
+  CORS headers, so it is called from Server Components and the
+  `loadSuppliers` Server Action (`lib/supplier-actions.ts`), never from the
+  browser. Set `SUPPLIER_SERVICE_URL` at runtime; Compose uses
+  `http://supplier-service:8080`, and `yarn dev` defaults to
+  `http://localhost:8081`, the port Compose publishes on the host.
+- **Filtering**: the directory filters by area and category (any of the
+  selected categories) and pages 20 suppliers at a time, matching what the
+  service supports. There is no free-text search because the service has none.
+- **Display** follows the service's suggested UI behaviour: missing building or
+  floor labels are omitted, null hours show "Hours unknown", equal opening and
+  closing times show "Open 24 hours", and all times are Asia/Singapore.
+- **Images**: Supplier Service returns an `image_key` filename; the six seed
+  images from `data/images/` are bundled in `public/images/suppliers/`, and
+  suppliers without one show a category icon. Adding images requires a rebuild.
+  `proxy.ts` skips `/images/` so the image optimizer can fetch them without a
+  session cookie.
+- **Unavailable service**: pages render the service's error message instead
+  of failing.
+
+Supplier Service never seeds itself. To fill an empty local database, run from
+the repository root:
+
+```bash
+docker compose --profile tools run --rm supplier-seed
+```
+
 ## Authentication
 
 > **⚠️ Temporary: authentication is stubbed out on this branch.**
