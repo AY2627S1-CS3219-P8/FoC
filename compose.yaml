@@ -99,6 +99,7 @@ services:
       context: ./supplier-service
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
+      APP_ENV: development
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -107,11 +108,35 @@ services:
         condition: service_healthy
       supplier-migrate:
         condition: service_completed_successfully
+      supplier-grants:
+        condition: service_completed_successfully
     networks:
       - default
       - supplier-private
     ports:
       - "127.0.0.1:8081:8080"
+
+  supplier-bootstrap:
+    image: postgres:16-alpine
+    entrypoint: ["psql"]
+    command: ["--no-password", "--set=ON_ERROR_STOP=1", "--file=/bootstrap.sql"]
+    restart: "no"
+    environment:
+      PGHOST: supplier-db
+      PGDATABASE: ${SUPPLIER_POSTGRES_DB:?Set database name}
+      PGUSER: ${SUPPLIER_POSTGRES_USER:?Set database user}
+      PGPASSWORD: ${SUPPLIER_POSTGRES_PASSWORD:?Set database password}
+      SUPPLIER_MIGRATION_PASSWORD: ${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}
+      SUPPLIER_RUNTIME_PASSWORD: ${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}
+    volumes:
+      - ./supplier-service/database/bootstrap.sql:/bootstrap.sql:ro
+    depends_on:
+      supplier-db:
+        condition: service_healthy
+    networks:
+      - supplier-private
+    healthcheck:
+      disable: true
 
   supplier-migrate:
     image: foc-supplier-service:local
@@ -121,12 +146,35 @@ services:
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_migrator:${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
+      APP_ENV: development
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       supplier-db:
         condition: service_healthy
+      supplier-bootstrap:
+        condition: service_completed_successfully
+    networks:
+      - supplier-private
+    healthcheck:
+      disable: true
+
+  supplier-grants:
+    image: postgres:16-alpine
+    entrypoint: ["psql"]
+    command: ["--no-password", "--set=ON_ERROR_STOP=1", "--file=/runtime-grants.sql"]
+    restart: "no"
+    environment:
+      PGHOST: supplier-db
+      PGDATABASE: ${SUPPLIER_POSTGRES_DB:?Set database name}
+      PGUSER: supplier_migrator
+      PGPASSWORD: ${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}
+    volumes:
+      - ./supplier-service/database/runtime-grants.sql:/runtime-grants.sql:ro
+    depends_on:
+      supplier-migrate:
+        condition: service_completed_successfully
     networks:
       - supplier-private
     healthcheck:
@@ -142,6 +190,7 @@ services:
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
+      APP_ENV: development
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -151,6 +200,8 @@ services:
       supplier-db:
         condition: service_healthy
       supplier-migrate:
+        condition: service_completed_successfully
+      supplier-grants:
         condition: service_completed_successfully
     networks:
       - supplier-private
@@ -266,14 +317,96 @@ services:
     healthcheck:
       disable: true
 
+  order-db:
+    image: postgres:16-alpine
+    container_name: order-db
+    environment:
+      POSTGRES_DB: foc_orders
+      POSTGRES_USER: ${ORDER_DB_USER:?Set ORDER_DB_USER in .env}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+    networks:
+      - order-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d foc_orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  order-migrate:
+    image: foc-order-service:local
+    build: ./order-service
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
+      PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - order-private
+    healthcheck:
+      disable: true
+
+  order-service:
+    image: foc-order-service:local
+    build: ./order-service
+    container_name: order-service
+    environment:
+      DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
+      PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+      USER_SERVICE_URL: https://user-service:8080
+      SUPPLIER_SERVICE_URL: http://supplier-service:8080
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      order-db:
+        condition: service_healthy
+      order-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - order-private
+    ports:
+      - "127.0.0.1:8082:8080"
+
+  order-worker:
+    image: foc-order-service:local
+    build: ./order-service
+    container_name: order-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
+      PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      order-migrate:
+        condition: service_completed_successfully
+      kafka-topics:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - order-private
+    healthcheck:
+      disable: true
+
 networks:
   default: {}
   supplier-private:
     internal: true
   credit-private:
     internal: true
+  order-private:
+    internal: true
 
 volumes:
   supplier-db-data:
   user-db-data:
   credit-db-data:
+  order-db-data:

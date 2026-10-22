@@ -1,26 +1,21 @@
 # Event broker
 
-One Kafka node serves the Compose network at `kafka:9092`; it has no host
-port. The one-shot `kafka-topics` job creates all topics because broker-side
-automatic topic creation is disabled.
+One Kafka node for the Compose network. It listens at `kafka:9092` and does not publish a host port. Topics are created by the `kafka-topics` job. The broker does not create topics on its own.
 
 ## Topics
 
 | Topic | Partitions | Retention | Key | Producer |
-| --- | ---: | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | `order.events` | 3 | forever | `order_id` | Order Service |
 | `credit.events` | 3 | forever | `order_id` | Credit Service |
-| `order-service.credit-events.dlq` | 1 | 7 days | copied source key | Order Service |
-| `credit-service.order-events.dlq` | 1 | 7 days | copied source key | Credit Service |
+| `order-service.credit-events.dlq` | 1 | broker default (7 days) | copied from the failed record | Order Service, for credit messages it cannot apply |
+| `credit-service.order-events.dlq` | 1 | broker default (7 days) | copied from the failed record | Credit Service, for order messages it cannot apply |
 
-Records for one aggregate use the same key and therefore remain ordered within
-one partition. Different aggregates can be processed in parallel. Each service
-uses its own stable consumer group and explicitly commits offsets only after
-database work or confirmed DLQ publication.
+A record for one order always lands on the same partition, so that order's events stay in order. Different orders can be on different partitions.
 
 ## Inspect
 
-From the repository root, after `docker compose up kafka kafka-topics`:
+From the repo root, after `docker compose up kafka kafka-topics`:
 
 ```bash
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
@@ -33,6 +28,4 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 
 ## A new consumer
 
-Subscribe with a new `group.id`. `auto.offset.reset=earliest` reads from offset
-0 when that group has no committed offset. One group's commits do not advance
-another group's position.
+Subscribe with a new `group.id`. `auto.offset.reset=earliest` reads the topic from offset 0, including events published before the consumer existed. Each group keeps its own offset, so one consumer does not affect another.

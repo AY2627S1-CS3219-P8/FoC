@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create the topics shared by Order, Credit, and User Services. Safe to rerun.
+# Create the topics Order Service and Credit Service share. Safe to run again.
 
 set -euo pipefail
 
@@ -14,10 +14,7 @@ create_topic() {
     --topic "$name" --partitions "$partitions" --replication-factor 1 "$@"
 }
 
-# Domain streams retain their replay history. Keys preserve per-aggregate order.
 create_topic order.events 3 --config retention.ms=-1
 create_topic credit.events 3 --config retention.ms=-1
-
-# Quarantine topics deliberately retain records for seven days in local Compose.
-create_topic order-service.credit-events.dlq 1 --config retention.ms=604800000
-create_topic credit-service.order-events.dlq 1 --config retention.ms=604800000
+create_topic order-service.credit-events.dlq 1
+create_topic credit-service.order-events.dlq 1

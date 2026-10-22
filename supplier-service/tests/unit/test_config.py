@@ -5,12 +5,13 @@ from pydantic import ValidationError
 
 
 def test_settings_defaults(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.delenv("AUTH_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("LOG_LEVEL", raising=False)
 
     settings = Settings(
         database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
-        user_service_url="https://localhost:8000",
+        user_service_url="https://users.example.test",
     )
 
     # Assert that auth_timeout_seconds has its default value
@@ -18,6 +19,46 @@ def test_settings_defaults(monkeypatch: pytest.MonkeyPatch):
 
     # Assert that log_level has its default value
     assert settings.log_level == "INFO"
+    assert settings.app_env == "production"
+
+
+@pytest.mark.parametrize("app_env", ["development", "test", "production"])
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_user_service_transport_policy(monkeypatch, app_env, scheme):
+    monkeypatch.setenv("APP_ENV", app_env)
+    values = {
+        "database_url": "postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
+        "user_service_url": f"{scheme}://users.example.test",
+    }
+
+    if app_env == "production" and scheme == "http":
+        with pytest.raises(ValidationError, match="USER_SERVICE_URL must use HTTPS"):
+            Settings(**values)
+    else:
+        settings = Settings(**values)
+        assert settings.app_env == app_env
+        assert settings.user_service_url.scheme == scheme
+
+
+def test_missing_app_env_rejects_http(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    with pytest.raises(ValidationError, match="USER_SERVICE_URL must use HTTPS"):
+        Settings(
+            database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
+            user_service_url="http://localhost:8000",
+        )
+
+
+@pytest.mark.parametrize("app_env", ["", "prod", "DEVELOPMENT"])
+def test_invalid_app_env_is_rejected(monkeypatch, app_env):
+    monkeypatch.setenv("APP_ENV", app_env)
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
+            user_service_url="https://users.example.test",
+        )
+    assert any(error["loc"] == ("app_env",) for error in exc_info.value.errors())
+
 
 def test_settings_requires_database_url(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
@@ -25,7 +66,7 @@ def test_settings_requires_database_url(monkeypatch: pytest.MonkeyPatch):
     # Exclude the required database_url field
     with pytest.raises(ValidationError) as exc_info:
         Settings(
-            user_service_url="https://localhost:8000",
+            user_service_url="http://localhost:8000",
             auth_timeout_seconds=3.0,
             log_level="INFO",
         )
@@ -66,7 +107,7 @@ def test_settings_rejects_invalid_auth_timeout(invalid_timeout: float):
     with pytest.raises(ValidationError) as exc_info:
         Settings(
             database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
-            user_service_url="https://localhost:8000",
+            user_service_url="http://localhost:8000",
             auth_timeout_seconds=invalid_timeout,
             log_level="INFO",
         )
@@ -87,21 +128,19 @@ def test_settings_rejects_invalid_auth_timeout(invalid_timeout: float):
         ("database_url", "https://localhost/supplier"),
         ("user_service_url", "not-a-url"),
         ("user_service_url", "ftp://localhost"),
-        ("user_service_url", "http://localhost:8000"),
     ],
     ids=[
         "malformed-database-url",
         "unsupported-database-scheme",
         "malformed-user-service-url",
         "unsupported-user-service-scheme",
-        "plaintext-user-service-url",
     ],
 )
 # Test whether text that is not URL and unsupported schemas are caught
 def test_settings_rejects_invalid_urls(field_name: str, invalid_url: str):
     values = {
         "database_url": "postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
-        "user_service_url": "https://localhost:8000",
+        "user_service_url": "http://localhost:8000",
         "auth_timeout_seconds": 3.0,
         "log_level": "INFO",
     }
@@ -130,7 +169,7 @@ def test_settings_rejects_invalid_log_level(invalid_log_level: str):
     with pytest.raises(ValidationError) as exc_info:
         Settings(
             database_url="postgresql+psycopg://test_user:test_password@localhost:5432/test_supplier",
-            user_service_url="https://localhost:8000",
+            user_service_url="http://localhost:8000",
             auth_timeout_seconds=3.0,
             log_level=invalid_log_level,
         )
@@ -154,7 +193,7 @@ def test_settings_rejects_unsupported_database_driver(scheme: str):
             database_url=(
                 f"{scheme}://test_user:test_password@localhost:5432/test_supplier"
             ),
-            user_service_url="https://localhost:8000",
+            user_service_url="http://localhost:8000",
             auth_timeout_seconds=3.0,
             log_level="INFO",
         )
