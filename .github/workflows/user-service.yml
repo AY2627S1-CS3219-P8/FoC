@@ -5,10 +5,16 @@ on:
     branches: [main]
     paths:
       - "user-service/**"
+      - "contracts/**"
+      - "event-broker/**"
+      - "compose.yaml"
       - ".github/workflows/user-service.yml"
   pull_request:
     paths:
       - "user-service/**"
+      - "contracts/**"
+      - "event-broker/**"
+      - "compose.yaml"
       - ".github/workflows/user-service.yml"
 
 permissions:

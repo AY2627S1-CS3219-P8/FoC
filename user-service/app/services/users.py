@@ -3,7 +3,7 @@
 import logging
 import secrets
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from argon2 import PasswordHasher
 from fastapi import HTTPException
@@ -170,6 +170,7 @@ def register_user(payload: UserCreate, db: Session) -> User:
         raise HTTPException(status_code=409, detail="Unable to create account")
 
     user = User(
+        id=uuid4(),
         nus_student_number=student_number,
         email=email,
         display_name=payload.display_name.strip(),

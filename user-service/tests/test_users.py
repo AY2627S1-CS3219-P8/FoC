@@ -32,10 +32,11 @@ class FakeSession:
             raise self.lookup_error
         return self.existing
 
-    def add(self, user):
-        """Capture the user passed for persistence."""
+    def add(self, value):
+        """Capture the account passed for persistence."""
 
-        self.user = user
+        if isinstance(value, User):
+            self.user = value
 
     def commit(self):
         """Simulate a successful commit or raise the configured database error."""

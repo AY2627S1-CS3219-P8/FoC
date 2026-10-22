@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -85,6 +86,7 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
             )
 
         user = User(
+            id=uuid4(),
             nus_student_number=payload.nus_student_number,
             email=str(payload.email).lower(),
             display_name=payload.display_name.strip(),

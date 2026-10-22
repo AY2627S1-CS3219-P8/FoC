@@ -57,6 +57,17 @@ database roles, runs migrations, and applies runtime grants before starting the
 API. No manual SQL setup is needed; see the
 [Supplier startup guide](supplier-service/README.md#docker-compose).
 
+Generate the local internal CA and User Service certificate once before the
+first Compose start:
+
+```bash
+./scripts/generate-dev-tls.sh
+```
+
+On Windows, `scripts/generate-dev-tls.ps1` does the same thing. See
+[`docs/internal-https.md`](./docs/internal-https.md) for the internal HTTPS
+trust model and production certificate guidance.
+
 Start the services:
 
 ```bash

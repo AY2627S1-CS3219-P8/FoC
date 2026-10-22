@@ -293,7 +293,7 @@ def atomic_engine(test_database_url, monkeypatch):
         with admin.connect() as connection:
             connection.execute(text(f'CREATE DATABASE "{name}"'))
         monkeypatch.setenv('DATABASE_URL', engine.url.render_as_string(hide_password=False))
-        monkeypatch.setenv('USER_SERVICE_URL', 'http://localhost:8000')
+        monkeypatch.setenv('USER_SERVICE_URL', 'https://localhost:8000')
         command.upgrade(Config(str(Path(__file__).resolve().parents[2] / 'alembic.ini')), 'head')
         yield engine
     finally:
@@ -604,7 +604,7 @@ def run_seed_cli(engine, directory, *extra, source=None):
         token in key.upper() for token in ('DATABASE', 'POSTGRES', 'USER_SERVICE', 'AUTH_TIMEOUT', 'LOG_LEVEL')
     )}
     env.update(DATABASE_URL=engine.url.render_as_string(hide_password=False),
-               USER_SERVICE_URL='http://localhost:8000', PYTHONPATH=str(service))
+               USER_SERVICE_URL='https://localhost:8000', PYTHONPATH=str(service))
     completed = subprocess.run(
         [sys.executable, '-m', 'app.commands.seed_suppliers', '--file', str(source), *extra],
         cwd=directory, env=env, capture_output=True, text=True, timeout=20,
