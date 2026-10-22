@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from typing import Protocol
 
-from confluent_kafka import Consumer, KafkaException, Message, Producer
+from confluent_kafka import Consumer, KafkaException, Message, Producer, TopicPartition
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -159,7 +159,13 @@ def _handle_message(
         logger.error("kafka_poll_error", extra={"reason": str(error)})
         return
     if process_delivery(session_factory, message.value() or b"") == "nack":
-        publisher.dead_letter(message)
+        try:
+            publisher.dead_letter(message)
+        except (KafkaException, RuntimeError):
+            # Rewind so the message is retried instead of skipped by a later commit.
+            logger.exception("dead_letter_failed")
+            consumer.seek(TopicPartition(message.topic(), message.partition(), message.offset()))
+            return
     consumer.commit(message=message, asynchronous=False)
 
 
