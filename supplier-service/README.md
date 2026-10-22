@@ -178,7 +178,8 @@ database URL from these values; use letters and numbers for the local
 password to avoid characters requiring URL encoding. The bootstrap database
 account is reserved for bootstrap. Configure `SUPPLIER_MIGRATION_PASSWORD` and
 `SUPPLIER_RUNTIME_PASSWORD`, then follow [schema operations](docs/migrations.md)
-before starting the API with its restricted runtime role.
+for configuration and deployment details. Compose provisions the roles and
+runtime grants automatically before starting the API with its restricted role.
 
 Compose reads `.env` for variable substitution and explicitly passes
 settings into the containers. VS Code terminal environment injection is
@@ -188,31 +189,36 @@ when unset or empty in the Compose environment.
 
 ### Fresh installation and later deployments
 
-For a fresh database, follow the [ordered installation guide](docs/migrations.md#fresh-installation):
-configure credentials, start the database with `--wait`, run administrator
-PostGIS/role bootstrap, build the application image, explicitly run
-`supplier-migrate`, apply runtime grants, then start the API. Migration success
-alone does not grant `supplier_runtime` permission to read `alembic_version`;
-without that grant, readiness returns 503.
-
-After bootstrap, migrations, and grants have succeeded:
+After configuring `.env`, start Supplier on its own or alongside the other
+services. No manual SQL commands or shell exports are needed:
 
 ```bash
-docker compose up -d --wait --wait-timeout 90 supplier-service
-docker compose ps -a supplier-db supplier-migrate supplier-service
+docker compose up -d --build --wait --wait-timeout 180 supplier-service
+# Or start the whole application stack:
+docker compose up -d --build --wait --wait-timeout 180
 ```
 
-Compose waits for database health and successful migration-job completion before
-starting a newly created API. Expect a migration job exited with code 0 and
-healthy database/API containers. Both API and job use `foc-supplier-service:local`
-from the existing Supplier build context. The job has no HTTP health check,
-published port, or automatic restart. Both run as application UID 10001 while
-using separate database roles.
+Compose orders startup as follows:
+
+1. `supplier-db` becomes healthy.
+2. `supplier-bootstrap` runs `database/bootstrap.sql` as the database administrator
+   to enable PostGIS and provision the migration/runtime roles.
+3. `supplier-migrate` applies Alembic migrations as `supplier_migrator`.
+4. `supplier-grants` runs `database/runtime-grants.sql` as `supplier_migrator`.
+5. `supplier-service` starts as `supplier_runtime` and becomes ready.
+
+Each job must exit successfully before its dependent starts. The SQL scripts
+are repeatable, so the same startup flow works with an existing Supplier volume
+created by this setup or the previous documented role-based setup. Expect all
+three jobs to exit with code 0 and healthy database/API containers. The API and
+migration job share `foc-supplier-service:local` and run as application UID 10001.
+The SQL jobs use the PostgreSQL client image and read-only script mounts. All
+jobs have no HTTP health check, published ports, or automatic restart.
 
 For each new image, use the [existing-volume deployment sequence](docs/migrations.md#deploying-a-new-image-with-the-existing-volume):
-rebuild the shared image, wait for the database, stop the API for maintenance,
-explicitly recreate/run the migration job and check its exit code, review/reapply
-grants, then recreate the API. A previously completed job does not prove a new
+rebuild the shared image, stop the API for maintenance, remove the completed
+setup jobs, then let Compose rerun bootstrap, migrations, and grants before
+starting the API. A previously completed job does not prove a new
 image has been migrated. Compose dependencies do not schedule every deployment
 or stop an API that is already running when a dependency fails.
 
@@ -230,8 +236,8 @@ packaged versus installed revisions, the migration job, and container health:
 ```bash
 curl -i --max-time 5 http://127.0.0.1:8081/ready
 curl -i --max-time 5 http://127.0.0.1:8081/health
-docker compose ps -a supplier-db supplier-migrate supplier-service
-docker compose logs --tail=80 supplier-migrate supplier-service
+docker compose ps -a supplier-db supplier-bootstrap supplier-migrate supplier-grants supplier-service
+docker compose logs --tail=80 supplier-bootstrap supplier-migrate supplier-grants supplier-service
 docker compose run --rm --no-deps supplier-migrate python -m alembic heads
 docker compose run --rm --no-deps supplier-migrate python -m alembic current
 docker inspect --format '{{json .State.Health}}' "$(docker compose ps -q supplier-service)"
@@ -247,7 +253,7 @@ job instead of resetting its database.
 ### Networking and storage
 
 The API joins the shared application network and the private supplier
-network. The migration job and database join only the private supplier network
+network. The setup jobs and database join only the private supplier network
 and have no published host port. A `5432/tcp` entry in `docker compose ps` is not a host
 port mapping. The API publishes only `127.0.0.1:8081`.
 
@@ -290,7 +296,8 @@ The API initializes its database engine and gates readiness on connectivity and
 installed migration revisions. Public reads do not authenticate. The mounted
 POST, PATCH, DELETE, and administrator GET endpoints use the reusable User
 Service administrator dependency.
-Compose gates new API startup on database health and successful migration completion.
+Compose gates new API startup on database health and successful bootstrap,
+migration, and runtime-grant jobs.
 
 Deployment verification on disposable data covered fresh bootstrap and grants,
 upgrade from `0001` to packaged head `0002` on the same volume with a surviving
@@ -1443,26 +1450,23 @@ root `.env` as described in [fresh installation](docs/migrations.md#fresh-instal
 `POSTGRES_USER` and `POSTGRES_PASSWORD` are needed for full Compose interpolation;
 set `SUPPLIER_POSTGRES_DB`, `SUPPLIER_POSTGRES_USER`,
 `SUPPLIER_POSTGRES_PASSWORD`, `SUPPLIER_MIGRATION_PASSWORD`, and
-`SUPPLIER_RUNTIME_PASSWORD`. Provision PostGIS and the migrator/runtime roles, apply migrations, and
-apply `database/runtime-grants.sql` before seeding. Use URL-safe passwords or
-correctly encode URL components. Compose supplies required `USER_SERVICE_URL`
+`SUPPLIER_RUNTIME_PASSWORD`. Compose provisions PostGIS and the migrator/runtime
+roles, applies migrations, and grants runtime access before seeding. Use URL-safe
+passwords or correctly encode URL components. Compose supplies required `USER_SERVICE_URL`
 and optional timeout/log settings; local Python runs must export those settings
 and `DATABASE_URL` explicitly. The command does not load `.env` itself.
 
 ```bash
 docker compose --profile tools config --quiet
 docker compose build supplier-service
-# After administrator bootstrap; stop if migration fails:
-docker compose run --rm supplier-migrate
-# Apply/review runtime grants using the linked installation guide.
 docker compose --profile tools run --rm supplier-seed --dry-run
 docker compose --profile tools run --rm supplier-seed
 ```
 
 The empty Compose command lets appended `--dry-run` reach the Python entrypoint.
-Both modes wait for healthy `supplier-db` and successful `supplier-migrate`
-completion. A previous migration job is not a deployment scheduler: follow the
-[existing-volume sequence](docs/migrations.md#deploying-a-new-image-with-the-existing-volume)
+Both modes wait for healthy `supplier-db` and successful bootstrap, migration,
+and runtime-grant jobs. A previous migration job is not a deployment scheduler:
+follow the [existing-volume sequence](docs/migrations.md#deploying-a-new-image-with-the-existing-volume)
 for a new image. The command independently requires installed Alembic heads to
 exactly match the nonempty packaged heads. It never applies migrations itself.
 
@@ -1545,8 +1549,9 @@ not tested in this rehearsal.
 Use a unique Compose project name (for example `foc-seed-check`) and disposable
 database credentials/name. Prefix **every** installation and test command with
 `docker compose -p foc-seed-check`; this isolates the named volume and network.
-Follow fresh installation steps 1–5 for bootstrap, migration, and runtime grants,
-without starting the API. Then run:
+Configure the disposable credentials as described in fresh installation. The
+seed command starts bootstrap, migration, and runtime-grant jobs automatically,
+without starting the API:
 
 ```bash
 docker compose -p foc-seed-check --profile tools config --quiet
@@ -1555,7 +1560,7 @@ docker compose -p foc-seed-check --profile tools run --rm supplier-seed --dry-ru
 docker compose -p foc-seed-check --profile tools run --rm supplier-seed
 docker compose -p foc-seed-check --profile tools run --rm supplier-seed
 docker compose -p foc-seed-check --profile tools run --rm supplier-seed --dry-run
-docker compose -p foc-seed-check ps -a supplier-db supplier-migrate
+docker compose -p foc-seed-check ps -a supplier-db supplier-bootstrap supplier-migrate supplier-grants
 docker compose -p foc-seed-check exec -T supplier-db sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT (SELECT count(*) FROM supplier) AS suppliers, (SELECT count(*) FROM category) AS categories, (SELECT count(*) FROM supplier_category) AS assignments"'
 # Only for this disposable project:
