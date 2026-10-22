@@ -97,6 +97,8 @@ services:
       USER_SERVICE_URL: http://user-service:8080
       # Compose serves plain http, where browsers may drop a Secure cookie.
       COOKIE_SECURE: "false"
+      # Not in depends_on: supplier pages show an error until it is reachable.
+      SUPPLIER_SERVICE_URL: http://supplier-service:8080
     depends_on:
       user-service:
         condition: service_healthy

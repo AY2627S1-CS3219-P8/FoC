@@ -1,16 +1,5 @@
-// Placeholder data until the supplier, order and credit services are wired up.
-// Stores mirror data/csv/supplier-seed-data.csv at the repo root.
-
-export type StoreType = 'Food' | 'Food/Coffee' | 'Shopping' | 'Printing';
-
-export type Store = {
-  id: string;
-  name: string;
-  type: StoreType;
-  building: string;
-  floor: number;
-  locationDescription: string;
-};
+// Placeholder data until the order and credit services are wired up.
+// Stores come from Supplier Service (lib/supplier-service.ts).
 
 export type Favor = {
   id: string;
@@ -44,49 +33,6 @@ export type Errand = {
 };
 
 export const CREDIT_BALANCE = 45;
-
-export const stores: Store[] = [
-  {
-    id: 'annas-soup-union',
-    name: "Anna's x Soup Union",
-    type: 'Food',
-    building: 'Central Library',
-    floor: 1,
-    locationDescription: 'Next to NUS Co-op',
-  },
-  {
-    id: 'nus-coop',
-    name: 'NUS Co-op',
-    type: 'Shopping',
-    building: 'Central Library',
-    floor: 1,
-    locationDescription: 'Inside the library on the right side',
-  },
-  {
-    id: 'printer-com2',
-    name: 'Printer @ Com 2',
-    type: 'Printing',
-    building: 'COM2',
-    floor: 1,
-    locationDescription: 'Next to LT19',
-  },
-  {
-    id: 'robot-cafe',
-    name: 'Cafe+ Robot Cafe',
-    type: 'Food/Coffee',
-    building: 'Central Library',
-    floor: 1,
-    locationDescription: 'Opp to central library entrance',
-  },
-  {
-    id: 'a-hot-hideout',
-    name: 'A Hot Hideout',
-    type: 'Food',
-    building: "Prince George's Park",
-    floor: 2,
-    locationDescription: 'Near PGP entrance',
-  },
-];
 
 export const favors: Favor[] = [
   {

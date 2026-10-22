@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
   ArrowRight,
   Award,
@@ -15,9 +15,10 @@ import {
 } from 'lucide-react';
 
 import { PageContainer, PageHeader } from '@/components/page-header';
-import { formatStoreLocation } from '@/components/request/store-directory';
 import { Button } from '@/components/ui/button';
-import { CREDIT_BALANCE, type Store, stores } from '@/lib/mock-data';
+import { CREDIT_BALANCE } from '@/lib/mock-data';
+import type { Supplier } from '@/lib/supplier-service';
+import { formatOpeningHours, formatSupplierLocation } from '@/lib/suppliers';
 import { cn } from '@/lib/utils';
 
 const ETA_OPTIONS = [
@@ -50,24 +51,23 @@ function FieldLabel({
   );
 }
 
-export function RequestErrand() {
+type RequestErrandProps = {
+  /** Store chosen in the directory, loaded from Supplier Service. */
+  initialStore: Supplier | null;
+  storeError: string | null;
+};
+
+export function RequestErrand({
+  initialStore,
+  storeError,
+}: RequestErrandProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const [store, setStore] = useState<Store | null>(null);
+  const [store, setStore] = useState(initialStore);
   const [description, setDescription] = useState('');
   const [destination, setDestination] = useState('');
   const [credits, setCredits] = useState(DEFAULT_CREDITS);
   const [eta, setEta] = useState<Eta>('asap');
   const [submitted, setSubmitted] = useState(false);
-
-  useEffect(() => {
-    const storeId = searchParams.get('store');
-    if (!storeId) return;
-    const selected = stores.find((s) => s.id === storeId);
-    if (selected) setStore(selected);
-    router.replace('/request');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
 
   const canSubmit =
     store !== null &&
@@ -81,6 +81,7 @@ export function RequestErrand() {
     setCredits(DEFAULT_CREDITS);
     setEta('asap');
     setSubmitted(false);
+    router.replace('/request');
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -151,6 +152,11 @@ export function RequestErrand() {
                   aria-hidden
                 />
               </Link>
+              {storeError && !store && (
+                <p role='alert' className='mt-2 text-sm text-red-600'>
+                  {storeError}
+                </p>
+              )}
             </div>
 
             <div>
@@ -174,9 +180,21 @@ export function RequestErrand() {
                 )}
               >
                 <MapPin className='text-courier size-4 shrink-0' aria-hidden />
-                {store
-                  ? `${formatStoreLocation(store)}, ${store.locationDescription}`
-                  : 'Select a store to fill this in'}
+                {store ? (
+                  <span>
+                    {[
+                      formatSupplierLocation(store) || store.area,
+                      store.description,
+                    ]
+                      .filter(Boolean)
+                      .join(', ')}
+                    <span className='block text-xs font-medium'>
+                      {formatOpeningHours(store)}
+                    </span>
+                  </span>
+                ) : (
+                  'Select a store to fill this in'
+                )}
               </p>
             </div>
 

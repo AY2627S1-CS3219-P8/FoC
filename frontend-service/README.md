@@ -76,6 +76,45 @@ docker run -p 3000:3000 frontend-service
 
 Open [http://localhost:3000](http://localhost:3000) to see the result.
 
+## Supplier Service
+
+The store directory (`/request/store`) and the store preselected on the
+request form (`/request?store=<supplier id>`) come from Supplier Service's
+public reads: `GET /suppliers`, `GET /suppliers/{id}`, `GET /categories` and
+`GET /areas`.
+
+- **Server-side only** (`lib/supplier-service.ts`): Supplier Service sets no
+  CORS headers, so it is called from Server Components and the
+  `loadSuppliers` Server Action (`lib/supplier-actions.ts`), never from the
+  browser. Set `SUPPLIER_SERVICE_URL` at runtime; Compose uses
+  `http://supplier-service:8080`, and `yarn dev` defaults to
+  `http://localhost:8081`, the port Compose publishes on the host.
+- **Filtering**: the directory filters by area and category (any of the
+  selected categories) and pages 20 suppliers at a time, matching what the
+  service supports. There is no free-text search because the service has none.
+- **Display** follows the service's suggested UI behaviour: missing building or
+  floor labels are omitted, null hours show "Hours unknown", equal opening and
+  closing times show "Open 24 hours", and all times are Asia/Singapore.
+- **Images**: Supplier Service returns only an `image_key` filename. The
+  browser loads it directly from `NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL`,
+  defaulting to the seed images the CSV references
+  (`raw.githubusercontent.com/CS3219-AY2627S1/FoC-Template/main/data/images`);
+  the frontend neither stores nor proxies image files. Suppliers without an
+  image show a category icon. `NEXT_PUBLIC_*` values are inlined at build time.
+- **Unavailable service**: the frontend does not depend on Supplier Service to
+  start (no Compose `depends_on`). If the service is down, unreachable, slow
+  (5 s timeout) or returns an invalid response, supplier pages show an error
+  message instead of failing, and the rest of the app works as normal.
+  `docker compose up frontend-service` therefore does not start Supplier
+  Service; use `docker compose up` for the full stack.
+
+Supplier Service never seeds itself. To fill an empty local database, run from
+the repository root:
+
+```bash
+docker compose --profile tools run --rm supplier-seed
+```
+
 ## Authentication
 
 Authentication goes through User Service, but the browser never talks to it
