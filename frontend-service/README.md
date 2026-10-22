@@ -125,7 +125,11 @@ never sees the token and User Service needs no CORS configuration.
 - **User Service client** (`lib/user-service.ts`): typed `fetch` wrapper for
   the User Service endpoints the app uses. Its base URL comes from
   `USER_SERVICE_URL`, which is read at runtime on the server and defaults to
-  `http://localhost:8080`. Compose sets it to `http://user-service:8080`.
+  `https://localhost:8080`. Compose sets it to `https://user-service:8080`.
+  User Service only serves HTTPS with a certificate from the local internal
+  CA (see [`docs/internal-https.md`](../docs/internal-https.md)), so Node
+  must trust that CA through `NODE_EXTRA_CA_CERTS`. Compose mounts `ca.crt`
+  into the container and sets it.
   It builds every request body field by field, so nothing extra from the
   browser reaches User Service. It and `lib/session.ts` import
   `server-only`, so importing either from a client component fails the build.
@@ -178,16 +182,23 @@ Vitest covers the User Service client, the auth Server Actions and the
 ### Running against User Service locally
 
 With `yarn dev`, start User Service from the repo root. Compose publishes it
-on `127.0.0.1:8080`:
+on `127.0.0.1:8080`. Generate the development certificates once first
+(`.\scripts\generate-dev-tls.ps1`); User Service will not start without them:
 
 ```bash
 docker compose up --build user-db user-migrate user-bootstrap user-service
 ```
 
+Then start the dev server trusting the internal CA, from `frontend-service/`:
+
+```bash
+NODE_EXTRA_CA_CERTS=../certs/ca.crt yarn dev
+```
+
 Create an account at `/signup`, or set the `BOOTSTRAP_ADMIN_*` values in
 `.env` to create an administrator. The full stack (`docker compose up`)
-needs no extra setup: the frontend container reaches User Service over the
-Compose network.
+needs only the certificates: the frontend container reaches User Service over
+the Compose network and trusts its CA through the mounted `ca.crt`.
 
 Chrome and Firefox keep the `Secure` session cookie on `http://localhost`.
 If you open the dev server another way, such as Safari or a LAN address,

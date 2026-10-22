@@ -16,7 +16,9 @@ certificate before starting Compose:
 The generated server certificate is valid for the Compose DNS name
 `user-service`, `localhost`, and `127.0.0.1`. Compose mounts the server
 certificate and key only into User Service, and mounts only the CA certificate
-into Credit Service. Credit verifies both the certificate chain and hostname.
+into Credit Service and Frontend Service. Credit verifies both the
+certificate chain and hostname; Frontend Service's Node runtime trusts the CA
+through `NODE_EXTRA_CA_CERTS`.
 Certificate files live under `certs/` and are excluded from Git.
 
 Do not use these development keys outside a local environment. A deployed
