@@ -15,10 +15,11 @@ and runs as `supplier` (UID 10001). The migration job runs
 restart. Its required `USER_SERVICE_URL` comes from Compose; shared application
 settings validate that URL even though migrations do not contact User Service.
 
-Compose waits for `supplier-db` to be healthy and `supplier-migrate` to complete
-successfully before starting a newly created API container. The API uses
-`supplier_runtime`, retains its two networks and `127.0.0.1:8081` binding, and
-has a `/ready` image health check with a three-second HTTP timeout and a
+Compose waits for database health, then runs `supplier-bootstrap`,
+`supplier-migrate`, and `supplier-grants` in order. Every job must complete
+successfully before the next stage and a newly created API container can start.
+The API uses `supplier_runtime`, retains its two networks and `127.0.0.1:8081`
+binding, and has a `/ready` image health check with a three-second HTTP timeout and a
 five-second Docker timeout.
 
 | Probe | Success | Failure meaning |
@@ -35,13 +36,12 @@ migrations or creates tables. Probes do not require authentication.
 
 Run these commands from the repository root with Docker running. Use the same
 Compose project name throughout a deployment so it keeps the same named volume.
-Execute steps in order and stop if a command fails.
 
-1. If `.env` does not exist, copy `.env.example` to `.env`. Set these variables:
+1. If `.env` does not exist, copy `.env.example` to `.env`. Configure
+   `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `USER_SERVICE_INTERNAL_TOKEN` for
+   complete Compose interpolation, plus these Supplier values:
 
    ```dotenv
-   POSTGRES_USER=foc
-   POSTGRES_PASSWORD=REPLACE_WITH_USER_DB_PASSWORD
    SUPPLIER_POSTGRES_DB=supplier_db
    SUPPLIER_POSTGRES_USER=supplier_admin
    SUPPLIER_POSTGRES_PASSWORD=REPLACE_WITH_ADMIN_PASSWORD
@@ -51,88 +51,56 @@ Execute steps in order and stop if a command fails.
    LOG_LEVEL=INFO
    ```
 
-   The User database variables are needed to interpolate the complete Compose
-   file even when starting only Supplier services. Use separate passwords;
-   `openssl rand -hex 24` generates a URL-safe value. Migration and runtime
-   passwords are interpolated into connection URLs, so use URL-safe values or
-   correctly percent-encode URL components. Keep real credentials in the ignored
-   `.env`, never in committed files or copied diagnostic output. The bootstrap
-   administrator account is not used by the API.
+   Use separate passwords; `openssl rand -hex 24` generates a URL-safe value.
+   Migration and runtime passwords are interpolated into connection URLs, so
+   use URL-safe values or correctly percent-encode URL components. Keep real
+   credentials in the ignored `.env`. The API never uses the database
+   administrator account.
 
-   Compose loads `.env` for substitution; it does not export shell variables.
-   In a shell with your trusted, shell-compatible `.env`, export the values for
-   the bootstrap/grant commands too:
+   Compose reads `.env` and supplies job credentials directly. No `source .env`
+   or manual SQL commands are required. Existing shell variables take precedence
+   over `.env`; keep them consistent. Avoid printing resolved Compose
+   configuration because it includes credentials; `config --quiet` validates it.
+
+2. Validate and start Supplier, including its setup jobs:
 
    ```bash
-   set -a
-   source .env
-   set +a
    docker compose config --quiet
-   ```
-
-   Exported variables take precedence over `.env`; reload them after edits.
-   Container `DATABASE_URL` and `USER_SERVICE_URL` are supplied explicitly by
-   Compose. Standalone local-run examples of those variables in `.env` do not
-   override the container settings. Avoid printing resolved Compose configuration
-   because it includes connection credentials; `config --quiet` validates it.
-
-2. Start the database and wait for its health check:
-
-   ```bash
-   docker compose up -d --build --wait supplier-db
-   ```
-
-3. As administrator, install PostGIS and provision the separate roles:
-
-   ```bash
-   docker compose exec -T \
-     -e SUPPLIER_MIGRATION_PASSWORD -e SUPPLIER_RUNTIME_PASSWORD \
-     supplier-db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
-     < supplier-service/database/bootstrap.sql
-   ```
-
-4. Build the shared application image, inspect its packaged revisions, and
-   explicitly run migrations using the configured migration service:
-
-   ```bash
-   docker compose build supplier-service
-   docker compose run --rm --no-deps supplier-migrate python -m alembic heads
-   docker compose run --rm supplier-migrate
-   docker compose run --rm supplier-migrate python -m alembic current
-   ```
-
-   `heads` inspects the image; `current` inspects the database. Both currently
-   report `0002 (head)`. `run --rm` uses the job's image, network, settings, and
-   role, waits for its database dependency, and removes its one-off container.
-   A nonzero migration exit must halt deployment.
-
-5. As migrator, apply the explicit runtime grants:
-
-   ```bash
-   docker compose exec -T -e PGPASSWORD="$SUPPLIER_MIGRATION_PASSWORD" \
-     supplier-db sh -c 'psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U supplier_migrator -d "$POSTGRES_DB"' \
-     < supplier-service/database/runtime-grants.sql
-   ```
-
-   A successfully migrated database is not sufficient: `supplier_runtime`
-   needs `SELECT` on `alembic_version` for readiness. The script also grants
-   category reads and supplier/assignment data access. It grants no schema
-   mutation or revision-state writes. Without these grants, `/ready` returns
-   503 even if `/health` returns 200 and the migration job succeeded.
-
-6. Start the API and wait for readiness:
-
-   ```bash
-   docker compose up -d --wait --wait-timeout 90 supplier-service
-   docker compose ps -a supplier-db supplier-migrate supplier-service
+   docker compose up -d --build --wait --wait-timeout 180 supplier-service
+   docker compose ps -a supplier-db supplier-bootstrap supplier-migrate supplier-grants supplier-service
    curl --fail --max-time 5 http://127.0.0.1:8081/ready
    curl --fail --max-time 5 http://127.0.0.1:8081/health
    ```
 
-   Compose also creates/runs its regular migration-job container as a dependency;
-   upgrading an already-current database is a no-op. Expect the job to exit 0,
-   the API to become healthy, and the two bodies shown in the probe table.
-   No User Service or frontend container is needed for these checks.
+   To start Supplier alongside all other services in this checkout, use
+   `docker compose up -d --build --wait --wait-timeout 180` instead.
+
+The automatic dependency chain is:
+
+```text
+supplier-db healthy
+  -> supplier-bootstrap completed successfully
+  -> supplier-migrate completed successfully
+  -> supplier-grants completed successfully
+  -> supplier-service starts (or supplier-seed when explicitly invoked)
+```
+
+`supplier-bootstrap` uses `postgres:16-alpine` as a PostgreSQL client. It connects
+as the configured database administrator and runs the read-only-mounted
+`database/bootstrap.sql` to enable PostGIS and provision the two login roles.
+It receives their passwords through environment variables read by `psql`.
+`supplier-migrate` then applies packaged Alembic revisions as `supplier_migrator`.
+Finally, `supplier-grants` uses the PostgreSQL client as `supplier_migrator` to run
+`database/runtime-grants.sql`. These client jobs run only on `supplier-private`,
+have no published ports, disable health checks, and never automatically restart.
+SQL errors exit nonzero and block dependent services.
+
+Runtime grants include `SELECT` on `alembic_version` for readiness and category
+reads plus supplier/assignment data access. They grant no schema mutation or
+revision-state writes. Expect all three jobs to exit 0 and the database/API
+containers to become healthy. No User Service or frontend is needed for these
+Supplier probes. Startup does not import supplier CSV data; use the explicit
+seed tool when needed.
 
 Bootstrap and grants are repeatable. New tables require a permissions review,
 and grants must be reapplied after objects are recreated. Neither script
@@ -150,52 +118,38 @@ older image does not prove that a new image has been migrated. Dependencies also
 do not stop an already-running API when the database or migration job fails.
 Docker marks an unhealthy API but does not automatically stop it or migrate it.
 
-Use this explicit maintenance-window sequence from the repository root. Keep
-the existing project name, database name, credentials, and volume. Review the
-new migration operations and back up persistent data before deployment. This
-sequence intentionally stops the API; it is not a zero-downtime rollout.
+Use this maintenance-window sequence from the repository root. Keep the existing
+project name, database name, credentials, and volume. Review new migration
+operations and back up persistent data before deployment. New tables may need
+updates to `database/runtime-grants.sql`. This sequence stops the API while the
+setup jobs run:
 
 ```bash
 docker compose config --quiet
 docker compose build supplier-service
-docker compose up -d --wait supplier-db
 docker compose stop supplier-service
 
-# Always recreate and run the job from the newly built shared image.
-# This command waits and propagates the migration exit code.
-docker compose up --no-deps --force-recreate --abort-on-container-exit \
-  --exit-code-from supplier-migrate supplier-migrate
-```
+# Remove only the stopped setup containers, preserving the database and volume.
+docker compose rm -f supplier-bootstrap supplier-migrate supplier-grants
 
-Continue only after exit 0. `--no-deps` is appropriate here because the database
-has already passed `up --wait`; it prevents the attached command from managing
-other services. Unlike `run --rm`, this leaves the job container available for
-status/log inspection. Review grants for new objects, and reapply the existing
-script when applicable:
-
-```bash
-docker compose exec -T -e PGPASSWORD="$SUPPLIER_MIGRATION_PASSWORD" \
-  supplier-db sh -c 'psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U supplier_migrator -d "$POSTGRES_DB"' \
-  < supplier-service/database/runtime-grants.sql
-
-docker compose run --rm --no-deps supplier-migrate python -m alembic current
-docker compose up -d --no-deps --force-recreate --wait --wait-timeout 90 supplier-service
+# Recreate the jobs and wait for bootstrap, migrations, grants, and API readiness.
+docker compose up -d --wait --wait-timeout 180 supplier-service
 curl --fail --max-time 5 http://127.0.0.1:8081/ready
 ```
 
-The final `--no-deps` deliberately relies on the explicit successful job above;
-it does not independently enforce the dependency. Do not run that step after a
-failed migration. Recreating the API makes it use the new image while retaining
-database data. Do not use `down -v`, reset the schema, or reseed existing data as
-a deployment step.
+If a job fails, inspect its logs and repair the cause before rerunning startup.
+Do not bypass dependencies with `--no-deps` to start the API after a failed job.
+Do not use `down -v`, reset the schema, or reseed existing data as a deployment
+step. Ordinary stop/start and container recreation retain the database volume;
+repeatable bootstrap, migrations, and grants support already-provisioned volumes.
 
 ## Inspection and recovery
 
 From the repository root:
 
 ```bash
-docker compose ps -a supplier-db supplier-migrate supplier-service
-docker compose logs --tail=80 supplier-migrate
+docker compose ps -a supplier-db supplier-bootstrap supplier-migrate supplier-grants supplier-service
+docker compose logs --tail=80 supplier-bootstrap supplier-migrate supplier-grants
 docker compose logs --tail=80 supplier-service
 docker compose run --rm --no-deps supplier-migrate python -m alembic heads
 docker compose run --rm --no-deps supplier-migrate python -m alembic current
@@ -213,6 +167,10 @@ details, so review them before sharing.
 - Database unavailable: restore database service/connectivity, then retry
   `/ready`. Connections are checked on each request and readiness can recover
   without restarting the API. `/health` remains a liveness-only check.
+- Bootstrap administrator login failure: an existing volume keeps its stored
+  password even when `.env` changes. Restore the matching configuration or
+  deliberately align the stored administrator password using local administrator
+  access, then rerun startup. Preserve the volume and its data.
 - Older schema: run the new image's migration job successfully and ensure grants
   are correct. Readiness recovers once installed and packaged heads match.
   Unknown or additional heads require diagnosis of image/database history;
@@ -265,6 +223,7 @@ CHECK_PROJECT="foc-supplier-check-$(date +%s)-$$"
 cat > "$CHECK_DIR/test.env" <<'ENV'
 POSTGRES_USER=unused_test
 POSTGRES_PASSWORD=unused_test
+USER_SERVICE_INTERNAL_TOKEN=unused_test_internal_token
 SUPPLIER_POSTGRES_DB=supplier_deploy_test
 SUPPLIER_POSTGRES_USER=supplier_test_admin
 SUPPLIER_POSTGRES_PASSWORD=disposable_admin
@@ -299,20 +258,28 @@ dc config --quiet
 ```
 
 The disposable credentials are already loaded: do not copy or source the root
-`.env` for this rehearsal. Run fresh-install **steps 2–4** above with `dc`
-replacing every `docker compose`. Then demonstrate missing revision-read grants
-by running `dc up -d supplier-service` without `--wait`, before step 5. Once
-Uvicorn is listening, obtain its random port and inspect the probes:
+`.env` for this rehearsal. Build and start the complete automatic dependency
+chain, then obtain its random port and inspect the probes:
 
 ```bash
+dc up -d --build --wait --wait-timeout 180 supplier-service
 CHECK_API="http://$(dc port supplier-service 8080)"
-curl -i --max-time 5 "$CHECK_API/ready"   # 503, {"status":"not_ready"}
+curl -i --max-time 5 "$CHECK_API/ready"   # 200, {"status":"ready"}
 curl -i --max-time 5 "$CHECK_API/health"  # 200, {"status":"healthy"}
 ```
 
-Apply the grant step with `dc`, then run
-`dc up -d --wait --wait-timeout 90 supplier-service`. Readiness becomes 200.
 Recalculate `CHECK_API` after any API recreation because its random port can change.
+To rehearse permission loss after startup, revoke revision access only in this
+disposable database, then restore it using the grant job:
+
+```bash
+dc exec -T supplier-db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+REVOKE SELECT ON alembic_version FROM supplier_runtime;
+SQL
+curl -i --max-time 5 "$CHECK_API/ready"   # 503
+dc run --rm --no-deps supplier-grants
+curl -i --max-time 5 "$CHECK_API/ready"   # 200
+```
 
 ### Database outage and repair
 
@@ -347,8 +314,8 @@ CHECK_VOLUME="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "
 ```
 
 Follow the **existing-volume deployment** sequence above with `dc`, including
-rebuilding the shared image, explicitly recreating the job, reapplying grants,
-and recreating the API. Replace that sequence's final fixed-port
+rebuilding the shared image and letting Compose rerun setup before restarting
+the API. Replace that sequence's final fixed-port
 `curl --fail --max-time 5 http://127.0.0.1:8081/ready` with the following commands
 immediately after API recreation. Recalculate the disposable project's address
 before probing it; port 8081 may belong to an unrelated development API.
@@ -400,10 +367,10 @@ services:
       - "$CHECK_DIR/failing-migrations:/app/migrations:ro"
 YAML
 # Remove only these disposable containers, keeping the database and its volume.
-dc rm -s -f supplier-service supplier-migrate
+dc rm -s -f supplier-service supplier-migrate supplier-grants
 # Expected nonzero exit; do not use --no-deps here: this tests startup gating.
 dc -f "$CHECK_DIR/failure.yaml" up -d supplier-service
-dc ps -a supplier-service supplier-migrate
+dc ps -a supplier-service supplier-migrate supplier-grants
 dc logs --tail=20 supplier-migrate
 ```
 
@@ -411,13 +378,8 @@ Expect migration exit 1 and the API to remain `Created`, never started. Remove
 the failure by invoking the normal configuration without `failure.yaml`:
 
 ```bash
-dc up --no-deps --force-recreate --abort-on-container-exit \
-  --exit-code-from supplier-migrate supplier-migrate
-# Continue only after exit 0.
-dc exec -T -e PGPASSWORD="$SUPPLIER_MIGRATION_PASSWORD" \
-  supplier-db sh -c 'psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U supplier_migrator -d "$POSTGRES_DB"' \
-  < supplier-service/database/runtime-grants.sql
-dc up -d --force-recreate --wait --wait-timeout 90 supplier-service
+dc rm -f supplier-service supplier-migrate supplier-grants
+dc up -d --wait --wait-timeout 180 supplier-service
 CHECK_API="http://$(dc port supplier-service 8080)"
 curl --fail --max-time 5 "$CHECK_API/ready"
 ```
@@ -465,6 +427,40 @@ The lifecycle test creates and removes its own uniquely named database; its admi
 URL needs database-creation and extension-install privileges. Without
 `TEST_ADMIN_DATABASE_URL`, that test is skipped. Supply all three URLs for full
 coverage, using only disposable data.
+
+### Automatic startup verification (2026-10-22)
+
+Built the current API and database Dockerfiles and tested the Compose dependency
+chain on Docker Desktop using isolated project `foc-supplier-auto-check-60fc20de`,
+disposable credentials, no API host ports, and a new database volume:
+
+- Fresh startup completed all three setup jobs with exit 0; the API became
+  healthy and `/health`, `/ready`, and `/suppliers` returned 200.
+- The runtime role could read migration state and insert supplier records, but
+  could neither create schema objects nor write migration state. Both service
+  roles retained their non-superuser, non-role/database-creation restrictions.
+- The seed preview and import succeeded. After container removal and recreation,
+  the same database cluster retained 21 suppliers and 26 assignments. Repeated
+  `up` also preserved these values.
+- Injected bootstrap SQL, migration-process, and grant SQL failures each blocked
+  a newly created API and the seed tool. Removing the failure restored readiness
+  while preserving the imported data.
+- A seed preview invoked alone on another empty volume automatically ran all
+  setup dependencies and left the supplier table empty.
+- All disposable containers, networks, and volumes were removed. Compose
+  validation, workflow YAML parsing, and whitespace checks passed.
+
+A subsequent isolated check in `foc-three-service-check-65198c6d` built and
+started all services in this checkout: User, Frontend, and Supplier, including
+their databases and setup jobs. Both API readiness endpoints and the frontend
+page returned 200; every setup job exited 0. The disposable resources were
+removed. This verifies startup; frontend authentication and data remain stubbed.
+
+Hosted GitHub Actions execution and the unrelated application unit/API suites
+were not run for this Compose change. Order, Credit, and Kafka are absent from
+this checkout's Compose configuration and were not part of the stack check.
+The CI workflow now covers fresh Supplier startup, seed dependencies, and
+existing-volume startup.
 
 ### Observed verification
 

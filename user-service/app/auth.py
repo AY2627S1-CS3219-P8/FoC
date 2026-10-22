@@ -18,6 +18,11 @@ from app.models import User, UserSession
 
 SESSION_INACTIVITY = timedelta(minutes=30)
 SESSION_ABSOLUTE_LIFETIME = timedelta(hours=24)
+# A protected request still validates the session against the database, but a
+# session heartbeat only needs to be persisted periodically.  This prevents
+# high-frequency consumers such as the Order Service from turning every read
+# into a write while keeping the refresh interval far below the idle timeout.
+SESSION_REFRESH_INTERVAL = timedelta(minutes=1)
 SESSION_CLEANUP_INTERVAL = timedelta(hours=1)
 AUTHENTICATION_ERROR = "Invalid authentication credentials"
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,256}$")
@@ -120,9 +125,10 @@ def get_current_session(
         if session is None:
             raise _authentication_error()
 
+        last_activity_at = _utc(session.last_activity_at)
         inactivity_expiry = min(
             _utc(session.expires_at),
-            _utc(session.last_activity_at) + SESSION_INACTIVITY,
+            last_activity_at + SESSION_INACTIVITY,
         )
         if now >= inactivity_expiry or now >= _utc(session.absolute_expires_at):
             raise _authentication_error()
@@ -132,9 +138,47 @@ def get_current_session(
             raise _authentication_error()
         user_id = user.id
 
-        session.last_activity_at = now
-        session.expires_at = min(now + SESSION_INACTIVITY, _utc(session.absolute_expires_at))
-        db.commit()
+        if now >= last_activity_at + SESSION_REFRESH_INTERVAL:
+            # Make the heartbeat conditional in the database as well as in
+            # Python. Concurrent requests using the same token can otherwise
+            # all observe the old timestamp and each issue an UPDATE.
+            refresh_result = db.execute(
+                update(UserSession)
+                .where(
+                    UserSession.id == session.id,
+                    UserSession.revoked_at.is_(None),
+                    UserSession.last_activity_at < now - SESSION_REFRESH_INTERVAL,
+                )
+                .values(
+                    last_activity_at=now,
+                    expires_at=min(
+                        now + SESSION_INACTIVITY,
+                        _utc(session.absolute_expires_at),
+                    ),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if refresh_result.rowcount:
+                db.commit()
+                db.refresh(session)
+            else:
+                # Another request may have refreshed or revoked this session
+                # after the initial read. Re-read the authoritative state so a
+                # concurrent revocation cannot be mistaken for a successful
+                # heartbeat.
+                db.refresh(session)
+                db.refresh(user)
+                current_inactivity_expiry = min(
+                    _utc(session.expires_at),
+                    _utc(session.last_activity_at) + SESSION_INACTIVITY,
+                )
+                if (
+                    session.revoked_at is not None
+                    or now >= current_inactivity_expiry
+                    or now >= _utc(session.absolute_expires_at)
+                    or user.status != "active"
+                ):
+                    raise _authentication_error()
     except HTTPException:
         raise
     except SQLAlchemyError as exc:
