@@ -78,66 +78,81 @@ Open [http://localhost:3000](http://localhost:3000) to see the result.
 
 ## Authentication
 
-> **⚠️ Temporary: authentication is stubbed out on this branch.**
-> The frontend makes **no backend calls at all** right now. `login()` in
-> `lib/auth.ts` accepts any email and password, writes the `foc_session`
-> cookie client-side, and routes to `/home`. Nothing is verified and no
-> credentials leave the browser. This is only so the post-login pages can be
-> built and reviewed — it must be removed before anything ships.
+Authentication goes through User Service, but the browser never talks to it
+directly. Server Actions call User Service from the Next.js server and keep
+its bearer token in an httpOnly `foc_session` cookie, so client JavaScript
+never sees the token and User Service needs no CORS configuration.
 
-The intended design is cookie-based auth where the frontend never manages
-tokens: the User Service issues and validates the session, and the frontend
-only checks whether the cookie is present.
-
-- **Login** (`lib/auth.ts`): `login({ email, password })` currently ignores
-  its arguments and sets `foc_session` directly. It is a stub with a
-  restoration note in its doc comment.
-- **Route gating** (`proxy.ts`): on every request (except static assets),
-  checks only whether the `foc_session` cookie is _present_. This part is
-  real and unchanged.
+- **User Service client** (`lib/user-service.ts`): typed `fetch` wrapper for
+  the User Service endpoints the app uses. Its base URL comes from
+  `USER_SERVICE_URL`, which is read at runtime on the server and defaults to
+  `http://localhost:8080`. Compose sets it to `http://user-service:8080`.
+  It builds every request body field by field, so nothing extra from the
+  browser reaches User Service. It and `lib/session.ts` import
+  `server-only`, so importing either from a client component fails the build.
+- **Server Actions** (`lib/auth-actions.ts`): `login`, `signup`,
+  `reactivate`, `logout`, `updateProfile` and `deactivateAccount`. They return
+  `{ ok, error, fieldErrors }` instead of throwing, so forms can show User
+  Service validation messages next to the matching field.
+- **Session** (`lib/session.ts`): sets and clears the cookie. The cookie is
+  `Secure` unless `COOKIE_SECURE=false`; Compose sets that because it serves
+  plain http.
+  `requireCurrentUser()` calls `GET /users/me` once per request. The `(main)`
+  layout calls it, so every private page confirms the session is still valid.
+  A 401 redirects to `/auth/expired`, which clears the cookie and returns to
+  the login page. Any site can link there, so it first checks the token with
+  User Service and keeps a session that is still valid. A User Service outage shows the error page and does not log
+  the user out.
+- **Route gating** (`proxy.ts`): only checks that the cookie is _present_.
   - No cookie + private route → redirect to `/` (login) with
-    `?from=<original path>` so the login form can send the user back after
-    a successful login.
+    `?from=<original path>`; after login the form returns there (same-origin
+    paths only).
   - Cookie present + public route (`/`, `/signup`) → redirect to `/home`.
-  - `/` and `/signup` are the only public paths; everything else requires
-    the cookie.
-- **Login form** (`components/auth/login-form.tsx`): on submit, calls
-  `login()`, then routes to `?from=` (or `/home`) and calls `router.refresh()`
-  so `proxy.ts` re-evaluates with the new cookie. It shows a visible banner
-  saying auth is stubbed. The "Incorrect email or password." branch is dead
-  code for now, kept so the real flow is easy to restore.
-- **Signup** (`app/signup/page.tsx`) is a placeholder page; account creation
-  is not implemented.
 
-Because the cookie is set client-side, you can clear it from the DevTools
-console to get back to the login page (while it is set, `/` redirects to
-`/home`):
+| Page                | User Service endpoints                                                 |
+| ------------------- | ---------------------------------------------------------------------- |
+| `/` login           | `POST /login`; `POST /users/me/reactivate` from "Reactivate it"        |
+| `/signup`           | `POST /users`, then `POST /login`                                      |
+| `/profile`          | `GET /users/me`, `PATCH /users/me`, `DELETE /users/me`, `POST /logout` |
+| every `(main)` page | `GET /users/me`                                                        |
 
-```js
-document.cookie = 'foc_session=; path=/; max-age=0';
+Login uses the **NUS student number** (for example `A1234567B`) and
+password. User Service returns the same 401 for a wrong password and a
+deactivated account, so the login form offers "Reactivate it" after User
+Service rejects the credentials. A password change revokes every session, so `updateProfile` logs in
+again with the new password to keep the current device signed in.
+
+Not integrated yet: the admin endpoints (`/admin/users/{id}/suspend`,
+`/unsuspend` and `/revoke-admin`) have no UI. `userService.getDisplayName()`
+(`GET /users/{id}`) is ready for showing requester and courier names once the
+feed and orders pages use Order Service data.
+
+### Tests
+
+```bash
+yarn test
 ```
 
-`lib/auth.ts` also exports a `logout()` helper that does the same thing.
+Vitest covers the User Service client, the auth Server Actions and the
+`?from=` redirect check. CI runs it before the build.
 
-### Restoring the real flow
+### Running against User Service locally
 
-`user-service/app/main.py` currently only exposes `/health`. The user model,
-password hashing, and login/register endpoints exist on `main` (merged via
-other PRs) but have not been pulled into this branch. Once that lands, or
-this branch is rebased on `main`:
+With `yarn dev`, start User Service from the repo root. Compose publishes it
+on `127.0.0.1:8080`:
 
-1. Replace the stubbed `login()` body with a POST to
-   `${NEXT_PUBLIC_USER_SERVICE_URL}/auth/login` using
-   `credentials: 'include'`, and let the User Service set the cookie via
-   `Set-Cookie`. Delete `logout()` and the banner in the login form.
-2. Uncomment `NEXT_PUBLIC_USER_SERVICE_URL` in the root `.env.example` and
-   pass it as a **build arg** — `NEXT_PUBLIC_*` values are inlined at
-   `next build` time, so setting it at runtime has no effect.
-3. Add CORS to user-service with `allow_credentials=True` and an explicit
-   origin, so the cross-origin `Set-Cookie` survives.
+```bash
+docker compose up --build user-db user-migrate user-bootstrap user-service
+```
 
-There are no working test credentials to give out; this section will be
-updated with a real test account once `/auth/login` exists.
+Create an account at `/signup`, or set the `BOOTSTRAP_ADMIN_*` values in
+`.env` to create an administrator. The full stack (`docker compose up`)
+needs no extra setup: the frontend container reaches User Service over the
+Compose network.
+
+Chrome and Firefox keep the `Secure` session cookie on `http://localhost`.
+If you open the dev server another way, such as Safari or a LAN address,
+start it with `COOKIE_SECURE=false yarn dev`.
 
 ## Learn More
 

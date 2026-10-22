@@ -75,7 +75,7 @@ export function StoreDirectory({
                 onClick={() => onSelect(store)}
                 aria-pressed={selected}
                 className={cn(
-                  'flex w-full items-center gap-3 rounded-2xl border bg-white p-3 text-left shadow-sm transition-colors hover:border-slate-300',
+                  'flex w-full cursor-pointer items-center gap-3 rounded-2xl border bg-white p-3 text-left shadow-sm transition-colors hover:border-slate-300',
                   selected && 'border-courier ring-courier/20 ring-2',
                 )}
               >

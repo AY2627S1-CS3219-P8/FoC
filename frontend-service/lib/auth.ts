@@ -1,51 +1,28 @@
 /**
- * Name of the session cookie. `proxy.ts` checks for its presence to decide
- * whether a request is authenticated — it never inspects the value.
+ * Name of the httpOnly cookie holding the User Service bearer token. It is
+ * written only by Server Actions in `lib/session.ts`. `proxy.ts` checks for
+ * its presence to decide whether a request is authenticated. It never
+ * inspects the value: User Service validates it when the app loads a page.
  */
 export const SESSION_COOKIE_NAME = 'foc_session';
 
-export type LoginCredentials = {
-  email: string;
-  password: string;
-};
+/**
+ * Route that clears a session User Service has rejected. Pages can't modify
+ * cookies while rendering, so they redirect here instead.
+ */
+export const SESSION_EXPIRED_PATH = '/auth/expired';
+
+const REDIRECT_BASE = 'http://foc.invalid';
 
 /**
- * TEMPORARY STUB - NOT REAL AUTHENTICATION
- *
- * `user-service` does not expose `/auth/login` yet, so this branch has no
- * backend to authenticate against. Until it does, `login()` accepts ANY
- * credentials and simply drops a `foc_session` cookie so `proxy.ts` lets the
- * request through to `/home` and the rest of the app. Nothing is verified,
- * nothing is sent anywhere, and the cookie's value is meaningless.
- *
- * This exists only so the post-login pages can be built and reviewed. It MUST
- * be deleted before anything ships.
- *
- * To restore the real flow once `/auth/login` exists, replace the body with a
- * POST to the user-service login endpoint using `credentials: 'include'` and
- * let that service issue the cookie via `Set-Cookie` — the frontend should go
- * back to never writing the cookie itself. The endpoint's base URL used to
- * come from `NEXT_PUBLIC_USER_SERVICE_URL`; that variable is unused for now.
+ * Only follow same-origin paths from `?from=`. Resolving with `URL` applies
+ * the browser's own parsing, which reads `/\evil.com` or `/<tab>/evil.com`
+ * as another host even though they start with a single `/`.
  */
-export async function login(credentials: LoginCredentials) {
-  if (process.env.NODE_ENV !== 'production') {
-    console.warn(
-      `[auth] STUB LOGIN — "${credentials.email}" was not verified. ` +
-        'Any credentials are accepted until user-service exposes /auth/login.',
-    );
-  }
-
-  // `SameSite=Lax` and no `Secure` so it works over plain http://localhost.
-  document.cookie = `${SESSION_COOKIE_NAME}=stub; path=/; SameSite=Lax`;
-}
-
-/**
- * ⚠️ TEMPORARY — companion to the stubbed `login()` above. ⚠️
- *
- * Clears the fake session cookie so you can get back to the login page. Real
- * logout belongs on the user-service side (it has to invalidate the session),
- * so this goes away together with the stub.
- */
-export function logout() {
-  document.cookie = `${SESSION_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax`;
+export function safeRedirectPath(from: string | null | undefined) {
+  if (!from?.startsWith('/')) return '/home';
+  const url = new URL(from, REDIRECT_BASE);
+  return url.origin === REDIRECT_BASE
+    ? `${url.pathname}${url.search}${url.hash}`
+    : '/home';
 }

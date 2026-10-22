@@ -28,7 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Orders', href: '/orders', icon: ShoppingBag },
   { label: 'Request', href: '/request', icon: CirclePlus },
   { label: 'Chat', href: '/chat', icon: MessageSquare, disabled: true },
-  { label: 'Profile', href: '/profile', icon: User, disabled: true },
+  { label: 'Profile', href: '/profile', icon: User },
 ];
 
 function useIsActive() {
