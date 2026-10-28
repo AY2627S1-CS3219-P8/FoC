@@ -1,5 +1,6 @@
 """HTTP clients for the User Service and the Supplier Service."""
 
+import ssl
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -41,15 +42,23 @@ class _Profile(BaseModel):
 class UserServiceClient:
     """Forward opaque bearer tokens to the User Service. Do not decode them."""
 
-    def __init__(self, base_url: str, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        ca_file: str,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self._identity_url = httpx.URL(base_url).copy_with(
             userinfo=b"", path="/users/me", query=None, fragment=None
         )
+        # User Service presents a certificate from the internal CA.
         self._client = httpx.Client(
             timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
             follow_redirects=False,
             trust_env=False,
             transport=transport,
+            verify=ssl.create_default_context(cafile=ca_file),
         )
 
     def resolve_identity(self, token: str) -> Identity:

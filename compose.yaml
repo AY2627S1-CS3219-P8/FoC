@@ -101,6 +101,10 @@ services:
       COOKIE_SECURE: "false"
       # Not in depends_on: supplier pages show an error until it is reachable.
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
+      ORDER_SERVICE_URL: http://order-service:8080
+      CREDIT_SERVICE_URL: http://credit-service:8080
+      # Must match Credit Service so the request form caps a new user's offer.
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
     volumes:
       - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     depends_on:
@@ -374,6 +378,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
       USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
@@ -384,6 +389,8 @@ services:
     networks:
       - default
       - order-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     ports:
       - "127.0.0.1:8082:8080"
 
