@@ -122,7 +122,7 @@ export function RequestErrand({
   const missing = {
     store: store === null,
     description: !description.trim(),
-    point: !dropOff.pointId,
+    point: !dropOff.position,
     credit: !limits.hasCredit,
   };
   const missingFields: MissingField[] = [

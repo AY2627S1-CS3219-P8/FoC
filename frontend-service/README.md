@@ -131,10 +131,19 @@ Service. Both require the User Service bearer token, which is read from the
   defaults to `http://localhost:8082` and `http://localhost:8083`.
 - **Creating an errand**: `POST /orders` takes the supplier UUID from the store
   directory, an item description, a credit amount (1–1000) and a delivery
-  location. Order Service needs coordinates inside the NUS campus box, so the
-  requester picks one of the drop-off points in `lib/drop-off.ts` and can
-  describe the exact spot. Order Service requires non-blank details, so when
-  the requester leaves them empty the point's label is sent instead, and the
+  location. The requester pins the spot on a Leaflet map with OpenStreetMap
+  tiles (`components/orders/drop-off-map.tsx`), or picks one of the campus
+  buildings in `lib/drop-off.ts`. Order Service only accepts coordinates
+  inside the NUS campus box, so pins outside it are refused. A pin is named
+  by OpenStreetMap's Nominatim reverse geocoder, through the
+  `lookUpPlaceName` server action (`lib/place-name.ts`), which sets a
+  User-Agent (override with `NOMINATIM_USER_AGENT`), sends at most one
+  request per second and caches names. Until a name arrives, or when OSM has
+  none, the label is the nearest building, or "Near <building>" beyond 40 m.
+  The label is the "Drop-off Point" field itself, so the requester can
+  rename the spot there, and choosing a suggested building moves the pin.
+  Order Service requires non-blank details, so when
+  the requester leaves them empty the label is sent instead, and the
   order cards hide details that only repeat the label. The form sends one `Idempotency-Key` per errand, so a retry
   cannot post it twice. There is no delivery-time option, because the service
   has none: an errand expires one hour after it is posted.

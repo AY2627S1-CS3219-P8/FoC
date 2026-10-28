@@ -100,9 +100,7 @@ type ErrandCardProps = {
 function ErrandCard({ order, role, onUpdate }: ErrandCardProps) {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [dropOff, setDropOff] = useState(() =>
-    dropOffValueOf(order.delivery_label, order.delivery_details),
-  );
+  const [dropOff, setDropOff] = useState(() => dropOffValueOf(order));
   const [isPending, startTransition] = useTransition();
 
   const isRequester = role === 'requester';
@@ -242,9 +240,7 @@ function ErrandCard({ order, role, onUpdate }: ErrandCardProps) {
             variant='outline'
             onClick={() => {
               // Start from the current drop-off, not edits that were discarded.
-              setDropOff(
-                dropOffValueOf(order.delivery_label, order.delivery_details),
-              );
+              setDropOff(dropOffValueOf(order));
               setEditing(true);
             }}
             disabled={isPending}

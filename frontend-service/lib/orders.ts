@@ -16,6 +16,7 @@ export const DUPLICATE_SUBMISSION = 'DUPLICATE_SUBMISSION';
 /** Order Service limits, from `order-service/app/schemas.py`. */
 export const MAX_CREDIT_AMOUNT = 1000;
 export const MAX_ITEM_DESCRIPTION_LENGTH = 500;
+export const MAX_DELIVERY_LABEL_LENGTH = 200;
 export const MAX_DELIVERY_DETAILS_LENGTH = 500;
 
 /**

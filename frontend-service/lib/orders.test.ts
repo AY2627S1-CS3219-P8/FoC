@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   deliveryDetailsOf,
   dropOffValueOf,
+  EMPTY_DROP_OFF,
+  isOnCampus,
+  labelFor,
+  pinDropOff,
+  presetAt,
   toDeliveryLocation,
 } from '@/lib/drop-off';
 import { newIdempotencyKey } from '@/lib/idempotency';
@@ -22,27 +27,56 @@ describe('isNearExpiry', () => {
 });
 
 describe('drop-off', () => {
-  it('round-trips a preset point and trims the details', () => {
-    const value = dropOffValueOf('COM1', '  Level 2  ');
-    expect(value.pointId).toBe('com1');
-    expect(toDeliveryLocation(value)).toEqual({
-      label: 'COM1',
-      latitude: 1.2949,
-      longitude: 103.7737,
+  const order = {
+    delivery_label: 'Near COM1',
+    delivery_latitude: 1.2945,
+    delivery_longitude: 103.774,
+    delivery_details: '  Level 2  ',
+  };
+
+  it('round-trips an order’s pin and label and trims the details', () => {
+    expect(toDeliveryLocation(dropOffValueOf(order))).toEqual({
+      label: 'Near COM1',
+      latitude: 1.2945,
+      longitude: 103.774,
       details: 'Level 2',
     });
   });
 
-  it('is incomplete without a known point', () => {
-    expect(dropOffValueOf('Somewhere else', 'x').pointId).toBe('');
-    expect(toDeliveryLocation({ pointId: '', details: 'x' })).toBeNull();
+  it('names pins after the nearest building', () => {
+    const com1 = { latitude: 1.2949, longitude: 103.7737 };
+    expect(pinDropOff(EMPTY_DROP_OFF, com1).label).toBe('COM1');
+    expect(presetAt(com1)?.id).toBe('com1');
+    expect(labelFor({ latitude: 1.2951, longitude: 103.7738 })).toBe('COM1');
+    expect(labelFor({ latitude: 1.2955, longitude: 103.7737 })).toBe(
+      'Near COM1',
+    );
+  });
+
+  it('is incomplete without a pin on campus', () => {
+    expect(toDeliveryLocation(EMPTY_DROP_OFF)).toBeNull();
+    const offCampus = { latitude: 1.35, longitude: 103.82 };
+    expect(isOnCampus(offCampus)).toBe(false);
+    expect(
+      toDeliveryLocation({ ...EMPTY_DROP_OFF, position: offCampus }),
+    ).toBeNull();
+  });
+
+  it('falls back to the nearest building when the label is cleared', () => {
+    const value = { ...dropOffValueOf(order), label: '  ' };
+    expect(toDeliveryLocation(value)?.label).toBe('Near COM1');
   });
 
   it('sends the label as details when none are given, and hides it again', () => {
-    const location = toDeliveryLocation({ pointId: 'com1', details: '  ' });
-    expect(location?.details).toBe('COM1');
+    const value = pinDropOff(
+      { ...EMPTY_DROP_OFF, details: '  ' },
+      { latitude: 1.2949, longitude: 103.7737 },
+    );
+    expect(toDeliveryLocation(value)?.details).toBe('COM1');
     expect(deliveryDetailsOf('COM1', 'COM1')).toBeNull();
-    expect(dropOffValueOf('COM1', 'COM1').details).toBe('');
+    expect(
+      dropOffValueOf({ ...order, delivery_details: 'Near COM1' }).details,
+    ).toBe('');
   });
 });
 
