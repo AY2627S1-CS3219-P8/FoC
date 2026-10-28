@@ -12,7 +12,7 @@ import {
   User,
 } from 'lucide-react';
 
-import { CREDIT_BALANCE } from '@/lib/mock-data';
+import type { CreditBalanceResult } from '@/lib/credit-actions';
 import { cn } from '@/lib/utils';
 
 type NavItem = {
@@ -91,7 +91,14 @@ export function BottomNav() {
   );
 }
 
-export function SideNav() {
+function balanceText(result: CreditBalanceResult) {
+  if (!result.ok) return 'Unavailable';
+  // Accounts open with the initial allocation on the first order.
+  if (!result.balance) return 'No credits yet';
+  return `${result.balance.available_balance} cr`;
+}
+
+export function SideNav({ credit }: { credit: CreditBalanceResult }) {
   const isActive = useIsActive();
 
   return (
@@ -146,13 +153,22 @@ export function SideNav() {
         </ul>
       </nav>
 
-      <div className='border-brand-soft bg-brand-tint mt-auto rounded-2xl border p-4'>
-        <p className='text-xs font-medium text-slate-500'>Credit balance</p>
+      <Link
+        href='/credits'
+        aria-current={isActive('/credits') ? 'page' : undefined}
+        className='border-brand-soft bg-brand-tint hover:border-brand/40 mt-auto rounded-2xl border p-4 transition-colors'
+      >
+        <p className='text-xs font-medium text-slate-500'>Available credit</p>
         <p className='text-brand-strong mt-1 flex items-center gap-1.5 text-2xl font-bold'>
           <Award className='size-5' aria-hidden />
-          {CREDIT_BALANCE} cr
+          {balanceText(credit)}
         </p>
-      </div>
+        {credit.ok && credit.balance && credit.balance.reserved_balance > 0 && (
+          <p className='mt-1 text-xs text-slate-500'>
+            {credit.balance.reserved_balance} cr held for open errands
+          </p>
+        )}
+      </Link>
     </aside>
   );
 }

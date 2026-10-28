@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine = make_engine(database_url())
-    user_client = UserServiceClient(required_env("USER_SERVICE_URL"))
+    user_client = UserServiceClient(
+        required_env("USER_SERVICE_URL"), required_env("USER_SERVICE_CA_FILE")
+    )
     supplier_client = SupplierServiceClient(required_env("SUPPLIER_SERVICE_URL"))
     app.state.engine = engine
     app.state.session_factory = make_session_factory(engine)
