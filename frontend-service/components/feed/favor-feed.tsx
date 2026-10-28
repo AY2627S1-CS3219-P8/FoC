@@ -1,36 +1,74 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Bell } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { EXPIRY_MINUTES, FavorCard } from '@/components/feed/favor-card';
+import { type AcceptState, FavorCard } from '@/components/feed/favor-card';
+import {
+  CardGrid,
+  ErrorBanner,
+  LoadMoreButton,
+  RefreshButton,
+} from '@/components/list-controls';
 import { PageContainer, PageHeader } from '@/components/page-header';
-import { favors } from '@/lib/mock-data';
+import { usePagedList } from '@/components/use-paged-list';
+import type { PageResult } from '@/lib/action-result';
+import { acceptOrder, loadOpenOrders } from '@/lib/order-actions';
+import type { OrderView } from '@/lib/orders';
 import { cn } from '@/lib/utils';
 
-// Only OPEN, unexpired favors are listed (FR12.1.2, FR13.5.1).
-const openFavors = favors.filter((f) => f.minutesAgo < EXPIRY_MINUTES);
-
-type SortKey = 'nearby' | 'reward' | 'newest';
+type SortKey = 'newest' | 'reward';
 
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'nearby', label: `Nearby (${openFavors.length})` },
-  { key: 'reward', label: 'Highest Reward' },
   { key: 'newest', label: 'Newest First' },
+  { key: 'reward', label: 'Highest Reward' },
 ];
 
-export function FavorFeed() {
-  const [sort, setSort] = useState<SortKey>('nearby');
-  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+const IDLE: AcceptState = { kind: 'idle' };
 
-  const sorted = useMemo(() => {
-    const list = [...openFavors];
-    if (sort === 'nearby')
-      list.sort((a, b) => a.distanceMeters - b.distanceMeters);
-    if (sort === 'reward') list.sort((a, b) => b.credits - a.credits);
-    if (sort === 'newest') list.sort((a, b) => a.minutesAgo - b.minutesAgo);
-    return list;
-  }, [sort]);
+/**
+ * Open errands from Order Service, which already excludes the caller's own
+ * orders and anything that is no longer OPEN (FR12.1.2, FR13.5.1).
+ */
+export function FavorFeed({ initial }: { initial: PageResult<OrderView> }) {
+  const list = usePagedList(initial, loadOpenOrders);
+  const [sort, setSort] = useState<SortKey>('newest');
+  const [accepts, setAccepts] = useState<Record<string, AcceptState>>({});
+  // Ticks after hydration, so the first render still matches the server's.
+  const [clock, setClock] = useState(0);
+  const now = Math.max(list.loadedAt, clock);
+
+  // Order Service returns newest first, so that order needs no re-sort.
+  const sorted = useMemo(
+    () =>
+      sort === 'reward'
+        ? [...list.items].sort((a, b) => b.credit_amount - a.credit_amount)
+        : list.items,
+    [list.items, sort],
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  function refresh() {
+    setAccepts({});
+    list.refresh();
+  }
+
+  async function accept(id: string) {
+    setAccepts((prev) => ({ ...prev, [id]: { kind: 'pending' } }));
+    let next: AcceptState;
+    try {
+      const result = await acceptOrder(id);
+      next = result.ok
+        ? { kind: 'accepted' }
+        : { kind: 'failed', message: result.message };
+    } catch {
+      next = { kind: 'failed', message: 'Could not reach the server.' };
+    }
+    setAccepts((prev) => ({ ...prev, [id]: next }));
+  }
 
   return (
     <PageContainer>
@@ -44,13 +82,11 @@ export function FavorFeed() {
           </>
         }
         actions={
-          <button
-            type='button'
-            aria-label='Notifications'
-            className='bg-brand-soft text-brand-strong hover:bg-brand/30 grid size-10 place-items-center rounded-full transition-colors'
-          >
-            <Bell className='size-5' />
-          </button>
+          <RefreshButton
+            label='Refresh feed'
+            onClick={refresh}
+            loading={list.isLoading}
+          />
         }
       >
         <div
@@ -73,21 +109,41 @@ export function FavorFeed() {
               )}
             >
               {label}
+              {key === 'newest' && ` (${list.total})`}
             </button>
           ))}
         </div>
       </PageHeader>
 
-      <div className='grid gap-4 px-4 pt-4 md:grid-cols-2 md:px-0 xl:grid-cols-3'>
-        {sorted.map((favor) => (
+      {list.error && (
+        <ErrorBanner className='mx-4 mt-4 md:mx-0'>{list.error}</ErrorBanner>
+      )}
+
+      <CardGrid
+        empty={
+          !list.error &&
+          list.items.length === 0 &&
+          'No open errands right now. Check back soon!'
+        }
+      >
+        {sorted.map((order) => (
           <FavorCard
-            key={favor.id}
-            favor={favor}
-            accepted={accepted.has(favor.id)}
-            onAccept={(id) => setAccepted((prev) => new Set(prev).add(id))}
+            key={order.id}
+            order={order}
+            state={accepts[order.id] ?? IDLE}
+            now={now}
+            onAccept={accept}
           />
         ))}
-      </div>
+      </CardGrid>
+
+      {list.hasMore && (
+        <LoadMoreButton
+          onClick={list.loadMore}
+          loading={list.isLoading}
+          className='px-4 pt-6 md:px-0'
+        />
+      )}
     </PageContainer>
   );
 }

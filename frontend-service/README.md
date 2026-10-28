@@ -115,6 +115,75 @@ the repository root:
 docker compose --profile tools run --rm supplier-seed
 ```
 
+## Order and Credit Services
+
+The feed (`/home`), the request form (`/request`), the errand list (`/orders`)
+and the credit page (`/credits`) are backed by Order Service and Credit
+Service. Both require the User Service bearer token, which is read from the
+`foc_session` cookie on the server and forwarded as `Authorization: Bearer`.
+
+- **Server-side only** (`lib/order-service.ts`, `lib/credit-service.ts`):
+  neither service sets CORS headers, and the token must stay out of the
+  browser. Pages call them from Server Components; client components use the
+  Server Actions in `lib/order-actions.ts` and `lib/credit-actions.ts`. Set
+  `ORDER_SERVICE_URL` and `CREDIT_SERVICE_URL` at runtime; Compose uses
+  `http://order-service:8080` and `http://credit-service:8080`, and `yarn dev`
+  defaults to `http://localhost:8082` and `http://localhost:8083`.
+- **Creating an errand**: `POST /orders` takes the supplier UUID from the store
+  directory, an item description, a credit amount (1–1000) and a delivery
+  location. Order Service needs coordinates inside the NUS campus box, so the
+  requester picks one of the drop-off points in `lib/drop-off.ts` and can
+  describe the exact spot. Order Service requires non-blank details, so when
+  the requester leaves them empty the point's label is sent instead, and the
+  order cards hide details that only repeat the label. The form sends one `Idempotency-Key` per errand, so a retry
+  cannot post it twice. There is no delivery-time option, because the service
+  has none: an errand expires one hour after it is posted.
+- **Credit reservation is asynchronous**: a new order is `PENDING_CREDIT` until
+  Credit Service reserves the amount over Kafka. The confirmation screen polls
+  the order until it is `OPEN` or `REJECTED` (for example
+  `INSUFFICIENT_CREDIT`).
+- **Feed**: `GET /orders/open` lists other users' open errands, newest first.
+  Orders carry only ids, so the store is looked up in Supplier Service; there
+  are no requester names, ratings or distances. Accepting an errand that
+  another courier took first shows the `409` as a message.
+- **Errand list**: `GET /orders?role=requester|courier` for each tab, with the
+  actions each role is allowed: the requester can change the drop-off or
+  cancel before pickup and confirm delivery after pickup; the courier marks
+  the errand as picked up.
+- **Credits**: `GET /credits/me` and `GET /credits/me/transactions`. A user has
+  no credit account (Credit Service answers `404`) until their first errand,
+  when the starting allocation is granted, so the balance shows "No credits
+  yet". Until then the request form caps the offer at
+  `INITIAL_CREDIT_ALLOCATION` (default `100`), which must match Credit
+  Service's value; Compose passes the same variable to both. Balances change
+  only through order events, and completing or cancelling an errand refreshes
+  the sidebar balance, which can still trail the Kafka update by a moment. The
+  frontend never writes to Credit Service. Administrator credit routes have no
+  UI yet; see
+  [TODO: Administrator UI](#todo-administrator-ui).
+- **Paging ("Load more")**: the feed, both errand tabs and the credit history
+  show 20 items at a time. Both services page by `limit`/`offset` only, and the
+  lists are newest first, so an item that leaves the list between reads (for
+  example an errand another courier accepts) would shift later pages up and
+  make a plain offset read skip one. To avoid that, "Load more" re-reads the
+  whole list from the start with a larger `limit` and replaces it
+  (`lib/paging.ts`). Both services cap `limit` at 100, so past 100 items it
+  falls back to offset paging, where an item can still be skipped until the
+  next refresh. A cursor parameter on the list routes would remove the limit.
+  Refresh always goes back to the first 20.
+- **Store details are cached for 30 minutes**: orders only carry a supplier
+  id, so every order card needs a Supplier Service lookup. Those lookups go
+  through Next's data cache (`lib/order-views.ts`), so a renamed or deleted
+  store can take up to 30 minutes to show on order cards. Next serves an
+  expired entry once while it refreshes it in the background. A failed lookup
+  is not cached. The store directory and the request form still read Supplier
+  Service directly, so they are always current.
+- **Errors**: a `401` shows "Your session has expired"; any other failure shows
+  the service's message instead of failing the page. Server Actions turn
+  service errors into `{ ok: false, message }` results (`lib/action-result.ts`)
+  and rewrite the ones a user can act on, such as an errand another courier
+  accepted first, so components never check HTTP status codes.
+
 ## Authentication
 
 Authentication goes through User Service, but the browser never talks to it
@@ -203,6 +272,37 @@ the Compose network and trusts its CA through the mounted `ca.crt`.
 Chrome and Firefox keep the `Secure` session cookie on `http://localhost`.
 If you open the dev server another way, such as Safari or a LAN address,
 start it with `COOKIE_SECURE=false yarn dev`.
+
+## TODO: Administrator UI
+
+Credit Service's administrator routes are implemented, but no page uses them.
+They require `role=admin`:
+
+| Route                                       | Purpose                                   |
+| ------------------------------------------- | ----------------------------------------- |
+| `GET /admin/credits/{user_id}`              | A user's balance                          |
+| `GET /admin/credits/{user_id}/transactions` | A user's credit history                   |
+| `POST /admin/credits/{user_id}/adjust`      | Add or remove credit with a reason        |
+| `PUT /admin/credit-accounts/{user_id}`      | Create a missing account (safe to repeat) |
+
+- **Blocker**: every route takes a `user_id`, and User Service has no way to
+  list or search users, so an admin can't look one up. Add an admin-only
+  search to User Service first (for example `GET /admin/users?query=…`);
+  without it, the page can only ask for a pasted UUID.
+- **Page**: an admin-only `/admin/credits` that searches for a user, shows
+  their balance and history, and offers an adjust form. Credit Service accepts
+  an amount from -1000 to 1000 (not 0) and a 5–500 character reason, and
+  rejects any adjustment that would make available credit negative
+  (`INVALID_CREDIT_ADJUSTMENT`).
+- **Client**: add the admin calls to `lib/credit-service.ts` and Server
+  Actions that check `user.role === 'admin'` before calling them.
+- **Same page**: User Service's `/admin/users/{id}/suspend`, `/unsuspend` and
+  `/revoke-admin` (see [Authentication](#authentication)) need the same user
+  lookup.
+- **Orders**: Order Service has no admin routes. An admin can read and cancel
+  any order through `GET /orders/{id}` and `POST /orders/{id}/cancel`, even
+  after pickup, but cannot list orders. Order Service needs a list-all route
+  before an admin order page is worth building.
 
 ## Learn More
 
