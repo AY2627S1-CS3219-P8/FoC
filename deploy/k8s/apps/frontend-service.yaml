@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  labels:
+    app: frontend-service
+spec:
+  type: NodePort
+  selector:
+    app: frontend-service
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      nodePort: 30000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-service
+  labels:
+    app: frontend-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend-service
+  template:
+    metadata:
+      labels:
+        app: frontend-service
+    spec:
+      containers:
+        - name: frontend-service
+          image: foc-frontend-service:local
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
