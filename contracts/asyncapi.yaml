@@ -35,6 +35,8 @@ components:
               event_type:
                 enum:
                   - order.created
+                  - order.opened
+                  - order.rejected
                   - order.accepted
                   - order.picked_up
                   - order.completed
@@ -115,6 +117,9 @@ components:
         previous_status:
           type: string
           description: Determines whether cancellation releases credit or compensates a courier.
+        reason:
+          type: string
+          description: Present on order.rejected; the credit rejection reason.
         expires_at:
           type: string
           format: date-time
