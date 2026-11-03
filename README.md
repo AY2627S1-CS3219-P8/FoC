@@ -87,6 +87,53 @@ docker compose down
 
 ---
 
+## Running on Kubernetes (kind)
+
+The same stack can run on a local [kind](https://kind.sigs.k8s.io/) cluster.
+Manifests under [`deploy/k8s/`](deploy/k8s/) keep the Compose service names, so
+`https://user-service:8080` and `kafka:9092` still resolve. Compose is unchanged.
+
+Install kind (`brew install kind`) in addition to Docker and kubectl. Copy
+`.env.example` to `.env`, then generate the development certificates once.
+On Windows, `scripts/generate-dev-tls.ps1` writes the same files.
+
+```bash
+./scripts/generate-dev-tls.sh
+./scripts/k8s-up.sh
+```
+
+`./scripts/k8s-up.sh --demo` also starts the Kafka UI and the demo console.
+That flag needs `demo-console/` in the checkout.
+Re-running the script rebuilds the images, keeps the database volumes, and
+replaces the one-shot migration Jobs. `./scripts/k8s-down.sh` deletes the
+cluster. Changing [`deploy/k8s/kind-config.yaml`](deploy/k8s/kind-config.yaml)
+requires a new cluster, because kind reads host port mappings only at creation.
+
+| Surface | URL |
+| --- | --- |
+| Frontend | http://127.0.0.1:3000 |
+| Supplier Service | http://127.0.0.1:8081 |
+| Order Service | http://127.0.0.1:8082 |
+| Credit Service | http://127.0.0.1:8083 |
+| Kafka UI (`--demo`) | http://127.0.0.1:8090 |
+| Demo console (`--demo`) | http://127.0.0.1:8091 |
+
+User Service stays inside the cluster at `https://user-service:8080`, matching
+Compose, which does not publish it on the host.
+
+Supplier seed is the Compose `tools` profile. The CSV is CP1252, so it is
+stored in a Secret rather than a ConfigMap. Run it after the stack is up:
+
+```bash
+kubectl -n foc delete job supplier-seed-dry-run --ignore-not-found
+kubectl apply -k deploy/k8s/tools-dry-run
+kubectl -n foc wait --for=condition=complete job/supplier-seed-dry-run --timeout=180s
+
+kubectl -n foc delete job supplier-seed --ignore-not-found
+kubectl apply -k deploy/k8s/tools
+kubectl -n foc wait --for=condition=complete job/supplier-seed --timeout=180s
+```
+
 ## AI Use Summary (FoC)
 
 Codex (GPT-6) assisted Supplier Service work. The
