@@ -92,6 +92,9 @@ docker compose down
 Codex (GPT-6) assisted Supplier Service work. The
 [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service)
 and [usage log](supplier-service/ai/usage-log.md) record the affected files and evidence.
+Claude Code (claude-opus-5-5) assisted Notification Service work; see the
+[Notification Service summary](notification-service/README.md#ai-use-summary-notification-service)
+and [usage log](notification-service/ai/usage-log.md).
 
 - [Database and migration work](supplier-service/ai/usage-log.md#ai-20260929-001):
   Requirements work, Learning support, Boilerplate generation, Writing implementation
@@ -580,5 +583,18 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   are recorded; original timestamps unavailable, with no redactions or header
   exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Notification Service skeleton](notification-service/ai/usage-log.md#ai-20261103-001):
+  Claude Code (claude-opus-5-5) provided Boilerplate generation, Writing
+  implementation code, and Debugging assistance for the new service package,
+  its tests, and Notification-related root `compose.yaml` and `.env.example`
+  changes. A readiness hang against a frozen database was fixed before
+  retention. Agent checks: 19 tests passed, `docker compose config` succeeded
+  with existing services unchanged, and live startup, readiness, and
+  configuration-failure checks passed. Keith reviewed all affected
+  changes; no human test rerun is claimed. Exact prompts and key responses are recorded; original
+  timestamps unavailable, no redactions; header exception for
+  `notification-service/alembic/versions/.gitkeep`. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.
