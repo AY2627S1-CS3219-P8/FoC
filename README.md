@@ -92,7 +92,7 @@ docker compose down
 Codex (GPT-6) assisted Supplier Service work. The
 [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service)
 and [usage log](supplier-service/ai/usage-log.md) record the affected files and evidence.
-Claude Code (claude-opus-5-5) assisted Notification Service work; see the
+Claude Code (claude-opus-5-5 and claude-sonnet-5-5) assisted Notification Service work; see the
 [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service)
 and [usage log](notification-service/ai/usage-log.md).
 
@@ -595,6 +595,21 @@ and [usage log](notification-service/ai/usage-log.md).
   changes; no human test rerun is claimed. Exact prompts and key responses are recorded; original
   timestamps unavailable, no redactions; header exception for
   `notification-service/alembic/versions/.gitkeep`. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service database schema](notification-service/ai/usage-log.md#ai-20261104-001):
+  Claude Code (claude-sonnet-5-5, then claude-opus-5-5) provided Writing
+  implementation code, Boilerplate generation, Debugging assistance, and
+  Refactoring and documentation improvements. The work covered the
+  `processed_events` and `notifications` Alembic revision, the models, the
+  PostgreSQL schema tests, a UTC session time zone for the app and Alembic, and
+  the service README's "Running tests" section. All six of Keith's review
+  points were adopted. Agent checks: 53 tests passed against disposable
+  PostgreSQL (19 passed and 34 skipped without it); the migration round trip
+  and `alembic check` succeeded; mutation checks passed. Keith confirmed that
+  all tests and manual verification were completed and approved, and confirmed
+  a test rerun, with commands and results unspecified. Exact prompts
+  and verbatim key-response excerpts are recorded; original timestamps
+  unavailable; no redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

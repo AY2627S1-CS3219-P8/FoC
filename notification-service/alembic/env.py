@@ -3,6 +3,10 @@
 # Scope: Boilerplate generation — scaffold online and offline migration execution that reads DATABASE_URL from the environment and fails with a named error when it is missing.
 # Author review: Keith confirmed review of all affected changes.
 # Details: notification-service/ai/usage-log.md; ai-20261103-001
+# Tool: Claude Code (model: claude-sonnet-5-5, then claude-opus-5-5), date: 2026-11-04
+# Scope: Boilerplate generation — import app.models so autogenerate sees the tables, and pass SESSION_OPTIONS in connect_args so migrations run with a UTC session time zone (ai-20261104-001).
+# Author review: Keith confirmed that all tests and manual verification were completed and approved, and confirmed rerunning the tests himself, with commands and results unspecified (ai-20261104-001).
+# Details: notification-service/ai/usage-log.md; ai-20261104-001
 
 """Alembic migration environment for the Notification Service."""
 
@@ -12,7 +16,8 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.config import required_env
-from app.db import Base
+from app.db import SESSION_OPTIONS, Base
+from app import models  # noqa: F401  (registers tables on Base.metadata)
 
 
 config = context.config
@@ -44,6 +49,7 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"options": SESSION_OPTIONS},
     )
     with connectable.connect() as connection:
         context.configure(
