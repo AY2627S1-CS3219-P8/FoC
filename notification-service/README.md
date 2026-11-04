@@ -96,3 +96,26 @@ rerunning the tests himself, with commands and results unspecified.
 
 See the [usage record](ai/usage-log.md#ai-20261104-001). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.
+
+### Event validation and translation (ai-20261104-002)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Debugging assistance**, and **Refactoring and documentation improvements** for
+Step 4: pure functions in `app/events.py` that classify a raw Kafka record as
+Malformed, Ignore, or Event with notification drafts, and unit tests in
+`tests/test_events.py`. The work followed the user's specification. Three gaps
+were put to the user first, and the recommended option was selected for each:
+singular "1 credit is on hold" wording, a non-string `reason` being Malformed
+with an explicit null treated as null, and comparing the `event_id` header as a
+UUID. All changes were retained, including a later requested rename of
+`parse_record` to `process_record`. A test helper bug the agent found on the
+first run was fixed.
+
+Observed verification (agent only): 416 tests passed in `tests/test_events.py`;
+the full suite without `TEST_DATABASE_URL` had 435 passed, 34 skipped, and 1
+warning, before and after the rename. The tests caught all 21 mutations applied
+before the rename. Author review: Keith confirmed review and confirmed
+running `.venv/bin/python -m pytest tests/test_events.py`, with 416 passed.
+
+See the [usage record](ai/usage-log.md#ai-20261104-002). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.

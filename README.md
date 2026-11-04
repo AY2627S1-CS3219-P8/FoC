@@ -611,5 +611,18 @@ and [usage log](notification-service/ai/usage-log.md).
   and verbatim key-response excerpts are recorded; original timestamps
   unavailable; no redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service event validation and translation](notification-service/ai/usage-log.md#ai-20261104-002):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Debugging
+  assistance, and Refactoring and documentation improvements for
+  `notification-service/app/events.py` and its unit tests, following the user's
+  specification and answers to three clarifying questions. All changes were
+  retained, including a requested rename of `parse_record` to `process_record`.
+  Agent checks: the full suite without a database had 435 passed, 34 skipped,
+  and 1 warning; the tests caught all 21 mutations applied. Keith confirmed
+  review and confirmed running `.venv/bin/python -m pytest tests/test_events.py`,
+  with 416 passed. Exact prompts and verbatim
+  key-response excerpts are recorded; original timestamps unavailable; no
+  redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

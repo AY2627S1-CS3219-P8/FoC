@@ -125,7 +125,7 @@ Claude Code built the Notification Service skeleton to the user's specification,
 - Recorded at: 2026-11-04T13:03:13+08:00
 - Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-04 (Asia/Singapore).
 - Source: Claude Code; model claude-sonnet-5-5 for Prompt 1, and claude-opus-5-5 for Prompts 2 and 3. Shell, file read/write/edit, Docker, and pytest tools in the local workspace.
-- Mode and scenario: Agentic implementation of Notification Service step 2 (database schema) from the user's specification (Prompt 1, the agent prompt in `notification-service/docs/implementation-steps.md`), followed by two rounds of user code-review feedback (Prompts 2 and 3) that the agent implemented. credit-service was used for conventions only (migration layout, model style, `TEST_DATABASE_URL`-gated PostgreSQL tests).
+- Mode and scenario: Agentic implementation of Notification Service database schema (Prompt 1), followed by two rounds of user code-review feedback (Prompts 2 and 3) that the agent implemented. credit-service was used for conventions only (migration layout, model style, `TEST_DATABASE_URL`-gated PostgreSQL tests).
 - Outcome: Retained everything: a new Alembic revision `20261104_0001`, new SQLAlchemy models with a `TimestampTZ` type that rejects naive datetimes, new PostgreSQL schema tests, the `app.models` import and UTC `connect_args` in `alembic/env.py`, a shared UTC `SESSION_OPTIONS` in `app/db.py`, and a "Running tests" README section. The agent chose the constraint and index names because the specification did not name them: `uq_notifications_event_recipient`, `ck_notifications_recipient_role`, `ix_notifications_recipient_id_desc`, and `ix_notifications_recipient_unread`. The agent fixed two of its own test bugs while running the tests. A NOT NULL test wrapped `commit` instead of `execute`. The UTC test reused a pooled connection, which an `ALTER DATABASE ... SET` does not affect; it now uses `NullPool`. All six review points in Prompts 2 and 3 were adopted. The migration keeps a literal CHECK expression rather than reading `RECIPIENT_ROLES`, so that the revision stays a fixed record of the schema. Attribution headers were first omitted in Prompt 1 because author review had not been confirmed; they were added by this disclosure update. Nothing was committed.
 - Verification: Agent checks below, against a disposable `postgres:16-alpine` container in a scratchpad virtual environment.
   - Prompt 1: `alembic upgrade head`, `\d` output, `alembic check` ("No new upgrade operations detected"), `downgrade base`, and `upgrade head` succeeded. The first test run had 1 failure, a test bug that was then fixed. After the fix, 48 tests passed with the database, and 19 passed with 29 skipped without it. Mutation checks: the drift test detected an altered type and server default, and disabling the naive-datetime guard failed the naive tests.
@@ -277,3 +277,180 @@ Both gaps are closed. The suite has 53 tests and all pass against a fresh Postgr
 ### Usage summary
 
 Claude Code implemented the Notification Service database schema to the user's specification: one Alembic revision, matching models, and PostgreSQL-backed tests covering every acceptance criterion and edge case. It verified the work with mutation checks and a live migration round trip. Keith's two rounds of review produced six changes, all adopted: split length tests with `DataError`, a CHECK derived from the role constant plus a drift test against the database definition, test-run documentation, and a UTC session time zone for both the app engine and Alembic.
+
+## ai-20261104-002
+
+- Recorded at: 2026-11-04T17:29:19+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-04 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, clarifying-question, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation of event validation and translation, with `contracts/asyncapi.yaml`, `order-service/app/events.py`, and `order-service/app/services/orders.py` read as context but not changed. The agent paused to ask about three behaviours the specification left open, then implemented the user's answers. A follow-up prompt renamed the public function.
+- Outcome: Retained `notification-service/app/events.py` and `notification-service/tests/test_events.py`. The user selected the agent's recommended option for all three questions: "1 credit is on hold" for the singular wording; a non-string `reason` is Malformed and an explicit null is null; the `event_id` header is compared to the envelope as a UUID. The agent also chose, and reported, the return types (`UUID` and aware `datetime`), the accepted UUID spellings (uppercase, no hyphens, braces, `urn:uuid:`), a required `T` separator in `occurred_at`, Malformed results for over-nested JSON and over-long integers, and reason strings that omit record contents. `parse_record` was renamed to `process_record` on request, with `_parse`, `ParseResult`, and the `parse_event` test helper left unchanged. The first test version failed because of a helper bug, which was fixed before retention. Nothing was committed.
+- Verification: Agent checks only. First `tests/test_events.py` run: 414 passed, 2 failed (the test helper bug). After the fix: 416 passed in `tests/test_events.py`; full suite without `TEST_DATABASE_URL`: 435 passed, 34 skipped, 1 warning; `git diff --check` clean. Mutation checks on a scratch copy: 21 mutations applied and all caught by the tests; a 22nd listed pattern was not found in the source and so was not applied, although the script's summary line read "22 mutants, 0 survived". After the rename, the full suite was rerun with the same result (435 passed, 34 skipped, 1 warning), and the mutation checks were not repeated. The PostgreSQL schema tests were not run against a database for this work, because the new code does not touch them.
+- Author review: Keith confirmed review ("My review is confirmed"). The confirmation does not state what was reviewed in detail. Keith also confirmed rerunning the tests ("I have also rerun the tests"), and stated the command as `.venv/bin/python -m pytest tests/test_events.py` and the result as 416 passed.
+- Review confirmation recorded at: 2026-11-04T19:29:32+08:00; human test rerun confirmation recorded at 2026-11-04T19:30:57+08:00
+- Missing evidence: Original per-message timestamps unavailable. Prompt 2 is the clarifying-question answer record as the tool returned it, not free-form text typed by the user. Intermediate assistant progress messages are not reproduced, and key responses are verbatim excerpts with omissions marked […].
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+You are implementing event validation and translation for the Notification
+Service in the FoC repository. Use the following specification as your single
+source of truth. Do not make assumptions about any requirement not listed here.
+If something needed is unspecified, stop and ask.
+
+Feature: Event validation and translation
+
+Overview:
+Write pure functions (no Kafka, database, or network access) that take one raw
+Kafka record (key bytes, value bytes, headers) and return exactly one of:
+- Malformed(reason): the record breaks the contract;
+- Ignore: a valid record that produces no notifications;
+- Event(event_id, event_type, occurred_at, order_id, drafts): drafts is a
+  list, which may be empty.
+Each draft contains recipient_id, recipient_role, type, params, title, and body.
+
+1. Transport validation. Any failure means Malformed.
+   - The value is a UTF-8 JSON object containing event_id, event_type,
+     schema_version, occurred_at, correlation_id, and payload.
+   - schema_version is the integer 1. A bool or string does not count.
+   - event_id and correlation_id are UUIDs.
+   - occurred_at is ISO-8601 with a timezone.
+   - payload is an object.
+   - event_type starts with "order.".
+   - The headers event_type and event_id are present, are UTF-8, and match the
+     envelope.
+   - The Kafka key equals the canonical string form of payload.order_id, which
+     is a UUID.
+2. Filter. These types are handled: order.opened, order.rejected,
+   order.accepted, order.picked_up, order.completed, order.cancelled,
+   order.expired. Return Ignore for order.created and any other "order.*" type.
+   Unknown payload fields are ignored.
+3. Required fields per handled type. A missing or invalid field means
+   Malformed.
+   - All types: requester_id (UUID).
+   - order.opened, order.completed: credit_amount (an integer of at least 1;
+     not a bool).
+   - order.completed: courier_id (UUID).
+   - order.cancelled: cancelled_by (UUID) and previous_status (non-empty
+     string). courier_id is optional.
+   - Any type: if courier_id is present it must be a UUID, and it must not equal
+     requester_id.
+4. Recipients, params, and fallback text. The rule is to notify the other
+   party, never the actor. Use "credit" when the amount is 1 and "credits"
+   otherwise.
+   - order.opened -> requester; params {credit_amount}; "Order is live" /
+     "Your order is live. N credits are on hold."
+   - order.rejected -> requester; params {reason}, where reason is the payload
+     string passed through unchanged, or null if absent; "Order not placed" /
+     "Your order couldn't be placed." Never put the reason in the text.
+   - order.accepted -> requester; params {}; "Order accepted" /
+     "A courier accepted your order."
+   - order.picked_up -> requester; params {}; "Order picked up" /
+     "Your order has been picked up."
+   - order.completed -> courier; params {credit_amount}; "Order completed" /
+     "Order completed. N credits will be added to your balance." It must never
+     say the credits have been paid.
+   - order.expired -> requester; params {}; "Order expired" /
+     "Your order expired without a courier."
+   - order.cancelled where cancelled_by == requester_id -> the courier only if
+     courier_id is present, otherwise no drafts; params
+     {cancelled_by_role: "requester", previous_status}; "Order cancelled" /
+     "The requester cancelled this order."
+   - order.cancelled where cancelled_by != requester_id -> requester, plus the
+     courier if courier_id is present; params
+     {cancelled_by_role: "admin", previous_status}; "Order cancelled" /
+     "Your order was cancelled by an administrator." for the requester, and
+     "This order was cancelled by an administrator." for the courier.
+   params never contains raw actor UUIDs.
+
+Acceptance criteria:
+- Each of the seven handled types produces exactly the recipients, roles,
+  params, and text above.
+- order.created and an unknown "order.*" type return Ignore. An event_type
+  without the "order." prefix returns Malformed.
+- A cancellation by the requester with no courier returns Event with an empty
+  draft list (not Ignore).
+- Every transport and required-field rule above has a test proving it returns
+  Malformed, with a reason that identifies the failed check.
+- The functions perform no I/O. Tests run without Kafka or a database.
+- Unit tests cover every item in this prompt.
+
+Out of scope:
+- Kafka consumption, offsets, database writes, DLQ publishing, and retries.
+- The NOTIFICATIONS_START_AT cutoff. This will be added later, together with
+  the consumer.
+- Looking up names in other services, and translating or localising the text.
+
+Edge cases:
+- Uppercase or non-canonical UUID strings in the payload or key compare equal
+  after canonicalisation.
+- Invalid JSON, a JSON array, an empty value, or a non-UTF-8 value.
+- Missing, duplicated, or non-UTF-8 headers.
+- A Kafka key that is null.
+- schema_version given as true, "1", or 2.
+- credit_amount given as 0, negative, a float, a string, or true.
+- occurred_at without a timezone.
+- order.rejected with an empty reason string, which is passed through unchanged.
+- order.cancelled where cancelled_by equals courier_id, which takes the admin
+  branch because it is not the requester.
+```
+
+### Key response 1
+
+Verbatim excerpt:
+
+I've read the spec, the event contract and the Order Service emitter. The spec leaves three behaviours open, and you asked me to stop and ask about gaps, so I'm checking those before I write any code.
+
+Summary (not a quotation): the agent then asked three multiple-choice questions, covering the `order.opened` body when `credit_amount` is 1, an `order.rejected` `reason` that is present but not a string, and whether an uppercase `event_id` header matches the envelope.
+
+### Prompt 2
+
+```text
+Your questions have been answered: "The order.opened text is specified as "N credits are on hold.", and the singular rule only swaps credit/credits. What should the body say when credit_amount is 1?"=""1 credit is on hold" (Recommended)", "For order.rejected, the spec says reason is the payload string, or null if absent. What should happen when reason is present but isn't a string, such as 42 or an explicit JSON null? The Order Service always sends a string today, so this only affects off-contract records."="Non-string is Malformed, null is null (Recommended)", "The spec says the event_id header must "match the envelope", but its canonicalisation edge case only names the payload and the key. If the header is the uppercase form of the envelope's event_id, does it match?"="Compare as UUIDs (Recommended)". You can now continue with these answers in mind.
+```
+
+### Key response 2
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+Event validation and translation are done, in `app/events.py`, with `parse_record(key, value, headers)` as the entry point. All 416 new tests pass. The full suite without a database gives 435 passed, 34 skipped (the PostgreSQL schema tests) and 1 warning, which doesn't come from the new tests.
+
+I also broke the code on purpose in 21 ways, such as accepting bools or skipping the key comparison, and the tests caught every one. Nothing is committed.
+
+[…]
+
+- **Courier as canceller:** when `cancelled_by` equals `courier_id`, the courier is told "This order was cancelled by an administrator", even though they did it. That follows your edge case, and it can only happen today if the courier is an admin, because the Order Service blocks other non-requesters.
+- **`courier_id: null`:** an explicit null counts as present, so it's Malformed. The Order Service leaves the field out when there's no courier, so its records aren't affected.
+
+**For future increments:** `reason` is passed through unchanged, so a value containing `\u0000` or a lone surrogate returns a normal `Event`. I'd expect the JSONB insert to reject it, though I haven't tested that, so the consumer should treat that failure as a bad record rather than retry it forever.
+
+[…]
+
+### Prompt 3
+
+```text
+Could you rename parse_record to process_record? This covers the definition and docstring in app/events.py (lines 9 and 95), plus the import, helpers and tests in tests/test_events.py. Do not change the behaviour. The private _parse can keep its name.
+```
+
+### Key response 3
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+I've renamed `parse_record` to `process_record` in `app/events.py` (lines 9 and 95) and at all 22 places it appears in `tests/test_events.py`, with no behaviour changes. No references to the old name remain anywhere else in the repo. The full suite without a database gives the same result as before: 435 passed, 34 skipped, 1 warning.
+
+As you asked, `_parse` keeps its name. I also left two similar names alone, so tell me if you want either changed:
+
+[…]
+
+### Scope
+
+- `notification-service/app/events.py`: Writing implementation code; Refactoring and documentation improvements — write pure functions, result dataclasses, and docstrings that validate a raw `order.events` record and translate it into notification drafts, to the user's specification and clarifying answers; rename `parse_record` to `process_record` (Prompt 3).
+- `notification-service/tests/test_events.py`: Writing implementation code; Debugging assistance; Refactoring and documentation improvements — write unit tests for transport validation, the type filter, per-type required fields, UUID canonicalisation, recipients, params, text, and purity; fix a test helper bug found on the first run; rename `parse_record` to `process_record` (Prompt 3).
+- `notification-service/README.md`: Disclosure record only — add the event validation subsection to the AI Use Summary.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code implemented the event validation and translation of the Notification Service to the user's specification: one module of pure functions that classifies a raw Kafka record as Malformed, Ignore, or Event, with unit tests that need neither Kafka nor a database. Three gaps in the specification were put to the user before any code was written, and all three recommended options were selected. A later prompt renamed the public entry point without changing behaviour. Kafka consumption and database writes remain out of scope for this entry.
