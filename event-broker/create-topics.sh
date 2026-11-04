@@ -1,5 +1,5 @@
 #!/bin/bash
-# Create the topics Order Service and Credit Service share. Safe to run again.
+# Create the topics Order Service, Credit Service, and Notification Service use. Safe to run again.
 
 set -euo pipefail
 
@@ -18,3 +18,4 @@ create_topic order.events 3 --config retention.ms=-1
 create_topic credit.events 3 --config retention.ms=-1
 create_topic order-service.credit-events.dlq 1
 create_topic credit-service.order-events.dlq 1
+create_topic notification-service.order-events.dlq 1

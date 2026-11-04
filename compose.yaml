@@ -4,6 +4,10 @@
 # Scope: Boilerplate generation — configure the Supplier tools service with the Python module entrypoint, empty command, read-only CSV mount, runtime settings, private network, migration/health dependencies, disabled healthcheck, and no restart or published ports. (ai-20260930-012)
 # Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
 # Details: supplier-service/ai/usage-log.md; ai-20260929-001; ai-20260929-003; ai-20260930-012
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-03
+# Scope: Boilerplate generation — add notification-db, notification-migrate, notification-service, and notification-worker on the shared foc-notification-service:local image, with .env-required credentials, health and migration gating, loopback-only port 127.0.0.1:8084, the internal notification-private network, and the notification-db-data volume (ai-20261103-001).
+# Author review: Keith confirmed review of all affected changes (ai-20261103-001).
+# Details: notification-service/ai/usage-log.md; ai-20261103-001
 
 include:
   - event-broker/compose.yaml
@@ -412,6 +416,81 @@ services:
     healthcheck:
       disable: true
 
+  notification-db:
+    image: postgres:16-alpine
+    container_name: notification-db
+    environment:
+      POSTGRES_DB: foc_notifications
+      POSTGRES_USER: ${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+    networks:
+      - notification-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d foc_notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  notification-migrate:
+    image: foc-notification-service:local
+    build: ./notification-service
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
+      PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+    depends_on:
+      notification-db:
+        condition: service_healthy
+    networks:
+      - notification-private
+    healthcheck:
+      disable: true
+
+  notification-service:
+    image: foc-notification-service:local
+    build: ./notification-service
+    container_name: notification-service
+    environment:
+      DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
+      PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      notification-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - notification-private
+    ports:
+      - "127.0.0.1:8084:8080"
+
+  notification-worker:
+    image: foc-notification-service:local
+    build: ./notification-service
+    container_name: notification-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
+      PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      notification-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - notification-private
+    healthcheck:
+      disable: true
+
 networks:
   default: {}
   supplier-private:
@@ -420,9 +499,12 @@ networks:
     internal: true
   order-private:
     internal: true
+  notification-private:
+    internal: true
 
 volumes:
   supplier-db-data:
   user-db-data:
   credit-db-data:
   order-db-data:
+  notification-db-data:
