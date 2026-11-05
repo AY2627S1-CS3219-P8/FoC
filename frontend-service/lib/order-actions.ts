@@ -72,6 +72,20 @@ export async function loadOrder(id: string): Promise<OrderActionResult> {
   return act((token) => orderService.getOrder(token, id));
 }
 
+/**
+ * Polls a new order. Once Credit Service has decided (`OPEN` or `REJECTED`),
+ * the layout is revalidated in this same action response, so the side nav
+ * picks up the new balance, including an account opened by this first
+ * order, even when the reservation itself was rejected.
+ */
+export async function pollNewOrder(id: string): Promise<OrderActionResult> {
+  const result = await loadOrder(id);
+  if (result.ok && result.order.status !== 'PENDING_CREDIT') {
+    revalidatePath('/', 'layout');
+  }
+  return result;
+}
+
 export async function loadOpenOrders(
   window: PageWindow = FIRST_PAGE,
 ): Promise<PageResult<OrderView>> {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { type OrderActionResult, loadOrder } from '@/lib/order-actions';
+import { type OrderActionResult, pollNewOrder } from '@/lib/order-actions';
 import type { OrderView } from '@/lib/orders';
 
 // Credit Service reserves asynchronously over Kafka, usually within seconds.
@@ -30,7 +30,7 @@ export function useSettledOrder(order: OrderView) {
     const poll = async () => {
       let result: OrderActionResult | null;
       try {
-        result = await loadOrder(orderId);
+        result = await pollNewOrder(orderId);
       } catch {
         result = null;
       }
