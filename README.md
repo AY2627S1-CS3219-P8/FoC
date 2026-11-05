@@ -624,5 +624,18 @@ and [usage log](notification-service/ai/usage-log.md).
   key-response excerpts are recorded; original timestamps unavailable; no
   redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service Kafka consumer](notification-service/ai/usage-log.md#ai-20261104-003):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, Debugging assistance, and Refactoring and documentation improvements
+  for the `order.events` consumer, the `start_at` cutoff, worker settings,
+  Notification-related root `compose.yaml` and `.env.example` settings, tests, and
+  the service README, following the user's specification. All changes were
+  retained. Agent checks: the full suite with PostgreSQL 16 had 551 passed and 1
+  warning; without a database, 494 passed, 57 skipped, and 1 warning; a live
+  Compose run used a verification-only workaround for Order Service TLS trust.
+  Keith confirmed verification, with 551 tests passed on the Pytest suite. 
+  Exact prompts and verbatim key-response excerpts are recorded; original timestamps unavailable; 
+  no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

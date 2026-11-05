@@ -3,6 +3,10 @@
 # Scope: Writing implementation code; Debugging assistance; Refactoring and documentation improvements — write unit tests for record validation, the type filter, per-type required fields, and notification translation; fix a test helper bug; rename parse_record to process_record.
 # Author review: Keith confirmed review and confirmed running `.venv/bin/python -m pytest tests/test_events.py`, with 416 passed.
 # Details: notification-service/ai/usage-log.md; ai-20261104-002
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
+# Scope: Writing implementation code — pass start_at through a helper, compare Ignore with its new fields, and add cutoff tests (ai-20261104-003).
+# Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
+# Details: notification-service/ai/usage-log.md; ai-20261104-003
 
 import ast
 import json
@@ -13,7 +17,14 @@ from uuid import UUID
 import pytest
 
 from app import events
-from app.events import Event, Ignore, Malformed, NotificationDraft, process_record
+from app.events import (
+    BeforeCutoff,
+    Event,
+    Ignore,
+    Malformed,
+    NotificationDraft,
+    process_record,
+)
 from app.models import RECIPIENT_ROLES
 
 EVENT_ID = "11111111-1111-4111-8111-111111111111"
@@ -41,6 +52,9 @@ REQUIRED_PAYLOADS = {
     "order.expired": {"requester_id": REQUESTER_ID},
 }
 HANDLED_TYPES = sorted(REQUIRED_PAYLOADS)
+
+# Earlier than every occurred_at in the tests that are not about the cutoff.
+START_AT = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 _DROP = object()
 EVENT_TYPE_HEADER = ("event_type", b"order.accepted")
@@ -75,6 +89,10 @@ def record(envelope: dict, key=_DROP, headers=_DROP) -> tuple:
     return key, json.dumps(envelope).encode(), headers
 
 
+def process(key, value, headers, start_at: datetime = START_AT):
+    return process_record(key, value, headers, start_at=start_at)
+
+
 def parse_event(event_type: str, **payload_fields) -> Event | Ignore | Malformed:
     payload = {"order_id": ORDER_ID, **REQUIRED_PAYLOADS.get(event_type, {})}
     for field, value in payload_fields.items():
@@ -82,7 +100,7 @@ def parse_event(event_type: str, **payload_fields) -> Event | Ignore | Malformed
             payload.pop(field, None)
         else:
             payload[field] = value
-    return process_record(*record(build_envelope(event_type, payload)))
+    return process(*record(build_envelope(event_type, payload)))
 
 
 def draft(recipient, role, event_type, params, title, body) -> NotificationDraft:
@@ -369,17 +387,21 @@ def test_recipient_roles_are_allowed_by_the_schema(event_type) -> None:
 
 @pytest.mark.parametrize("event_type", ["order.created", "order.refunded", "order."])
 def test_unhandled_order_types_are_ignored(event_type) -> None:
-    assert process_record(*record(build_envelope(event_type))) == Ignore()
+    assert process(*record(build_envelope(event_type))) == Ignore(
+        UUID(EVENT_ID), event_type, UUID(ORDER_ID)
+    )
 
 
 def test_ignored_type_does_not_need_handled_type_fields() -> None:
     envelope = build_envelope("order.created", {"order_id": ORDER_ID})
 
-    assert process_record(*record(envelope)) == Ignore()
+    assert process(*record(envelope)) == Ignore(
+        UUID(EVENT_ID), "order.created", UUID(ORDER_ID)
+    )
 
 
 def test_ignored_type_still_gets_transport_validation() -> None:
-    result = process_record(*record(build_envelope("order.created"), key=None))
+    result = process(*record(build_envelope("order.created"), key=None))
 
     assert_malformed(result, "key: null")
 
@@ -387,7 +409,7 @@ def test_ignored_type_still_gets_transport_validation() -> None:
 @pytest.mark.parametrize("event_type", ["credit.reserved", "orders.opened", "ORDER.opened", ""])
 def test_event_type_without_order_prefix_is_malformed(event_type) -> None:
     assert_malformed(
-        process_record(*record(build_envelope(event_type))),
+        process(*record(build_envelope(event_type))),
         'envelope.event_type: does not start with "order."',
     )
 
@@ -421,7 +443,7 @@ def test_unknown_payload_fields_are_ignored() -> None:
 def test_bad_value_is_malformed(value, reason) -> None:
     key, _, headers = record(build_envelope())
 
-    assert_malformed(process_record(key, value, headers), reason)
+    assert_malformed(process(key, value, headers), reason)
 
 
 # --- Transport: envelope ---
@@ -435,7 +457,7 @@ def test_missing_envelope_field_is_malformed(field) -> None:
     envelope = build_envelope()
     del envelope[field]
 
-    result = process_record(*record(envelope, headers=[EVENT_TYPE_HEADER, EVENT_ID_HEADER]))
+    result = process(*record(envelope, headers=[EVENT_TYPE_HEADER, EVENT_ID_HEADER]))
 
     assert_malformed(result, f"envelope.{field}: missing")
 
@@ -444,7 +466,7 @@ def test_missing_envelope_field_is_malformed(field) -> None:
     "version", [True, False, "1", 2, 0, 1.0, None], ids=repr
 )
 def test_bad_schema_version_is_malformed(version) -> None:
-    result = process_record(*record(build_envelope(schema_version=version)))
+    result = process(*record(build_envelope(schema_version=version)))
 
     assert_malformed(result, "envelope.schema_version: not the integer 1")
 
@@ -468,21 +490,21 @@ BAD_UUIDS = [
 
 @pytest.mark.parametrize("value", BAD_UUIDS, ids=repr)
 def test_bad_event_id_is_malformed(value) -> None:
-    result = process_record(*record(build_envelope(event_id=value)))
+    result = process(*record(build_envelope(event_id=value)))
 
     assert_malformed(result, "envelope.event_id: not a UUID")
 
 
 @pytest.mark.parametrize("value", BAD_UUIDS, ids=repr)
 def test_bad_correlation_id_is_malformed(value) -> None:
-    result = process_record(*record(build_envelope(correlation_id=value)))
+    result = process(*record(build_envelope(correlation_id=value)))
 
     assert_malformed(result, "envelope.correlation_id: not a UUID")
 
 
 @pytest.mark.parametrize("value", ["2026-11-04T08:30:00", "20261104T083000"])
 def test_occurred_at_without_timezone_is_malformed(value) -> None:
-    result = process_record(*record(build_envelope(occurred_at=value)))
+    result = process(*record(build_envelope(occurred_at=value)))
 
     assert_malformed(result, "envelope.occurred_at: no timezone")
 
@@ -503,7 +525,7 @@ def test_occurred_at_without_timezone_is_malformed(value) -> None:
     ids=repr,
 )
 def test_invalid_occurred_at_is_malformed(value) -> None:
-    result = process_record(*record(build_envelope(occurred_at=value)))
+    result = process(*record(build_envelope(occurred_at=value)))
 
     assert_malformed(result, "envelope.occurred_at: not ISO-8601")
 
@@ -518,14 +540,14 @@ def test_invalid_occurred_at_is_malformed(value) -> None:
     ],
 )
 def test_occurred_at_with_timezone_is_accepted(value, offset) -> None:
-    result = process_record(*record(build_envelope(occurred_at=value)))
+    result = process(*record(build_envelope(occurred_at=value)))
 
     assert result.occurred_at.utcoffset() == offset
 
 
 @pytest.mark.parametrize("payload", [[], "x", 1, True])
 def test_non_object_payload_is_malformed(payload) -> None:
-    result = process_record(*record(build_envelope(payload=payload)))
+    result = process(*record(build_envelope(payload=payload)))
 
     assert_malformed(result, "envelope.payload: not an object")
 
@@ -534,7 +556,7 @@ def test_null_payload_is_malformed() -> None:
     envelope = build_envelope()
     envelope["payload"] = None
 
-    assert_malformed(process_record(*record(envelope)), "envelope.payload: not an object")
+    assert_malformed(process(*record(envelope)), "envelope.payload: not an object")
 
 
 @pytest.mark.parametrize("event_type", [None, 1, ["order.opened"]], ids=repr)
@@ -542,7 +564,7 @@ def test_non_string_event_type_is_malformed(event_type) -> None:
     envelope = build_envelope()
     envelope["event_type"] = event_type
 
-    assert_malformed(process_record(*record(envelope)), "envelope.event_type: not a string")
+    assert_malformed(process(*record(envelope)), "envelope.event_type: not a string")
 
 
 # --- Transport: headers ---
@@ -607,7 +629,7 @@ def test_non_string_event_type_is_malformed(event_type) -> None:
     ],
 )
 def test_bad_headers_are_malformed(headers, reason) -> None:
-    result = process_record(*record(build_envelope(), headers=headers))
+    result = process(*record(build_envelope(), headers=headers))
 
     assert_malformed(result, reason)
 
@@ -615,13 +637,13 @@ def test_bad_headers_are_malformed(headers, reason) -> None:
 def test_event_id_header_compares_as_a_uuid() -> None:
     headers = [EVENT_TYPE_HEADER, ("event_id", EVENT_ID.upper().encode())]
 
-    assert isinstance(process_record(*record(build_envelope(), headers=headers)), Event)
+    assert isinstance(process(*record(build_envelope(), headers=headers)), Event)
 
 
 def test_other_headers_are_ignored_even_when_duplicated() -> None:
     headers = [EVENT_TYPE_HEADER, EVENT_ID_HEADER, ("trace", b"\xff"), ("trace", None)]
 
-    assert isinstance(process_record(*record(build_envelope(), headers=headers)), Event)
+    assert isinstance(process(*record(build_envelope(), headers=headers)), Event)
 
 
 # --- Transport: key and order_id ---
@@ -640,7 +662,7 @@ def test_other_headers_are_ignored_even_when_duplicated() -> None:
     ],
 )
 def test_bad_key_is_malformed(key, reason) -> None:
-    assert_malformed(process_record(*record(build_envelope(), key=key)), reason)
+    assert_malformed(process(*record(build_envelope(), key=key)), reason)
 
 
 def test_missing_order_id_is_malformed() -> None:
@@ -677,7 +699,7 @@ def test_non_canonical_order_id_matches_canonical_key(form) -> None:
 
 @pytest.mark.parametrize("form", non_canonical_forms(ORDER_ID))
 def test_non_canonical_key_matches_canonical_order_id(form) -> None:
-    result = process_record(*record(build_envelope(), key=form.encode()))
+    result = process(*record(build_envelope(), key=form.encode()))
 
     assert result.order_id == UUID(ORDER_ID)
 
@@ -793,6 +815,141 @@ def test_courier_equal_to_requester_is_malformed_on_any_type(event_type) -> None
         parse_event(event_type, courier_id=REQUESTER_ID),
         "payload.courier_id: equals requester_id",
     )
+
+
+# --- Cutoff ---
+
+# build_envelope's occurred_at, 2026-11-04T08:30:00+08:00, as a UTC instant.
+OCCURRED_AT = datetime(2026, 11, 4, 0, 30, tzinfo=timezone.utc)
+AFTER_OCCURRED_AT = OCCURRED_AT + timedelta(microseconds=1)
+
+
+def before_cutoff(event_type: str = "order.accepted") -> BeforeCutoff:
+    return BeforeCutoff(UUID(EVENT_ID), event_type, UUID(ORDER_ID))
+
+
+def test_start_at_is_a_required_keyword_argument() -> None:
+    key, value, headers = record(build_envelope())
+
+    with pytest.raises(TypeError):
+        process_record(key, value, headers)
+    with pytest.raises(TypeError):
+        process_record(key, value, headers, START_AT)
+
+
+@pytest.mark.parametrize("event_type", HANDLED_TYPES + ["order.created", "order.refunded"])
+def test_any_type_before_the_cutoff_is_before_cutoff(event_type) -> None:
+    result = process(*record(build_envelope(event_type)), start_at=AFTER_OCCURRED_AT)
+
+    assert result == before_cutoff(event_type)
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    [
+        pytest.param("order.completed", {"requester_id": REQUESTER_ID}, id="no-courier"),
+        pytest.param("order.opened", {"requester_id": REQUESTER_ID}, id="no-amount"),
+        pytest.param("order.opened", {"credit_amount": 0}, id="no-requester-bad-amount"),
+        pytest.param(
+            "order.accepted",
+            {"requester_id": REQUESTER_ID, "courier_id": REQUESTER_ID},
+            id="courier-is-requester",
+        ),
+        pytest.param(
+            "order.cancelled", {"requester_id": "not-a-uuid"}, id="bad-requester"
+        ),
+        pytest.param("order.rejected", {"reason": 7}, id="bad-reason"),
+    ],
+)
+def test_per_type_fields_are_not_checked_before_the_cutoff(event_type, payload) -> None:
+    envelope = build_envelope(event_type, {"order_id": ORDER_ID, **payload})
+
+    assert process(*record(envelope)) != before_cutoff(event_type)
+    assert process(*record(envelope), start_at=AFTER_OCCURRED_AT) == before_cutoff(event_type)
+
+
+def test_occurred_at_equal_to_start_at_is_not_before_the_cutoff() -> None:
+    result = process(*record(build_envelope()), start_at=OCCURRED_AT)
+
+    assert isinstance(result, Event)
+
+
+def test_invalid_record_equal_to_start_at_is_still_malformed() -> None:
+    envelope = build_envelope(
+        "order.completed", {"order_id": ORDER_ID, "requester_id": REQUESTER_ID}
+    )
+
+    assert_malformed(
+        process(*record(envelope), start_at=OCCURRED_AT), "payload.credit_amount: missing"
+    )
+
+
+def test_ignored_type_equal_to_start_at_is_ignored() -> None:
+    result = process(*record(build_envelope("order.created")), start_at=OCCURRED_AT)
+
+    assert result == Ignore(UUID(EVENT_ID), "order.created", UUID(ORDER_ID))
+
+
+@pytest.mark.parametrize(
+    ("start_at", "expected_type"),
+    [
+        # The same instant in other offsets: not before the cutoff.
+        (datetime(2026, 11, 3, 19, 30, tzinfo=timezone(timedelta(hours=-5))), Event),
+        (datetime(2026, 11, 4, 9, 30, tzinfo=timezone(timedelta(hours=9))), Event),
+        # Later wall-clock text but an earlier instant, and the reverse.
+        (datetime(2026, 11, 4, 8, 0, tzinfo=timezone(timedelta(hours=8))), Event),
+        (datetime(2026, 11, 3, 20, 0, tzinfo=timezone(timedelta(hours=-5))), BeforeCutoff),
+    ],
+)
+def test_cutoff_compares_instants_across_offsets(start_at, expected_type) -> None:
+    assert type(process(*record(build_envelope()), start_at=start_at)) is expected_type
+
+
+def test_extreme_occurred_at_compares_without_error() -> None:
+    envelope = build_envelope(occurred_at="0001-01-01T00:00:00+14:00")
+
+    assert process(*record(envelope), start_at=START_AT) == before_cutoff()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "record_kwargs", "reason"),
+    [
+        pytest.param({"schema_version": 2}, {}, "envelope.schema_version: not the integer 1", id="schema"),
+        pytest.param({"event_id": "x"}, {}, "envelope.event_id: not a UUID", id="event-id"),
+        pytest.param({"correlation_id": "x"}, {}, "envelope.correlation_id: not a UUID", id="correlation"),
+        pytest.param({"payload": []}, {}, "envelope.payload: not an object", id="payload"),
+        pytest.param(
+            {"occurred_at": "2020-01-01T00:00:00"}, {}, "envelope.occurred_at: no timezone", id="naive"
+        ),
+        pytest.param(
+            {"event_type": "credit.reserved"},
+            {},
+            'envelope.event_type: does not start with "order."',
+            id="prefix",
+        ),
+        pytest.param({}, {"headers": []}, "header.event_type: missing", id="headers"),
+        pytest.param({}, {"key": None}, "key: null", id="key"),
+    ],
+)
+def test_transport_failure_before_the_cutoff_is_still_malformed(
+    overrides, record_kwargs, reason
+) -> None:
+    result = process(
+        *record(build_envelope(**overrides), **record_kwargs), start_at=AFTER_OCCURRED_AT
+    )
+
+    assert_malformed(result, reason)
+
+
+def test_empty_value_before_the_cutoff_is_still_malformed() -> None:
+    assert_malformed(process(ORDER_ID.encode(), b"", [], start_at=AFTER_OCCURRED_AT), "value: empty")
+
+
+def test_reason_with_nul_after_the_cutoff_is_an_event() -> None:
+    result = parse_event("order.rejected", reason="bad\u0000reason")
+
+    assert isinstance(result, Event)
+    assert result.drafts[0].params == {"reason": "bad\u0000reason"}
 
 
 # --- Purity ---

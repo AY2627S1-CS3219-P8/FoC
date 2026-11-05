@@ -4,6 +4,10 @@ Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
 Scope: Refactoring and documentation improvements — write the "Running tests" section covering setup, runs with and without TEST_DATABASE_URL, a throwaway PostgreSQL example, and a warning that the schema tests run alembic downgrade base (ai-20261104-001). The AI Use Summary section is a disclosure record.
 Author review: Keith confirmed that all tests and manual verification were completed and approved, and confirmed rerunning the tests himself, with commands and results unspecified (ai-20261104-001).
 Details: notification-service/ai/usage-log.md; ai-20261104-001
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
+Scope: Refactoring and documentation improvements — write the "Worker" section covering required settings and failure behaviour, and update the "Running tests" skip description (ai-20261104-003).
+Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
+Details: notification-service/ai/usage-log.md; ai-20261104-003
 -->
 
 # Notification Service
@@ -20,8 +24,9 @@ python -m venv .venv
 ```
 
 **Without a database.** If `TEST_DATABASE_URL` is unset, the API, configuration,
-and worker tests run, and the PostgreSQL schema tests in
-`tests/test_schema.py` are skipped. Run `pytest -rs` to list the skips.
+event, and Kafka-double worker tests run. The PostgreSQL tests in
+`tests/test_schema.py` and `tests/test_worker_postgres.py` are skipped. Run
+`pytest -rs` to list the skips.
 
 **With a database.** Set `TEST_DATABASE_URL` to an empty, disposable
 PostgreSQL 16 database using the `postgresql+psycopg://` scheme. For example,
@@ -45,6 +50,23 @@ docker stop notification-test-db
 > `notification-db` or any database whose data you need. As a safeguard, the
 > tests refuse to start if the database contains tables other than
 > `notifications`, `processed_events`, and `alembic_version`.
+
+## Worker
+
+`python -m app.worker` consumes `order.events` as the consumer group
+`notification-service-order`. It needs these settings on top of `DATABASE_URL`:
+
+| Variable | Purpose |
+| --- | --- |
+| `KAFKA_BOOTSTRAP_SERVERS` | Kafka brokers. Compose sets `kafka:9092`. |
+| `NOTIFICATIONS_START_AT` | Required ISO-8601 time with a timezone. Compose reads it from `.env`. Events before it are recorded in `processed_events` and create no notifications. |
+
+Any failure stops the worker with exit code 1 and leaves the offset uncommitted,
+so the record is processed again after a restart. This includes a malformed
+record. Retries and the dead-letter queue do not exist yet, so run the worker only
+against a topic known to contain no malformed records. Under Compose's
+`restart: unless-stopped`, a record that keeps failing makes the worker restart
+repeatedly until the record is dealt with.
 
 ## AI Use Summary (Notification Service)
 
@@ -73,7 +95,7 @@ timestamps are unavailable; no redactions. Header exception:
 Claude Code (model: claude-sonnet-5-5 for the first prompt, then
 claude-opus-5-5 for two review follow-ups) provided **Writing implementation
 code**, **Boilerplate generation**, **Debugging assistance**, and **Refactoring
-and documentation improvements** for the step 2 database schema. The work
+and documentation improvements** for the database schema. The work
 followed the user-specified schema: the Alembic revision
 (`alembic/versions/20261104_0001_notification_schema.py`), the models
 (`app/models.py`), the PostgreSQL schema tests (`tests/test_schema.py`), the
@@ -100,8 +122,8 @@ timestamps are unavailable; no redactions; no header exceptions.
 ### Event validation and translation (ai-20261104-002)
 
 Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
-**Debugging assistance**, and **Refactoring and documentation improvements** for
-Step 4: pure functions in `app/events.py` that classify a raw Kafka record as
+**Debugging assistance**, and **Refactoring and documentation improvements**: 
+pure functions in `app/events.py` that classify a raw Kafka record as
 Malformed, Ignore, or Event with notification drafts, and unit tests in
 `tests/test_events.py`. The work followed the user's specification. Three gaps
 were put to the user first, and the recommended option was selected for each:
@@ -118,4 +140,29 @@ before the rename. Author review: Keith confirmed review and confirmed
 running `.venv/bin/python -m pytest tests/test_events.py`, with 416 passed.
 
 See the [usage record](ai/usage-log.md#ai-20261104-002). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### Kafka consumer, happy path (ai-20261104-003)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Boilerplate generation**, **Debugging assistance**, and **Refactoring and
+documentation improvements**: the `start_at` cutoff in `app/events.py`,
+worker settings in `app/config.py`, the consumer in `app/worker.py`, the
+confluent-kafka pin, Notification-related settings in root `compose.yaml` and
+`.env.example`, tests under `tests/`, and the Worker section of this README. The
+work followed the user's specification, with `credit-service/app/worker.py` as
+the conventions reference. All changes were retained. A test was strengthened
+after a mutation survived.
+
+Observed verification (agent only): with PostgreSQL 16 the full suite had 551
+passed and 1 warning; without `TEST_DATABASE_URL` it had 494 passed, 57 skipped,
+and 1 warning. Of 21 mutations, the tests caught 20, and caught the last after
+the test was strengthened. A live run of an isolated Compose project covered the
+order walkthrough, both cancellations, offset reset, cutoff, SIGTERM, malformed
+stop, and lag, using a verification-only workaround for Order Service TLS trust.
+Author review: Keith confirmed verification, with 551 tests passed on the Pytest
+suite; the command and environment were not stated. No wider code review is
+recorded.
+
+See the [usage record](ai/usage-log.md#ai-20261104-003). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.

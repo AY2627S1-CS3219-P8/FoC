@@ -454,3 +454,179 @@ As you asked, `_parse` keeps its name. I also left two similar names alone, so t
 ### Usage summary
 
 Claude Code implemented the event validation and translation of the Notification Service to the user's specification: one module of pure functions that classifies a raw Kafka record as Malformed, Ignore, or Event, with unit tests that need neither Kafka nor a database. Three gaps in the specification were put to the user before any code was written, and all three recommended options were selected. A later prompt renamed the public entry point without changing behaviour. Kafka consumption and database writes remain out of scope for this entry.
+
+## ai-20261104-003
+
+- Recorded at: 2026-11-04T20:40:17+08:00; completed 2026-11-05T09:23:43+08:00.
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-04 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation of the Notification Service Kafka consumer (happy path) from the user's specification, with `credit-service/app/worker.py` as the conventions reference.
+- Outcome: Retained `app/events.py` (the `start_at` cutoff, `BeforeCutoff`, identifiers on `Ignore`), `app/config.py` (`WorkerSettings`), `app/worker.py` (the consumer), `requirements.txt`, root `compose.yaml` and `.env.example`, updated tests, and new `tests/worker_support.py` and `tests/test_worker_postgres.py`. The idle-worker test was replaced. The user's local `.env` was not changed. An existing Order Service TLS trust problem was reported and not fixed. Nothing was committed by the agent.
+- Verification: Agent checks. With a disposable PostgreSQL 16 container, `pytest` in `notification-service/`: 551 passed, 1 warning. Without `TEST_DATABASE_URL`: 494 passed, 57 skipped, 1 warning. `tests/test_events.py`: 450 passed. Of 21 mutations, the tests caught 20; the survivor led to a stronger test, which then caught it. A live run of an isolated Compose project with real Kafka and the real Order, Credit, User, and Supplier services showed the expected rows for the order walkthrough and both cancellations, lag 0, unchanged counts after an offset reset, exit 0 on SIGTERM, 12 `processed_events` rows and no notifications with a later cutoff, and a malformed record stopping the worker with exit 1 and lag 1. That run used a verification-only override that made Order Service trust the development CA, because `compose.yaml` gives it no way to verify the User Service certificate. `LISTEN` timing, concurrent delivery, a crash before the offset commit, and the `\u0000` rollback were tested only against real PostgreSQL with a Kafka test double. A record with an over-long or NUL `event_type` before the cutoff was not tested.
+- Author review: Keith stated "Verified by Keith, with 551 tests passed on the Pytest suite" (2026-11-05). The command and environment were not stated. No wider code review is recorded.
+- Missing evidence: Original per-message timestamps unavailable. Intermediate assistant progress messages and parts of the final response are not reproduced; Key response 1 contains verbatim excerpts. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+You are implementing the Kafka consumer for the Notification Service in the
+FoC repository. Use the following specification as your single source of
+truth. Do not make assumptions about any requirement not listed here. If
+something needed is unspecified, stop and ask.
+
+Feature: Order event consumption (happy path)
+
+Overview:
+Implement the notification-worker loop (python -m app.worker) with
+confluent-kafka. Subscribe to order.events with group.id
+notification-service-order, enable.auto.commit=false,
+enable.auto.offset.store=false, and auto.offset.reset=earliest. NOTIFICATIONS_START_AT is a required ISO-8601 setting with a timezone.
+
+First, extend the existing pure function process_record in app/events.py.
+Do not change any of its existing validation or translation rules.
+- Add a keyword argument start_at (a timezone-aware datetime) and a new result
+  BeforeCutoff(event_id, event_type, order_id).
+- Add event_id, event_type, and order_id fields to Ignore. Malformed keeps only
+  its reason.
+- The order becomes:
+  (a) the existing transport validation (envelope, schema_version, UUIDs,
+      occurred_at with a timezone, payload object, "order." prefix, headers,
+      key), where any failure is still Malformed;
+  (b) if occurred_at < start_at, return BeforeCutoff;
+  (c) the existing type filter (Ignore) and per-type validation and
+      translation (Malformed or Event).
+- The cutoff therefore applies to every record that passes (a), whatever its
+  type and payload fields. Per-type fields are never checked for records
+  before the cutoff.
+- Update the existing tests that call process_record or compare against
+  Ignore, and add tests for the cutoff and the new fields.
+
+Then, for each record, in this order:
+1. Call process_record with start_at = NOTIFICATIONS_START_AT.
+   - BeforeCutoff: insert only a processed_events row and commit the offset. A
+     unique violation means the event is already processed: commit the offset.
+   - Ignore: commit the offset.
+   - Malformed: log it and stop the worker without committing. (This will be
+     replaced in the future with dead-letter queue handling. Until then, run
+     this worker only against a topic known to contain no malformed records.)
+2. For an Event, in one database transaction:
+   - insert processed_events(event_id, event_type, processed_at);
+   - insert one notifications row per draft, copying event_id, order_id, type,
+     and occurred_at from the event;
+   - run "NOTIFY notifications, '<recipient_id>'" once for each distinct
+     recipient.
+   If the processed_events insert hits a unique violation on event_id, roll
+   back, treat the event as already processed, and commit the offset.
+3. Commit the Kafka offset synchronously, and only after the transaction has
+   committed.
+Any exception while processing a record rolls back and stops the worker without
+committing the offset, so the record is processed again after a restart. (This
+will be replaced in the future with retries and dead-letter queue handling.)
+Log every outcome with event_id, event_type, order_id, topic, partition, and
+offset. A Malformed record may have no valid identifiers, so log its reason,
+topic, partition, and offset instead, and never the record contents. Follow
+credit-service/app/worker.py for conventions.
+
+Acceptance criteria:
+- Alice creates an order; Bob accepts it and picks it up; Alice completes it.
+  The notifications table then contains, for Alice (requester), order.opened,
+  order.accepted, and order.picked_up, and for Bob (courier), order.completed.
+  There is no row for order.created.
+- Cancelling an OPEN order as the requester creates no notification, but a
+  processed_events row is written.
+- Cancelling an ACCEPTED order as the requester creates one order.cancelled
+  notification for the courier.
+- Resetting the consumer group offsets to the earliest position and restarting
+  the worker leaves the row count of notifications unchanged.
+- Events before NOTIFICATIONS_START_AT produce processed_events rows and no
+  notifications. This includes order.created and records with missing or
+  invalid per-type fields (e.g. order.completed with no courier_id), which
+  return BeforeCutoff, not Malformed.
+- A record before the cutoff whose envelope, headers, or key is invalid still
+  returns Malformed.
+- Records at or after the cutoff are validated and translated exactly as before;
+  all existing process_record tests still pass once updated for the new
+  argument.
+- A session running LISTEN notifications receives one notification per
+  recipient, and only after the transaction commits.
+- After processing, the consumer group has a lag of 0.
+- Log lines for BeforeCutoff, Ignore, and Event outcomes include event_id,
+  event_type, order_id, topic, partition, and offset. A log line for Malformed
+  includes its reason, topic, partition, and offset, and no record contents.
+- The worker shuts down cleanly on SIGTERM: it closes the consumer and leaves
+  any in-progress record uncommitted.
+- Integration tests cover these criteria against real PostgreSQL. Kafka may be
+  a test double, provided the commit ordering is asserted.
+
+Out of scope:
+- Retries, the dead-letter queue, and failure classification. These will be
+  added in the future.
+- The HTTP API and the SSE stream.
+- Consuming credit.events.
+
+Edge cases:
+- An event that produces zero drafts still writes processed_events and commits.
+- One event with two recipients (an admin cancellation with a courier) writes
+  two rows and runs NOTIFY once for each recipient.
+- The same event is delivered twice, including concurrently after a rebalance:
+  only one set of rows is created.
+- The worker crashes after the database commit and before the offset commit: on
+  restart the event is detected as a duplicate and skipped.
+- Kafka poll errors that are not fatal are logged and the loop continues. Fatal
+  errors stop the worker.
+- occurred_at and NOTIFICATIONS_START_AT are compared as timezone-aware values.
+- A record whose occurred_at equals NOTIFICATIONS_START_AT is not before the
+  cutoff, so it is validated and translated.
+- An order.rejected record whose reason contains \u0000 returns Event, and
+  PostgreSQL rejects the insert with a DataError. The worker rolls back and stops
+  without committing the offset, leaving no partial rows.
+```
+
+### Key response 1
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+The Kafka consumer is finished and meets the acceptance criteria, but it needs one change to your `.env` before Compose will run. Nothing is committed.
+
+[…]
+
+- **Your `.env`:** add `NOTIFICATIONS_START_AT` to it. Compose marks the value as required, so until it's set every `docker compose` command fails, not just the worker's. I left `.env` alone and added a placeholder to `.env.example`.
+- **Existing bug in Order Service:** in Compose, every authenticated order request returns 503. Its `USER_SERVICE_URL` is HTTPS, but it has no way to trust the private CA. This isn't part of my change and I didn't fix it, so the walkthrough below will fail for you until it's fixed.
+
+[…]
+
+`LISTEN` timing, concurrent delivery, a crash before the offset commit, and the `\u0000` rollback were tested only against real PostgreSQL with a fake Kafka consumer.
+
+[…]
+
+- **Malformed records and restarts:** the worker does stop, but the existing `restart: unless-stopped` restarts it, and it fails on the same record each time. That matches "processed again after a restart", but it looks like a crash loop in `docker compose ps`.
+- **Long event types before the cutoff:** a record with an `event_type` over 64 characters should fail the `varchar(64)` insert and stop the worker, as should a NUL in the type. I didn't test either case. After the cutoff, such types are just ignored.
+
+[…]
+
+- **Settings:** `NOTIFICATIONS_START_AT` and `KAFKA_BOOTSTRAP_SERVERS` are required only by the worker, so the API starts without them.
+- **SIGTERM mid-record:** a transaction already running finishes, but its offset isn't committed. On restart the record is treated as a duplicate; an ignored record is simply processed again.
+- **Failure logs:** these show the exception type, SQL state and stack frames, but not the exception message, because database errors can quote record contents.
+- **`event_type` in logs:** it's written with quotes and escaping (`event_type='order.created'`) so a crafted value can't forge log lines.
+
+### Scope
+
+- `notification-service/app/events.py`: Writing implementation code — add the `start_at` keyword argument, the `BeforeCutoff` result, and identifiers on `Ignore`, and apply the cutoff between the transport check and the type filter, to the user's specification.
+- `notification-service/app/config.py`: Writing implementation code — add worker-only `WorkerSettings` with `KAFKA_BOOTSTRAP_SERVERS` and a required timezone-aware `NOTIFICATIONS_START_AT`.
+- `notification-service/app/worker.py`: Writing implementation code — replace the idle loop with the `order.events` consumer: one transaction per event with `NOTIFY`, a synchronous offset commit after it, duplicate detection, outcome logging, and stopping on malformed records, exceptions, fatal Kafka errors, and SIGTERM.
+- `notification-service/tests/test_events.py`: Writing implementation code — pass `start_at` through a helper, compare `Ignore` with its new fields, and add cutoff tests.
+- `notification-service/tests/test_config.py`: Writing implementation code — add tests for worker settings, `NOTIFICATIONS_START_AT` validation, and the API not needing either setting.
+- `notification-service/tests/test_worker.py`: Writing implementation code; Debugging assistance — replace the idle test with consumer tests that need no database; strengthen the stop test after a mutation survived.
+- `notification-service/tests/test_worker_postgres.py`: Writing implementation code — write integration tests against real PostgreSQL with a Kafka test double, covering the acceptance criteria, commit ordering, redelivery, concurrency, `LISTEN`/`NOTIFY`, and failures.
+- `notification-service/tests/worker_support.py`: Writing implementation code — write the Kafka test doubles and record builders shared by the worker tests.
+- `notification-service/requirements.txt`: Boilerplate generation — pin `confluent-kafka==2.16.0`, the version the other services use.
+- `compose.yaml`: Boilerplate generation — configure `notification-worker` with `KAFKA_BOOTSTRAP_SERVERS` and a required `NOTIFICATIONS_START_AT`, and start it after `kafka-topics`.
+- `.env.example`: Boilerplate generation — configure a placeholder `NOTIFICATIONS_START_AT`.
+- `notification-service/README.md`: Refactoring and documentation improvements — write the Worker section and update the test skip description. The AI Use Summary is a disclosure record.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code implemented the Notification Service Kafka consumer to the user's specification: a cutoff in the pure record classifier, worker settings, and a worker that stores each event in one transaction and commits its offset only afterwards. The work was tested against real PostgreSQL with a Kafka test double and in a live isolated Compose run. Retries, the dead-letter queue, the HTTP API, the SSE stream, and `credit.events` remain out of scope for this entry.

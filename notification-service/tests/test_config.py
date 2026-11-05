@@ -3,16 +3,21 @@
 # Scope: Writing implementation code — write tests for valid, missing, empty, whitespace-only, and wrong-scheme DATABASE_URL values, LOG_LEVEL validation, API startup failure, and non-zero worker exit.
 # Author review: Keith confirmed review of all affected changes.
 # Details: notification-service/ai/usage-log.md; ai-20261103-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
+# Scope: Writing implementation code — add tests for worker-only settings: the Kafka bootstrap servers, NOTIFICATIONS_START_AT validation, and the API not needing either (ai-20261104-003).
+# Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
+# Details: notification-service/ai/usage-log.md; ai-20261104-003
 
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import ConfigError, Settings
+from app.config import ConfigError, Settings, WorkerSettings
 from app.main import create_app
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +73,67 @@ def test_invalid_log_level_is_rejected(env) -> None:
         Settings.from_env()
 
 
+@pytest.fixture
+def worker_env(env):
+    env.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    env.setenv("NOTIFICATIONS_START_AT", "2026-11-04T08:30:00+08:00")
+    return env
+
+
+def test_valid_worker_environment_loads(worker_env) -> None:
+    settings = WorkerSettings.from_env()
+
+    assert settings.database_url == VALID_URL
+    assert settings.kafka_bootstrap_servers == "kafka:9092"
+    assert settings.notifications_start_at == datetime(
+        2026, 11, 4, 8, 30, tzinfo=timezone(timedelta(hours=8))
+    )
+
+
+def test_start_at_accepts_utc_designator(worker_env) -> None:
+    worker_env.setenv("NOTIFICATIONS_START_AT", "2026-11-04T00:30:00Z")
+
+    assert WorkerSettings.from_env().notifications_start_at.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize("name", ["KAFKA_BOOTSTRAP_SERVERS", "NOTIFICATIONS_START_AT"])
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_missing_worker_setting_is_rejected(worker_env, name, value) -> None:
+    if value is None:
+        worker_env.delenv(name)
+    else:
+        worker_env.setenv(name, value)
+
+    with pytest.raises(ConfigError, match=f"{name} must be set"):
+        WorkerSettings.from_env()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-11-04T08:30:00",
+        "2026-11-04",
+        "2026-11-04 08:30:00+08:00",
+        "not-a-date",
+        "2026-13-04T08:30:00+08:00",
+        "2026-11-04T08:30:00+25:00",
+    ],
+)
+def test_invalid_start_at_is_rejected_without_echoing_it(worker_env, value) -> None:
+    worker_env.setenv("NOTIFICATIONS_START_AT", value)
+
+    with pytest.raises(ConfigError, match="NOTIFICATIONS_START_AT") as raised:
+        WorkerSettings.from_env()
+    assert value not in str(raised.value)
+
+
+def test_api_settings_do_not_need_worker_settings(env) -> None:
+    env.delenv("KAFKA_BOOTSTRAP_SERVERS", raising=False)
+    env.delenv("NOTIFICATIONS_START_AT", raising=False)
+
+    assert Settings.from_env().database_url == VALID_URL
+
+
 def test_api_startup_fails_without_database_url(env) -> None:
     env.delenv("DATABASE_URL")
 
@@ -97,3 +163,24 @@ def test_worker_exits_non_zero_on_invalid_configuration(database_url: str) -> No
 
     assert result.returncode != 0
     assert "DATABASE_URL" in result.stderr
+
+
+def test_worker_exits_non_zero_without_start_at() -> None:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "NOTIFICATIONS_START_AT"
+    }
+    environment["DATABASE_URL"] = VALID_URL
+    environment["KAFKA_BOOTSTRAP_SERVERS"] = "kafka:9092"
+    result = subprocess.run(
+        [sys.executable, "-m", "app.worker"],
+        cwd=SERVICE_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "NOTIFICATIONS_START_AT" in result.stderr

@@ -3,12 +3,20 @@
 # Scope: Writing implementation code; Refactoring and documentation improvements — write pure functions that validate a raw order.events Kafka record and translate it into notification drafts; rename parse_record to process_record.
 # Author review: Keith confirmed review and confirmed running `.venv/bin/python -m pytest tests/test_events.py`, with 416 passed.
 # Details: notification-service/ai/usage-log.md; ai-20261104-002
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
+# Scope: Writing implementation code — add the start_at cutoff and the BeforeCutoff result, and add identifiers to Ignore (ai-20261104-003).
+# Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
+# Details: notification-service/ai/usage-log.md; ai-20261104-003
 
 """Validate raw ``order.events`` records and translate them into drafts.
 
 Everything here is pure: no Kafka, database, or network access. ``process_record``
 is the entry point. Malformed reasons name the failed check and never echo
 record contents, so they are safe to log.
+
+Checks run in a fixed order: the transport check (envelope, headers, key), then
+the cutoff, then the type filter and per-type validation and translation. Per-type
+fields are therefore never checked for records before the cutoff.
 """
 
 import json
@@ -59,8 +67,21 @@ class Malformed:
 
 
 @dataclass(frozen=True)
+class BeforeCutoff:
+    """A record older than the cutoff, whatever its type and payload fields."""
+
+    event_id: UUID
+    event_type: str
+    order_id: UUID
+
+
+@dataclass(frozen=True)
 class Ignore:
     """A valid record that produces no notifications."""
+
+    event_id: UUID
+    event_type: str
+    order_id: UUID
 
 
 @dataclass(frozen=True)
@@ -84,7 +105,7 @@ class Event:
     drafts: list[NotificationDraft]
 
 
-ParseResult = Malformed | Ignore | Event
+ParseResult = Malformed | BeforeCutoff | Ignore | Event
 Headers = Sequence[tuple[str, bytes | None]] | None
 
 
@@ -92,16 +113,28 @@ class _Invalid(Exception):
     """Internal: carries a Malformed reason out of nested validation."""
 
 
-def process_record(key: bytes | None, value: bytes | None, headers: Headers) -> ParseResult:
-    """Classify one raw Kafka record as Malformed, Ignore, or Event."""
+def process_record(
+    key: bytes | None,
+    value: bytes | None,
+    headers: Headers,
+    *,
+    start_at: datetime,
+) -> ParseResult:
+    """Classify one raw Kafka record as Malformed, BeforeCutoff, Ignore, or Event.
+
+    ``start_at`` must be timezone-aware. A record is before the cutoff only if
+    ``occurred_at`` is strictly earlier than it.
+    """
 
     try:
-        return _parse(key, value, headers)
+        return _parse(key, value, headers, start_at)
     except _Invalid as exc:
         return Malformed(str(exc))
 
 
-def _parse(key: bytes | None, value: bytes | None, headers: Headers) -> Ignore | Event:
+def _parse(
+    key: bytes | None, value: bytes | None, headers: Headers, start_at: datetime
+) -> BeforeCutoff | Ignore | Event:
     envelope = _decode_value(value)
     for field in _ENVELOPE_FIELDS:
         if field not in envelope:
@@ -131,8 +164,11 @@ def _parse(key: bytes | None, value: bytes | None, headers: Headers) -> Ignore |
 
     order_id = _order_id(key, payload)
 
+    if occurred_at < start_at:
+        return BeforeCutoff(event_id, event_type, order_id)
+
     if event_type not in HANDLED_EVENT_TYPES:
-        return Ignore()
+        return Ignore(event_id, event_type, order_id)
 
     return Event(
         event_id=event_id,
