@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.clients import Identity, SupplierServiceClient, SupplierUnavailableError
 from app.events import IncomingEvent, enqueue_event, isoformat_utc, parse_incoming
 from app.messaging import ORDER_TTL, RELAY_BATCH_SIZE
-from app.models import Order, ProcessedEvent, utc_now
+from app.models import Order, OrderStatusHistory, ProcessedEvent, utc_now
 from app.schemas import DeliveryLocation, OrderCreate
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,7 @@ NUS_CAMPUS_BOUNDS = {
 
 TERMINAL_STATUSES = frozenset({"COMPLETED", "CANCELLED", "EXPIRED", "REJECTED"})
 REQUESTER_CANCELLABLE = frozenset({"PENDING_CREDIT", "OPEN", "ACCEPTED"})
+COURIER_CANCELLABLE = frozenset({"ACCEPTED", "PICKED_UP"})
 DESTINATION_MUTABLE = frozenset({"PENDING_CREDIT", "OPEN", "ACCEPTED"})
 EXPIRABLE = frozenset({"PENDING_CREDIT", "OPEN"})
 
@@ -121,6 +122,14 @@ def create_order(
     )
     db.add(order)
     db.flush()
+    _set_status(
+        db,
+        order,
+        "PENDING_CREDIT",
+        actor_id=requester.id,
+        reason="created",
+        initial=True,
+    )
     enqueue_event(
         db,
         event_type="order.created",
@@ -210,7 +219,7 @@ def accept_order(db: Session, order_id: UUID, actor: Identity) -> Order:
             raise HTTPException(status_code=404, detail="Order not found")
         _illegal(order, "accept")
     now = utc_now()
-    order.status = "ACCEPTED"
+    _set_status(db, order, "ACCEPTED", actor_id=actor.id, reason="accepted")
     order.courier_id = actor.id
     order.accepted_at = now
     order.updated_at = now
@@ -233,7 +242,7 @@ def pick_up_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     if order.status != "ACCEPTED":
         _illegal(order, "pick up")
     now = utc_now()
-    order.status = "PICKED_UP"
+    _set_status(db, order, "PICKED_UP", actor_id=actor.id, reason="picked_up")
     order.picked_up_at = now
     order.updated_at = now
     enqueue_event(
@@ -255,7 +264,7 @@ def complete_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     if order.status != "PICKED_UP":
         _illegal(order, "complete")
     now = utc_now()
-    order.status = "COMPLETED"
+    _set_status(db, order, "COMPLETED", actor_id=actor.id, reason="completed")
     order.completed_at = now
     order.updated_at = now
     enqueue_event(
@@ -267,11 +276,25 @@ def complete_order(db: Session, order_id: UUID, actor: Identity) -> Order:
 
 
 def cancel_order(db: Session, order_id: UUID, actor: Identity) -> Order:
-    order = _lock_visible(db, order_id, actor)
+    order = _lock(db, order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    # A courier who just reopened the order can no longer see it. Repeating
+    # their cancel still returns the order without writing another event.
+    if _is_repeat_courier_cancel(db, order, actor):
+        return order
+    if not _can_view(order, actor):
+        raise HTTPException(status_code=404, detail="Order not found")
     if order.status == "CANCELLED" and order.cancelled_by == actor.id:
         return order
     if order.status in TERMINAL_STATUSES:
         _illegal(order, "cancel")
+    if (
+        actor.role != "admin"
+        and actor.id == order.courier_id
+        and order.status in COURIER_CANCELLABLE
+    ):
+        return _courier_reopen(db, order, actor)
     requester_may = (
         actor.id == order.requester_id and order.status in REQUESTER_CANCELLABLE
     )
@@ -284,7 +307,7 @@ def cancel_order(db: Session, order_id: UUID, actor: Identity) -> Order:
         raise HTTPException(status_code=403, detail="You cannot cancel this order")
     previous_status = order.status
     now = utc_now()
-    order.status = "CANCELLED"
+    _set_status(db, order, "CANCELLED", actor_id=actor.id, reason="cancelled")
     order.cancelled_at = now
     order.cancelled_by = actor.id
     order.updated_at = now
@@ -298,6 +321,21 @@ def cancel_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     _commit(db)
     db.refresh(order)
     return order
+
+
+def get_order_history(
+    db: Session, order_id: UUID, actor: Identity
+) -> list[OrderStatusHistory]:
+    """Status changes for an order the caller is allowed to see, oldest first."""
+
+    order = get_order(db, order_id, actor)
+    return list(
+        db.scalars(
+            select(OrderStatusHistory)
+            .where(OrderStatusHistory.order_id == order.id)
+            .order_by(OrderStatusHistory.id)
+        )
+    )
 
 
 def apply_incoming(db: Session, event: IncomingEvent) -> None:
@@ -359,7 +397,7 @@ def _is_duplicate_processed_event(exc: IntegrityError) -> bool:
 def _mark_open(db: Session, order: Order) -> None:
     if order.status != "PENDING_CREDIT":
         return
-    order.status = "OPEN"
+    _set_status(db, order, "OPEN", actor_id=None, reason="credit_reserved")
     order.updated_at = utc_now()
     enqueue_event(
         db, event_type="order.opened", order=order, correlation_id=order.correlation_id
@@ -369,7 +407,9 @@ def _mark_open(db: Session, order: Order) -> None:
 def _mark_rejected(db: Session, order: Order, reason: str | None) -> None:
     if order.status != "PENDING_CREDIT":
         return
-    order.status = "REJECTED"
+    _set_status(
+        db, order, "REJECTED", actor_id=None, reason="credit_reservation_failed"
+    )
     order.rejection_reason = (reason or "insufficient balance")[:500]
     order.updated_at = utc_now()
     enqueue_event(
@@ -385,7 +425,7 @@ def _mark_expired(db: Session, order: Order) -> None:
     if order.status not in EXPIRABLE:
         return
     now = utc_now()
-    order.status = "EXPIRED"
+    _set_status(db, order, "EXPIRED", actor_id=None, reason="expired")
     order.expired_at = now
     order.updated_at = now
     enqueue_event(
@@ -441,6 +481,78 @@ def _require_active_supplier(
         ) from None
     if not active:
         raise HTTPException(status_code=422, detail="Pickup location is not supported")
+
+
+def _courier_reopen(db: Session, order: Order, actor: Identity) -> Order:
+    """Unassign the courier and return the errand to the open feed.
+
+    The requester's credit hold stays reserved. expires_at starts over so a
+    reopened order is not expired by the next sweep.
+    """
+
+    previous_status = order.status
+    previous_courier_id = order.courier_id
+    now = utc_now()
+    _set_status(db, order, "OPEN", actor_id=actor.id, reason="courier_cancelled")
+    order.courier_id = None
+    order.accepted_at = None
+    order.picked_up_at = None
+    order.expires_at = now + ORDER_TTL
+    order.updated_at = now
+    enqueue_event(
+        db,
+        event_type="order.reopened",
+        order=order,
+        correlation_id=order.correlation_id,
+        extra={
+            "previous_status": previous_status,
+            "previous_courier_id": str(previous_courier_id),
+            "reason": "courier_cancelled",
+        },
+    )
+    _commit(db)
+    db.refresh(order)
+    return order
+
+
+def _is_repeat_courier_cancel(db: Session, order: Order, actor: Identity) -> bool:
+    if order.status != "OPEN":
+        return False
+    latest = db.scalar(
+        select(OrderStatusHistory)
+        .where(OrderStatusHistory.order_id == order.id)
+        .order_by(OrderStatusHistory.id.desc())
+        .limit(1)
+    )
+    return (
+        latest is not None
+        and latest.reason == "courier_cancelled"
+        and latest.actor_id == actor.id
+    )
+
+
+def _set_status(
+    db: Session,
+    order: Order,
+    to_status: str,
+    *,
+    actor_id: UUID | None,
+    reason: str | None = None,
+    initial: bool = False,
+) -> None:
+    """Append one history row and apply the new status in the caller's transaction."""
+
+    db.add(
+        OrderStatusHistory(
+            order_id=order.id,
+            from_status=None if initial else order.status,
+            to_status=to_status,
+            actor_id=actor_id,
+            reason=reason,
+            occurred_at=utc_now(),
+        )
+    )
+    order.status = to_status
 
 
 def _lock(db: Session, order_id: UUID) -> Order | None:

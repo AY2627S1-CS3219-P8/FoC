@@ -13,6 +13,9 @@ Topic and consumer ownership:
 
 - Order Service publishes `order.events`; Credit Service consumes it as
   `credit-service-order`.
+- Notification Service will consume `order.events` for `order.opened`,
+  `order.rejected`, `order.accepted`, `order.picked_up`, `order.completed`,
+  `order.cancelled`, `order.reopened`, and `order.expired`.
 - Credit Service publishes `credit.events`; Order Service consumes it with its
   own stable group.
 
@@ -34,6 +37,11 @@ After `PICKED_UP`, the event must include `courier_id`; Credit Service transfers
 the reservation to that courier and records `ORDER_CANCELLED_AFTER_PICKUP` in
 its audit trail. Completion, cancellation, and expiry do not publish Credit
 outcome events.
+
+`order.reopened` is published when the assigned courier cancels an accepted or
+picked-up order. The order returns to `OPEN`, and the payload carries
+`previous_status`, `previous_courier_id`, and `reason` `courier_cancelled`.
+Credit Service ignores this event, so the requester's reservation stays in place.
 
 `order.events` and `credit.events` records are keyed by `order_id`. Kafka therefore preserves order
 for one aggregate within its partition while allowing different aggregates to

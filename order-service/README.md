@@ -36,7 +36,8 @@ Every route except `/health` and `/ready` requires `Authorization: Bearer <sessi
 | `POST` | `/orders/{id}/accept` | anyone except the requester | first committed accept wins; the others get `409` |
 | `POST` | `/orders/{id}/pickup` | assigned courier | |
 | `POST` | `/orders/{id}/complete` | requester | does not touch credit balances |
-| `POST` | `/orders/{id}/cancel` | requester before pickup, or an admin until the order is closed | |
+| `GET` | `/orders/{id}/history` | requester, assigned courier, or admin | status changes, oldest first |
+| `POST` | `/orders/{id}/cancel` | requester before pickup; assigned courier while accepted or picked up; admin until the order is closed | a courier cancel returns the order to `OPEN` |
 
 `POST /orders` requires `Idempotency-Key` (max 128 characters). `X-Correlation-ID` is optional and must be a UUID. Pages are `{items, total, limit, offset}`. Errors are `{"detail": ...}`. A database outage is `503`.
 
@@ -46,7 +47,9 @@ Pickup must be an active supplier (`GET {SUPPLIER_SERVICE_URL}/suppliers/{id}`).
 
 ## States
 
-`PENDING_CREDIT` → `OPEN` when Credit publishes `credit.reserved`, or → `REJECTED` when it publishes `credit.reservation_failed`. `OPEN` → `ACCEPTED` → `PICKED_UP` → `COMPLETED`. The requester can cancel before pickup. An admin can cancel until the order is closed, including after pickup. A worker sweep expires `PENDING_CREDIT` and `OPEN` one hour after creation. `COMPLETED`, `CANCELLED`, `EXPIRED`, and `REJECTED` do not change again.
+`PENDING_CREDIT` → `OPEN` when Credit publishes `credit.reserved`, or → `REJECTED` when it publishes `credit.reservation_failed`. `OPEN` → `ACCEPTED` → `PICKED_UP` → `COMPLETED`. The requester can cancel before pickup. The assigned courier can cancel an `ACCEPTED` or `PICKED_UP` order: that unassigns the courier, clears the accept and pickup timestamps, and returns the order to `OPEN` with a new one-hour `expires_at`. The credit hold stays reserved. An admin can cancel until the order is closed, including after pickup, and that still sets `CANCELLED`. A worker sweep expires `PENDING_CREDIT` and `OPEN` one hour after creation. `COMPLETED`, `CANCELLED`, `EXPIRED`, and `REJECTED` do not change again.
+
+Each status change is appended to `order_status_history` in the same transaction as the order row. `actor_id` is null when the worker or a Credit message made the change. `GET /orders/{id}/history` returns those rows to the requester, the current courier, or an admin.
 
 ## Event contract (v1)
 
@@ -60,7 +63,7 @@ Order events are Kafka records on `order.events`. The record key is `order_id`. 
   "created_at": "2026-10-05T06:12:03.000000Z"}}
 ```
 
-Published events, in the life of an order: `order.created` (adds `expires_at`), `order.opened`, `order.rejected` (adds `reason`), `order.accepted`, `order.picked_up`, `order.completed`, `order.cancelled` (adds `cancelled_by` and `previous_status`), `order.expired`. Every payload carries the ids above, the credit amount, the store id, the drop-off label, and `created_at`. Names and contact details stay out. `order.cancelled` with `previous_status` of `PICKED_UP` is the signal for Credit to compensate the courier.
+Published events, in the life of an order: `order.created` (adds `expires_at`), `order.opened`, `order.rejected` (adds `reason`), `order.accepted`, `order.picked_up`, `order.completed`, `order.cancelled` (adds `cancelled_by` and `previous_status`), `order.reopened` (adds `previous_status`, `previous_courier_id`, and `reason` `courier_cancelled`), `order.expired`. Every payload carries the ids above, the credit amount, the store id, the drop-off label, and `created_at`. Names and contact details stay out. `order.cancelled` with `previous_status` of `PICKED_UP` is the signal for Credit to compensate the courier. `order.reopened` is not a cancellation: Credit ignores it and the reservation stays with the requester. A reopened payload omits `courier_id` because the courier has been unassigned.
 
 Consumed events, which Credit Service must publish to `credit.events` with the same JSON value: `credit.reserved` and `credit.reservation_failed` (payload `reason`, and `order_id`). A repeated `event_id`, or a message for an order that has already moved on, changes nothing. Credit should release a reservation when it sees `order.cancelled` or `order.expired`, including when that event arrives before `credit.reserved` is published.
 

@@ -35,6 +35,9 @@ ORDER_STATUSES = (
 _STATUS_CHECK = "status IN ({})".format(
     ", ".join(f"'{status}'" for status in ORDER_STATUSES)
 )
+_HISTORY_STATUS_CHECK = "to_status IN ({})".format(
+    ", ".join(f"'{status}'" for status in ORDER_STATUSES)
+)
 
 
 def utc_now() -> datetime:
@@ -86,6 +89,34 @@ class Order(Base):
     rejection_reason: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OrderStatusHistory(Base):
+    """One row per status change, including the status an order is created with.
+
+    from_status is null for the creating row and for rows backfilled from orders
+    that existed before this table. actor_id is null when the worker or a Credit
+    message made the change.
+    """
+
+    __tablename__ = "order_status_history"
+    __table_args__ = (
+        CheckConstraint(_HISTORY_STATUS_CHECK, name="ck_order_status_history_to_status"),
+        Index("ix_order_status_history_order_id_id", "order_id", "id"),
+    )
+
+    # SQLite only autoincrements an INTEGER primary key. Postgres keeps BIGINT.
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    order_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(32))
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class OutboxEvent(Base):

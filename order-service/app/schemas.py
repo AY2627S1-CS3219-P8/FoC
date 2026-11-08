@@ -78,6 +78,20 @@ class OrderResponse(BaseModel):
     updated_at: datetime
 
 
+class OrderStatusHistoryEntry(BaseModel):
+    """One recorded status change."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: UUID
+    from_status: str | None
+    to_status: str
+    actor_id: UUID | None
+    reason: str | None
+    occurred_at: datetime
+
+
 class OrderPage(BaseModel):
     """One page of orders, matching the Supplier Service list shape."""
 

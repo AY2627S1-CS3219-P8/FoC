@@ -35,10 +35,13 @@ components:
               event_type:
                 enum:
                   - order.created
+                  - order.opened
+                  - order.rejected
                   - order.accepted
                   - order.picked_up
                   - order.completed
                   - order.cancelled
+                  - order.reopened
                   - order.expired
               payload:
                 $ref: '#/components/schemas/OrderPayload'
@@ -114,7 +117,14 @@ components:
           minimum: 1
         previous_status:
           type: string
-          description: Determines whether cancellation releases credit or compensates a courier.
+          description: Determines whether cancellation releases credit or compensates a courier. On order.reopened, the status before the courier was unassigned.
+        previous_courier_id:
+          type: string
+          format: uuid
+          description: Set on order.reopened to the courier who cancelled.
+        reason:
+          type: string
+          description: Present on order.rejected as the credit rejection reason, and on order.reopened as courier_cancelled.
         expires_at:
           type: string
           format: date-time

@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_identity
 from app.clients import Identity
 from app.db import get_db
-from app.schemas import DeliveryLocation, OrderCreate, OrderPage, OrderResponse
+from app.schemas import (
+    DeliveryLocation,
+    OrderCreate,
+    OrderPage,
+    OrderResponse,
+    OrderStatusHistoryEntry,
+)
 from app.services import orders as order_service
 
 
@@ -82,6 +88,18 @@ def list_mine_route(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get(
+    "/orders/{order_id}/history",
+    response_model=list[OrderStatusHistoryEntry],
+)
+def history_route(
+    order_id: UUID,
+    db: Session = Depends(get_db),
+    actor: Identity = Depends(get_current_identity),
+):
+    return order_service.get_order_history(db, order_id, actor)
 
 
 @router.get("/orders/{order_id}", response_model=OrderResponse)

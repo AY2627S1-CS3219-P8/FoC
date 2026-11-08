@@ -176,6 +176,24 @@ def test_streams_use_stable_groups_and_owned_dlqs(monkeypatch) -> None:
     assert selected_stream() == ("order", order)
 
 
+def test_courier_reopen_is_ignored() -> None:
+    order_id = uuid4()
+    body = event_body(
+        "order.reopened",
+        {
+            "order_id": str(order_id),
+            "previous_status": "PICKED_UP",
+            "previous_courier_id": str(uuid4()),
+            "reason": "courier_cancelled",
+        },
+    )
+
+    decision = inspect_transport_record(EVENT_STREAMS["order"], kafka_message(body))
+
+    assert decision.action == "IGNORE"
+    assert decision.result is None
+
+
 def test_valid_unrelated_order_event_is_filtered_before_domain_parser() -> None:
     order_id = uuid4()
     body = event_body("order.picked_up", {"order_id": str(order_id)})
