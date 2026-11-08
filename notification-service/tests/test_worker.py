@@ -23,6 +23,10 @@
 # Scope: Writing implementation code — test the failure code logged when the offset commit fails (ai-20261107-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261107-001).
 # Details: notification-service/ai/usage-log.md; ai-20261107-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — supply the User Service settings the API now requires (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 """Worker tests that need neither Kafka nor a database."""
 
@@ -39,6 +43,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
+import certifi
 import pytest
 from confluent_kafka import KafkaError, KafkaException
 from fastapi.testclient import TestClient
@@ -939,6 +944,8 @@ def test_worker_connections_get_the_timeouts(monkeypatch) -> None:
 def test_api_connections_do_not_get_the_timeouts(monkeypatch) -> None:
     captured = captured_engine_args(monkeypatch)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://nobody@127.0.0.1:1/none")
+    monkeypatch.setenv("USER_SERVICE_URL", "https://user-service.test")
+    monkeypatch.setenv("USER_SERVICE_CA_FILE", certifi.where())
 
     with TestClient(create_app()):
         pass

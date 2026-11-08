@@ -11,6 +11,10 @@
 # Scope: Writing implementation code — add and validate NOTIFICATION_RETRY_BACKOFF_SECONDS (ai-20261105-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
 # Details: notification-service/ai/usage-log.md; ai-20261105-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — add API-only ApiSettings with a required HTTPS USER_SERVICE_URL and USER_SERVICE_CA_FILE (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 """Environment-backed configuration for the Notification Service."""
 
@@ -19,6 +23,7 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
+from urllib.parse import urlsplit
 
 DATABASE_URL_SCHEME = "postgresql+psycopg://"
 LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
@@ -60,6 +65,28 @@ class Settings:
         return cls(
             database_url=database_url,
             log_level=_log_level_env("LOG_LEVEL", "INFO"),
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ApiSettings(Settings):
+    """Settings only the API needs, so the worker does not have to supply them."""
+
+    user_service_url: str
+    user_service_ca_file: str
+
+    @classmethod
+    def from_env(cls) -> "ApiSettings":
+        shared = Settings.from_env()
+        user_service_url = required_env("USER_SERVICE_URL")
+        parsed = urlsplit(user_service_url)
+        if parsed.scheme.lower() != "https" or not parsed.hostname:
+            raise ConfigError("USER_SERVICE_URL must be an HTTPS URL")
+        return cls(
+            database_url=shared.database_url,
+            log_level=shared.log_level,
+            user_service_url=user_service_url,
+            user_service_ca_file=required_env("USER_SERVICE_CA_FILE"),
         )
 
 

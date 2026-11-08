@@ -3,21 +3,34 @@
 # Scope: Writing implementation code; Debugging assistance — write tests for /health without database access, /ready success, 503 after the database becomes unreachable, fast 503 for refused PostgreSQL connections, and bounded 503 for a hanging database.
 # Author review: Keith confirmed review of all affected changes.
 # Details: notification-service/ai/usage-log.md; ai-20261103-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — build ApiSettings for create_app (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 import threading
 import time
 from pathlib import Path
 
+import certifi
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
 
 from app import main as main_module
-from app.config import Settings
+from app.config import ApiSettings
 from app.main import create_app
 
 
-def sqlite_settings(tmp_path: Path) -> Settings:
-    return Settings(database_url=f"sqlite+pysqlite:///{tmp_path / 'notify.db'}")
+def api_settings(database_url: str) -> ApiSettings:
+    return ApiSettings(
+        database_url=database_url,
+        user_service_url="https://user-service.test",
+        user_service_ca_file=certifi.where(),
+    )
+
+
+def sqlite_settings(tmp_path: Path) -> ApiSettings:
+    return api_settings(f"sqlite+pysqlite:///{tmp_path / 'notify.db'}")
 
 
 def test_health_returns_200(tmp_path: Path) -> None:
@@ -61,8 +74,8 @@ def test_ready_returns_503_when_database_becomes_unreachable(tmp_path: Path) -> 
 
 def test_ready_returns_503_quickly_for_unreachable_postgres() -> None:
     # Port 1 on loopback refuses connections; the check must not hang.
-    settings = Settings(
-        database_url="postgresql+psycopg://nobody@127.0.0.1:1/foc_notifications"
+    settings = api_settings(
+        "postgresql+psycopg://nobody@127.0.0.1:1/foc_notifications"
     )
     with TestClient(create_app(settings)) as client:
         started = time.monotonic()

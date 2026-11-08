@@ -11,6 +11,10 @@
 # Scope: Writing implementation code — add tests for NOTIFICATION_RETRY_BACKOFF_SECONDS parsing and startup failure (ai-20261105-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
 # Details: notification-service/ai/usage-log.md; ai-20261105-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — add tests for the API-only User Service settings (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 import os
 import subprocess
@@ -21,7 +25,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import ConfigError, Settings, WorkerSettings
+from app.config import ApiSettings, ConfigError, Settings, WorkerSettings
 from app.main import create_app
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -188,6 +192,60 @@ def test_api_settings_do_not_need_worker_settings(env) -> None:
     env.delenv("NOTIFICATIONS_START_AT", raising=False)
 
     assert Settings.from_env().database_url == VALID_URL
+
+
+@pytest.fixture
+def api_env(env):
+    env.setenv("USER_SERVICE_URL", "https://user-service:8080")
+    env.setenv("USER_SERVICE_CA_FILE", "/run/tls/ca.crt")
+    return env
+
+
+def test_api_settings_load_user_service_settings(api_env) -> None:
+    settings = ApiSettings.from_env()
+
+    assert settings.database_url == VALID_URL
+    assert settings.user_service_url == "https://user-service:8080"
+    assert settings.user_service_ca_file == "/run/tls/ca.crt"
+
+
+def test_worker_settings_do_not_need_user_service_settings(env) -> None:
+    env.delenv("USER_SERVICE_URL", raising=False)
+    env.delenv("USER_SERVICE_CA_FILE", raising=False)
+    env.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    env.setenv("NOTIFICATIONS_START_AT", "2026-11-04T08:30:00+08:00")
+
+    assert WorkerSettings.from_env().database_url == VALID_URL
+
+
+@pytest.mark.parametrize("name", ["USER_SERVICE_URL", "USER_SERVICE_CA_FILE"])
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_missing_or_empty_user_service_setting_is_rejected(api_env, name, value) -> None:
+    if value is None:
+        api_env.delenv(name)
+    else:
+        api_env.setenv(name, value)
+
+    with pytest.raises(ConfigError, match=f"{name} must be set"):
+        ApiSettings.from_env()
+
+
+@pytest.mark.parametrize(
+    "value", ["http://user-service:8080", "user-service:8080", "https://"]
+)
+def test_non_https_user_service_url_is_rejected(api_env, value) -> None:
+    api_env.setenv("USER_SERVICE_URL", value)
+
+    with pytest.raises(ConfigError, match="USER_SERVICE_URL must be an HTTPS URL"):
+        ApiSettings.from_env()
+
+
+def test_api_startup_fails_without_user_service_url(api_env) -> None:
+    api_env.delenv("USER_SERVICE_URL")
+
+    with pytest.raises(ConfigError, match="USER_SERVICE_URL must be set"):
+        with TestClient(create_app()):
+            pass
 
 
 def test_api_startup_fails_without_database_url(env) -> None:

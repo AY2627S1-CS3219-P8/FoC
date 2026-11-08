@@ -690,5 +690,19 @@ and [usage log](notification-service/ai/usage-log.md).
   and key response excerpts are recorded;
   original timestamps unavailable; no redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service history and read-status API](notification-service/ai/usage-log.md#ai-20261108-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, and Refactoring and documentation improvements for the User Service
+  bearer-token authentication, the history, unread-count, mark-read, and read-all
+  endpoints, the DTO and per-type `params` schemas, the notification-service
+  settings in root `compose.yaml`, tests, and the service README, following the
+  user's specification. Agent checks: the full suite with PostgreSQL 16 had 790
+  passed and 5 skipped; without a database, 668 passed and 127 skipped; EXPLAIN
+  showed both indexes used and no sequential scan. Keith confirmed on 2026-11-08
+  running the full suite with PostgreSQL 16, 790 passed and 5 real-broker tests
+  skipped; reading and verifying the code; and manual checks against the full
+  Compose stack with the real User Service. The exact prompt and the final response
+  are recorded; original timestamps unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

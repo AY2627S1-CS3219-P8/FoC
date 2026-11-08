@@ -20,6 +20,10 @@ Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-06
 Scope: Refactoring and documentation improvements — document the worker's database timeouts and their known limitations (ai-20261106-002).
 Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-002).
 Details: notification-service/ai/usage-log.md; ai-20261106-002
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+Scope: Refactoring and documentation improvements — write the "API" section and update the "Running tests" skip description (ai-20261108-001).
+Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+Details: notification-service/ai/usage-log.md; ai-20261108-001
 -->
 
 # Notification Service
@@ -36,9 +40,10 @@ python -m venv .venv
 ```
 
 **Without a database.** If `TEST_DATABASE_URL` is unset, the API, configuration,
-event, and Kafka-double worker tests run. The PostgreSQL tests in
-`tests/test_schema.py` and `tests/test_worker_postgres.py` are skipped. Run
-`pytest -rs` to list the skips.
+event, API authentication and validation, and Kafka-double worker tests run.
+The PostgreSQL tests in `tests/test_schema.py`, `tests/test_worker_postgres.py`,
+and `tests/test_notifications_postgres.py` are skipped. Run `pytest -rs` to list
+the skips.
 
 **With a database.** Set `TEST_DATABASE_URL` to an empty, disposable
 PostgreSQL 16 database using the `postgresql+psycopg://` scheme. For example,
@@ -96,6 +101,40 @@ docker stop notification-test-kafka
 
 Each test creates its own source topic and consumer group, and writes to the DLQ
 topic. Use a disposable broker.
+
+## API
+
+The API needs these settings on top of `DATABASE_URL`. The worker doesn't use them.
+
+| Variable | Purpose |
+| --- | --- |
+| `USER_SERVICE_URL` | HTTPS base URL of User Service. Compose sets `https://user-service:8080`. |
+| `USER_SERVICE_CA_FILE` | CA file that verifies User Service's certificate. Compose mounts `${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}` at `/run/tls/ca.crt`. |
+
+Every `/notifications` endpoint needs `Authorization: Bearer <token>`, and the
+scheme name is case-insensitive. The token is resolved through User Service
+`GET /users/me`, as in Credit Service. A missing, malformed, or rejected token,
+or an inactive user, returns 401 with `WWW-Authenticate: Bearer`. A timeout, an
+unreachable User Service, or an unusable answer returns 503. Each endpoint only
+sees the caller's own notifications, and no endpoint accepts a user ID.
+
+| Endpoint | Result |
+| --- | --- |
+| `GET /notifications?cursor=&limit=` | `{"items": [...], "next_cursor": int \| null}`, newest first. `cursor` returns ids below it. `limit` is 1–100, default 20. |
+| `GET /notifications/unread-count` | `{"count": int}` |
+| `POST /notifications/{id}/read` | Sets `read_at` if it is null and returns the notification. Repeating keeps the first `read_at`. 404 if the notification isn't the caller's. |
+| `POST /notifications/read-all` | `{"updated": int}`, the number of notifications it marked read. |
+
+Each item has `id`, `type`, `recipient_role`, `params`, `title`, `body`,
+`order_id`, `occurred_at`, `created_at`, and `read_at` (null while unread), with
+timestamps in UTC. `/docs` shows one schema per `type` with its `params`. A
+cursor above the newest id returns the newest page, and 0 or below returns an
+empty page. A non-integer cursor, limit, or id, or a limit outside 1–100, returns
+422. An id outside the `bigint` range returns 404 without a query.
+
+Two requests that mark the same notification read both get 200 and the same
+`read_at`. The update keeps an existing `read_at` with `COALESCE`, and the second
+request waits for the first one's row lock.
 
 ## Worker
 
@@ -359,4 +398,32 @@ and 645 passed; manually read and verified the code; and ran manual checks in an
 isolated Compose project. The specific Compose checks were not stated.
 
 See the [usage record](ai/usage-log.md#ai-20261107-001). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### History and read-status API (ai-20261108-001)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Boilerplate generation**, and **Refactoring and documentation improvements**:
+the User Service client and bearer-token dependency (`app/clients.py`,
+`app/auth.py`, following Credit Service), API-only settings in `app/config.py`,
+the DTO and per-type `params` schemas (`app/schemas.py`), the endpoints
+(`app/routes/notifications.py`) and their wiring in `app/main.py`, the httpx pin,
+the notification-service settings in root `compose.yaml`, tests under `tests/`,
+and the API section of this README. The work followed the user's specification.
+
+Observed verification (agent only): with PostgreSQL 16 the full suite had 790
+passed and 5 skipped (the real-broker tests, with no Kafka); without a database it
+had 668 passed and 127 skipped. EXPLAIN on a 20,300-row dataset showed the list
+queries using `ix_notifications_recipient_id_desc`, the count and read-all using
+`ix_notifications_recipient_unread`, and no sequential scan. The tests caught all 8
+mutations applied. `docker compose config` succeeded. No live Compose run against
+User Service was done by the agent.
+
+Author review (confirmed by Keith on 2026-11-08): Keith ran
+`.venv/bin/python -m pytest -rs` with a throwaway PostgreSQL 16 and 790 passed, with
+the 5 real-broker worker tests skipped; read and verified the code; and ran manual
+checks against the full Compose stack with the real User Service. The specific
+Compose checks were not stated.
+
+See the [usage record](ai/usage-log.md#ai-20261108-001). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.

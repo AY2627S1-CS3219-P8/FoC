@@ -11,6 +11,10 @@
 # Scope: Writing implementation code — test real lock and statement timeouts through the retry path, and that only the worker's connections have them (ai-20261106-002).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-002).
 # Details: notification-service/ai/usage-log.md; ai-20261106-002
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — supply the User Service settings the API now requires (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 """Worker integration tests: real PostgreSQL, with a Kafka test double.
 
@@ -29,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import certifi
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -821,6 +826,8 @@ def test_worker_engine_applies_the_timeouts_to_real_connections() -> None:
 
 def test_api_engine_has_no_timeouts_on_real_connections(monkeypatch) -> None:
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+    monkeypatch.setenv("USER_SERVICE_URL", "https://user-service.test")
+    monkeypatch.setenv("USER_SERVICE_CA_FILE", certifi.where())
 
     with TestClient(create_app()) as client:
         with client.app.state.engine.connect() as connection:

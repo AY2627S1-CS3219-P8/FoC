@@ -3,6 +3,10 @@
 # Scope: Writing implementation code; Debugging assistance — write the FastAPI factory with startup configuration validation, a database-independent /health, and a /ready probe; after a frozen-database hang was observed, add a single-flight readiness probe with a hard deadline.
 # Author review: Keith confirmed review of all affected changes.
 # Details: notification-service/ai/usage-log.md; ai-20261103-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — create the User Service client at startup, allow a test double to replace it, close it on shutdown, and include the notifications router (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 """FastAPI application factory for the Notification Service."""
 
@@ -16,8 +20,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from app.config import Settings, configure_logging
+from app.clients import UserServiceClient
+from app.config import ApiSettings, configure_logging
 from app.db import make_engine, make_session_factory
+from app.routes.notifications import router as notifications_router
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +70,16 @@ class ReadinessProbe:
         self._executor.shutdown(wait=False, cancel_futures=True)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: ApiSettings | None = None,
+    *,
+    user_client: UserServiceClient | None = None,
+) -> FastAPI:
+    """Build the API. ``user_client`` replaces the User Service client in tests."""
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        active_settings = settings or Settings.from_env()
+        active_settings = settings or ApiSettings.from_env()
         configure_logging(active_settings.log_level)
         app.state.settings = active_settings
         app.state.engine = make_engine(active_settings.database_url)
@@ -75,15 +87,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.readiness = ReadinessProbe(
             app.state.engine, READY_TIMEOUT_SECONDS
         )
+        app.state.user_client = user_client or UserServiceClient(
+            active_settings.user_service_url,
+            active_settings.user_service_ca_file,
+        )
         try:
             yield
         finally:
+            app.state.user_client.close()
             app.state.readiness.close()
             app.state.engine.dispose()
 
     app = FastAPI(
         title="FoC Notification Service", version="0.1.0", lifespan=lifespan
     )
+
+    app.include_router(notifications_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

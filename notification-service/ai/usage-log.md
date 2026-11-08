@@ -1048,3 +1048,136 @@ The failed commit itself was only simulated with a Kafka test double, not trigge
 ### Usage summary
 
 Claude Code verified the user's proposed one-word fix on a scratch copy, applied it, and added tests that fail if the defect returns.
+
+## ai-20261108-001
+
+- Recorded at: 2026-11-08T18:10:38+08:00.
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-08 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation of the authenticated notification history and read-status API from the user's specification, with `credit-service/app/clients.py` and `app/auth.py` as the reference for User Service authentication.
+- Outcome: New `app/clients.py`, `app/auth.py`, `app/schemas.py`, `app/routes/__init__.py`, `app/routes/notifications.py`, `tests/api_support.py`, `tests/test_clients.py`, `tests/test_notifications_api.py`, and `tests/test_notifications_postgres.py`. Changed `app/config.py` (API-only `ApiSettings` requiring `USER_SERVICE_URL` and `USER_SERVICE_CA_FILE`), `app/main.py` (User Service client at startup, an optional test double, the router), `requirements.txt` (httpx), root `compose.yaml` (notification-service gets the two settings and the CA mount, as credit-service does), `tests/test_api.py`, `tests/test_config.py`, `tests/test_worker.py`, and `tests/test_worker_postgres.py` (supply the new settings), and this service's README. Design choices the specification left open: the DTO is a union discriminated by `type`, so `/docs` shows each type's `params`; `/notifications/{id}/read` uses one `UPDATE ... SET read_at = COALESCE(read_at, now()) ... RETURNING`; a cursor or id outside the `bigint` range is handled without a query (newest page, empty page, or 404). The worker and notification creation are unchanged. Nothing was committed by the agent.
+- Verification: Agent checks. With a disposable PostgreSQL 16 container, `pytest` in `notification-service/`: 790 passed, 5 skipped (real-broker tests; no Kafka). Without `TEST_DATABASE_URL`: 668 passed, 127 skipped. EXPLAIN (captured from the statements the API sent, on a 20,300-row dataset after `ANALYZE`): both list queries used an Index Scan on `ix_notifications_recipient_id_desc`; unread-count and read-all used a Bitmap Index Scan on `ix_notifications_recipient_unread`; mark-read used an Index Scan on `ix_notifications_recipient_id_desc`; no Seq Scan. The concurrency test holds the row lock until both requests are waiting on it. The tests caught all 8 mutations applied (no recipient scope on mark-read, overwriting `read_at`, no look-ahead row, inclusive cursor, read-all touching read rows, no `bigint` clamp, a case-sensitive scheme, no `WWW-Authenticate`). `docker compose config` succeeded. Not done: a live Compose run with a real User Service token.
+- Author review: Keith stated on 2026-11-08, verbatim: "Keith has ran .venv/bin/python -m pytest -rs on the notification service test suite.  with TEST_DATABASE_URL set to a throwaway PostgreSQL 16 container; the result was 790 passed, 5 (real-broker worker tests) skipped, read and verified the code, and ran manual checks against the full Compose stack with the real User Service" The run was in `notification-service/` without `TEST_KAFKA_BOOTSTRAP_SERVERS`, so the 5 skips are the real-broker worker tests. The manual Compose checks cover the agent's "Not done" item, a run with the real User Service; the specific checks were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-08T20:49:25+08:00
+- Missing evidence: Original per-message timestamps unavailable. Prompt 1 is copied from Step 7 of `docs/implementation-steps.md`, which matches the prompt the user pasted. Key response 1 is the full verbatim final response to Prompt 1, added on 2026-11-08 as a correction, because this entry first omitted it although it became available. Intermediate progress messages are not reproduced. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+You are implementing the authenticated notification history and read-status
+API for the Notification Service in the FoC repository. Use the following
+specification as your single source of truth. Do not make assumptions about any
+requirement not listed here. If something needed is unspecified, stop and ask.
+
+Feature: Notification history and read status
+
+Overview:
+Authentication: every endpoint requires "Authorization: Bearer <token>". The
+scheme name is case-insensitive. Resolve the token through User Service at
+USER_SERVICE_URL over internal HTTPS (CA file USER_SERVICE_CA_FILE), the same
+way credit-service/app/clients.py and app/auth.py do. An invalid or missing
+token returns 401 with WWW-Authenticate: Bearer. A User Service timeout or
+outage returns 503. The caller's user ID always comes from the resolved
+identity and is never accepted as a request parameter.
+
+Endpoints, all scoped to recipient_id = identity.id:
+- GET /notifications?cursor=<id>&limit=<n>
+  Returns { "items": [DTO...], "next_cursor": int | null }, ordered by id
+  descending. Without a cursor it returns the newest. With a cursor it returns
+  items with id < cursor. limit defaults to 20, minimum 1, maximum 100.
+  next_cursor is the last item's id when more items exist, otherwise null.
+- GET /notifications/unread-count
+  Returns { "count": int }.
+- POST /notifications/{id}/read
+  Sets read_at = now() if it is null. Returns the DTO. Calling it again keeps
+  the original read_at. Returns 404 if no row matches both id and the caller.
+- POST /notifications/read-all
+  Sets read_at on all the caller's unread notifications. Returns
+  { "updated": int }.
+DTO fields: id, type, recipient_role, params, title, body, order_id,
+occurred_at, created_at, read_at (null when unread). Timestamps are UTC
+ISO-8601. There is no link field.
+OpenAPI: document the DTO, plus the params schema for each type:
+- order.opened {credit_amount: int}
+- order.rejected {reason: string | null}
+- order.accepted {}
+- order.picked_up {}
+- order.completed {credit_amount: int}
+- order.expired {}
+- order.cancelled {cancelled_by_role: "requester" | "admin",
+  previous_status: string}
+
+Acceptance criteria:
+- Alice's token lists only Alice's notifications, newest first. Following
+  next_cursor returns the next page with no overlaps or gaps, and the last page
+  has next_cursor null.
+- unread-count decreases by 1 after marking one notification read. Marking it
+  read again returns 200 and the same read_at, and the count doesn't change.
+- read-all makes unread-count 0 and reports how many rows it changed.
+- Alice gets 404 when marking Bob's notification read, and Bob's notification
+  stays unread.
+- A missing or malformed header, or a token User Service rejects, returns 401.
+- An unreachable User Service returns 503.
+- /docs shows the DTO and every params schema.
+- Queries use the (recipient_id, id DESC) index and the partial unread index.
+  EXPLAIN on a test dataset shows no sequential scan on notifications.
+- API tests cover every criterion, with User Service replaced by a test double.
+
+Out of scope:
+- The live SSE stream and the Next.js relay. These will be added in the
+  future.
+- Deleting notifications, marking them unread, and filtering by type.
+- Any change to how notifications are created.
+
+Edge cases:
+- A user with no notifications gets items [] and next_cursor null, and a count
+  of 0.
+- A cursor or limit that is not an integer, or limit outside 1-100, returns 422.
+- A non-integer {id} in the path returns 422.
+- A cursor beyond the newest id, or 0, returns the newest page or an empty
+  result respectively, without an error.
+- read-all with nothing unread returns { "updated": 0 }.
+- Two concurrent read requests for the same notification both succeed and leave
+  a single read_at value.
+```
+
+### Key response 1
+
+Verbatim final response:
+
+The history and read-status API is built. Every acceptance criterion has a test, and the full suite passes against a throwaway PostgreSQL 16: 790 passed, 5 skipped. The 5 skips are the Kafka broker tests, since no broker was running. Without a database, 668 pass and 127 are skipped. Nothing is committed.
+
+**What I added**
+- **Authentication:** `app/clients.py` and `app/auth.py` copy Credit Service's approach. The scheme name is case-insensitive. A bad or missing token returns 401 with `WWW-Authenticate: Bearer`, and a User Service timeout or outage returns 503.
+- **Endpoints:** the four endpoints are in `app/routes/notifications.py`, and each one only touches the caller's own rows. Marking a notification read is one statement that keeps any existing `read_at`. When two requests arrive together, the second waits for the first and returns the same `read_at`.
+- **DTO and `/docs`:** in `app/schemas.py`, the DTO has one schema per notification type, so `/docs` shows each type's `params`. Timestamps come out in UTC with a `Z` suffix.
+- **Query plans:** a test captures the exact SQL the API sends and runs EXPLAIN on it with 20,300 rows. Listing uses the `(recipient_id, id DESC)` index, the unread count and read-all use the partial unread index, and nothing does a sequential scan.
+- **Test strength:** I made 8 deliberate bugs, such as removing the caller check on mark-read and overwriting `read_at`. The tests caught all 8.
+
+**Decisions I made without asking.** None of them changes a stated requirement, but please check them:
+1. **Compose change:** the API now won't start without `USER_SERVICE_URL` and `USER_SERVICE_CA_FILE`. So I gave `notification-service` both settings and the CA mount in `compose.yaml`, copied from `credit-service`. The worker doesn't need them. `docker compose config` passes.
+2. **User Service rules:** I kept Credit Service's rules as they are. An inactive user gets 401, and an unexpected role or a broken User Service response gets 503.
+3. **Unknown types:** a stored row whose `type` isn't one of the seven would cause a 500 on the list endpoint. The worker only writes those seven, and a test checks that what the worker writes for each type is served correctly.
+4. **Out-of-range IDs:** a cursor or ID too large for the database's integer type is handled without a query. A huge cursor returns the newest page, a very negative one returns an empty page, and such an ID returns 404.
+
+**Not done:** I didn't run the full stack in Compose with a real User Service token. Everything above was tested with User Service replaced by test doubles, plus one check against a refused connection.
+
+**Disclosure records:** I followed the repo's convention. Every changed file has a header, and there's a usage-log entry `ai-20261108-001` plus summaries in both READMEs. Author review is marked pending until you've reviewed it and rerun the tests. The service README also has a new API section. I stopped and removed the test container.
+
+### Scope
+
+- `notification-service/app/clients.py`, `app/auth.py`: Writing implementation code — User Service client and bearer-token dependency, following Credit Service.
+- `notification-service/app/schemas.py`: Writing implementation code — DTO, per-type `params` schemas, and response models.
+- `notification-service/app/routes/notifications.py`, `app/routes/__init__.py`: Writing implementation code; Boilerplate generation — the four endpoints.
+- `notification-service/app/config.py`, `app/main.py`: Writing implementation code — API settings and wiring.
+- `notification-service/requirements.txt`, root `compose.yaml`: Boilerplate generation — httpx pin and notification-service User Service settings.
+- `notification-service/tests/api_support.py`, `tests/test_clients.py`, `tests/test_notifications_api.py`, `tests/test_notifications_postgres.py`: Writing implementation code — new tests.
+- `notification-service/tests/test_api.py`, `tests/test_config.py`, `tests/test_worker.py`, `tests/test_worker_postgres.py`: Writing implementation code — supply and test the new settings.
+- `notification-service/README.md`: Refactoring and documentation improvements — API section; Disclosure record — AI Use Summary.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code implemented the authenticated history and read-status API to the user's specification, with User Service replaced by test doubles in the tests and a real PostgreSQL database for the data and query-plan tests.

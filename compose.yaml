@@ -16,6 +16,10 @@
 # Scope: Boilerplate generation — pass NOTIFICATION_RETRY_BACKOFF_SECONDS to notification-worker, keeping an empty value empty (ai-20261105-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
 # Details: notification-service/ai/usage-log.md; ai-20261105-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Boilerplate generation — give notification-service USER_SERVICE_URL, USER_SERVICE_CA_FILE, and the internal CA mount, matching credit-service (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
 
 include:
   - event-broker/compose.yaml
@@ -465,6 +469,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
       PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       notification-db:
@@ -474,6 +480,8 @@ services:
     networks:
       - default
       - notification-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     ports:
       - "127.0.0.1:8084:8080"
 
