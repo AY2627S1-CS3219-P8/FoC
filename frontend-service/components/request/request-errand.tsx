@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ChevronRight, MapPin } from 'lucide-react';
@@ -17,14 +17,23 @@ import { Button } from '@/components/ui/button';
 import { fieldClass } from '@/components/ui/field';
 import type { CreditBalanceResult } from '@/lib/credit-actions';
 import { offerLimits } from '@/lib/credits';
-import { EMPTY_DROP_OFF, toDeliveryLocation } from '@/lib/drop-off';
-import { newIdempotencyKey } from '@/lib/idempotency';
-import { createOrder } from '@/lib/order-actions';
 import {
-  DUPLICATE_SUBMISSION,
-  MAX_ITEM_DESCRIPTION_LENGTH,
-  type OrderView,
-} from '@/lib/orders';
+  type DropOffValue,
+  EMPTY_DROP_OFF,
+  toDeliveryLocation,
+} from '@/lib/drop-off';
+import { newIdempotencyKey } from '@/lib/idempotency';
+import { type OrderActionResult, createOrder } from '@/lib/order-actions';
+import type { OrderCreate } from '@/lib/order-service';
+import { MAX_ITEM_DESCRIPTION_LENGTH, type OrderView } from '@/lib/orders';
+import {
+  type PendingOrder,
+  clearPendingOrder,
+  isUncertainFailure,
+  loadPendingOrder,
+  sameRequest,
+  savePendingOrder,
+} from '@/lib/pending-order';
 import type { Supplier } from '@/lib/supplier-service';
 import { formatOpeningHours, formatSupplierLocation } from '@/lib/suppliers';
 import { cn } from '@/lib/utils';
@@ -90,6 +99,18 @@ function MissingFields({ fields }: { fields: MissingField[] }) {
   );
 }
 
+/** The form as submitted, kept with a pending submission. */
+type ErrandForm = {
+  store: Supplier;
+  description: string;
+  dropOff: DropOffValue;
+  credits: number;
+};
+
+const SAME_DETAILS_HINT =
+  'Posting again with the same details won’t post it twice.';
+const UNCONFIRMED_MESSAGE = `We couldn’t confirm whether your last request was posted. ${SAME_DETAILS_HINT}`;
+
 type RequestErrandProps = {
   /** Store chosen in the directory, loaded from Supplier Service. */
   initialStore: Supplier | null;
@@ -112,12 +133,49 @@ export function RequestErrand({
   const [order, setOrder] = useState<OrderView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, startSubmitting] = useTransition();
-  // One key per errand: resubmitting after a failure cannot post it twice.
-  const idempotencyKey = useRef<string | null>(null);
+  // A submission that may have been posted. Its key is reused while the
+  // details stay the same, so a retry returns the original errand.
+  const [pending, setPending] = useState<PendingOrder<ErrandForm> | null>(null);
+  // The details changed after a submission that may have been posted.
+  const [changedAfterPending, setChangedAfterPending] = useState(false);
 
   const limits = offerLimits(credit, initialAllocation);
   const [credits, setCredits] = useState(limits.initial);
   const delivery = toDeliveryLocation(dropOff);
+
+  // After a refresh, bring back a submission whose outcome is still unknown.
+  // Read after mount: the server render has no `sessionStorage`.
+  useEffect(() => {
+    const saved = loadPendingOrder<ErrandForm>();
+    if (!saved) return;
+    const { form } = saved;
+    setPending(saved);
+    // A store just picked in the directory wins over the saved one.
+    setStore(initialStore ?? form.store);
+    setDescription(form.description);
+    setDropOff(form.dropOff);
+    setCredits(form.credits);
+    setError(UNCONFIRMED_MESSAGE);
+    // Only on mount: a later server re-render must not overwrite edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const request: OrderCreate | null =
+    store && delivery
+      ? {
+          pickup_supplier_id: store.id,
+          delivery,
+          item_description: description.trim(),
+          credit_amount: credits,
+        }
+      : null;
+  // Resending the pending request as-is is always safe: Order Service either
+  // replays the original errand or creates it now. The credit limits are
+  // skipped, since a reservation for it may already have lowered them.
+  const retrying =
+    pending !== null &&
+    request !== null &&
+    sameRequest(pending.request, request);
 
   const missing = {
     store: store === null,
@@ -135,43 +193,90 @@ export function RequestErrand({
     missing.credit && { label: 'Available credit' },
   ].filter((field): field is MissingField => Boolean(field));
 
-  const canSubmit =
+  const isValid =
     missingFields.length === 0 && credits >= 1 && credits <= limits.max;
+  const canSubmit = retrying || isValid;
+
+  function forgetPending() {
+    clearPendingOrder();
+    setPending(null);
+    setChangedAfterPending(false);
+  }
 
   function reset() {
+    forgetPending();
     setStore(null);
     setDescription('');
     setDropOff(EMPTY_DROP_OFF);
     setCredits(limits.initial);
     setOrder(null);
     setError(null);
-    idempotencyKey.current = null;
     router.replace('/request');
+  }
+
+  function send(attempt: PendingOrder<ErrandForm>) {
+    // Saved before sending, so a refresh mid-request still finds the key.
+    savePendingOrder(attempt);
+    setPending(attempt);
+    setChangedAfterPending(false);
+    setError(null);
+    startSubmitting(async () => {
+      let result: OrderActionResult;
+      try {
+        result = await createOrder(attempt.key, attempt.request);
+      } catch {
+        // The action itself never answered, so the errand may exist.
+        setError(`Couldn’t reach the server. ${SAME_DETAILS_HINT}`);
+        return;
+      }
+      if (result.ok) {
+        forgetPending();
+        setOrder(result.order);
+        return;
+      }
+      if (isUncertainFailure(result.status)) {
+        setError(`${result.message} ${SAME_DETAILS_HINT}`);
+        return;
+      }
+      // Rejected before anything was posted: the details can change freely.
+      forgetPending();
+      setError(result.message);
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!canSubmit || !store || !delivery) return;
-    idempotencyKey.current ??= newIdempotencyKey();
-    const key = idempotencyKey.current;
+    if (!canSubmit || !request || !store) return;
+    if (pending && !retrying) {
+      // A new key here could post a second errand; ask first.
+      setChangedAfterPending(true);
+      return;
+    }
+    send({
+      key: pending?.key ?? newIdempotencyKey(),
+      request,
+      form: { store, description, dropOff, credits },
+    });
+  }
 
-    setError(null);
-    startSubmitting(async () => {
-      const result = await createOrder(key, {
-        pickup_supplier_id: store.id,
-        delivery,
-        item_description: description.trim(),
-        credit_amount: credits,
-      });
-      if (result.ok) {
-        setOrder(result.order);
-        return;
-      }
-      // Other failures keep the key so a retry can't post a duplicate. This
-      // one means an earlier attempt with the key was posted with other
-      // details, so the next attempt needs a new key.
-      if (result.code === DUPLICATE_SUBMISSION) idempotencyKey.current = null;
-      setError(result.message);
+  /** Puts the pending details back and resends them under their own key. */
+  function resendPending() {
+    if (!pending) return;
+    const { form } = pending;
+    setStore(form.store);
+    setDescription(form.description);
+    setDropOff(form.dropOff);
+    setCredits(form.credits);
+    send(pending);
+  }
+
+  /** Posts the edited details as a separate errand, as the user chose. */
+  function postAsNew() {
+    if (!isValid || !request || !store) return;
+    send({
+      key: newIdempotencyKey(),
+      request,
+      form: { store, description, dropOff, credits },
     });
   }
 
@@ -299,14 +404,52 @@ export function RequestErrand({
 
             {error && <ErrorBanner>{error}</ErrorBanner>}
 
+            {changedAfterPending && pending && !retrying && (
+              <div
+                role='alert'
+                className='space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900'
+              >
+                <p>
+                  Your earlier request may already have been posted, so posting
+                  these changes could create a second errand.{' '}
+                  <Link href='/orders' className='font-semibold underline'>
+                    Check My Errands
+                  </Link>{' '}
+                  first if you’re unsure.
+                </p>
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    disabled={isSubmitting}
+                    onClick={resendPending}
+                  >
+                    Post earlier details instead
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    disabled={!isValid || isSubmitting}
+                    onClick={postAsNew}
+                  >
+                    Post as a new errand
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <Button
               type='submit'
               disabled={!canSubmit || isSubmitting}
               className='bg-brand hover:bg-brand-strong h-12 w-full rounded-xl text-base font-bold text-white'
             >
-              {isSubmitting ? 'Posting…' : 'Post Request'}
+              {isSubmitting
+                ? 'Posting…'
+                : retrying
+                  ? 'Try Again'
+                  : 'Post Request'}
             </Button>
-            {missingFields.length > 0 && (
+            {!retrying && missingFields.length > 0 && (
               <MissingFields fields={missingFields} />
             )}
           </form>

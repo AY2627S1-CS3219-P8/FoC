@@ -9,6 +9,7 @@ import {
   LoadMoreButton,
   RefreshButton,
 } from '@/components/list-controls';
+import { useCreditBalance } from '@/components/credit-balance-provider';
 import { DropOffFields } from '@/components/orders/drop-off-fields';
 import { PageContainer, PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
@@ -102,18 +103,23 @@ function ErrandCard({ order, role, onUpdate }: ErrandCardProps) {
   const [editing, setEditing] = useState(false);
   const [dropOff, setDropOff] = useState(() => dropOffValueOf(order));
   const [isPending, startTransition] = useTransition();
+  const { watchForBalanceChange } = useCreditBalance();
 
   const isRequester = role === 'requester';
   const beforePickup = PRE_PICKUP_STATUSES.includes(order.status);
   const delivery = toDeliveryLocation(dropOff);
 
-  function run(action: () => Promise<OrderActionResult>) {
+  function run(
+    action: () => Promise<OrderActionResult>,
+    { movesCredit = false } = {},
+  ) {
     setError(null);
     startTransition(async () => {
       const result = await action();
       if (result.ok) {
         onUpdate(result.order);
         setEditing(false);
+        if (movesCredit) watchForBalanceChange();
       } else {
         setError(result.message);
       }
@@ -122,7 +128,7 @@ function ErrandCard({ order, role, onUpdate }: ErrandCardProps) {
 
   function cancel() {
     if (window.confirm('Cancel this errand? Reserved credit is returned.')) {
-      run(() => cancelOrder(order.id));
+      run(() => cancelOrder(order.id), { movesCredit: true });
     }
   }
 
@@ -228,7 +234,9 @@ function ErrandCard({ order, role, onUpdate }: ErrandCardProps) {
       <div className='flex flex-wrap gap-2 pt-3 empty:hidden'>
         {isRequester && order.status === 'PICKED_UP' && (
           <Button
-            onClick={() => run(() => completeOrder(order.id))}
+            onClick={() =>
+              run(() => completeOrder(order.id), { movesCredit: true })
+            }
             disabled={isPending}
             className={cn(actionClass, 'bg-emerald-600 hover:bg-emerald-700')}
           >

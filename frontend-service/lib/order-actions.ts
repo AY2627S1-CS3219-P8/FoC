@@ -114,25 +114,15 @@ export async function pickUpOrder(id: string) {
   return act((token) => orderService.pickUpOrder(token, id));
 }
 
-/**
- * Completing or cancelling moves credit, so re-render the layout's balance.
- * Credit Service applies the change from Kafka shortly after, so the refreshed
- * balance can still be one event behind.
- */
-async function refreshingBalance(result: Promise<OrderActionResult>) {
-  const settled = await result;
-  if (settled.ok) revalidatePath('/', 'layout');
-  return settled;
-}
-
+// Completing or cancelling moves credit, but Credit Service applies it from
+// Kafka after this returns. The client polls the balance instead (see
+// `CreditBalanceProvider`), so the layout is not revalidated here.
 export async function completeOrder(id: string) {
-  return refreshingBalance(
-    act((token) => orderService.completeOrder(token, id)),
-  );
+  return act((token) => orderService.completeOrder(token, id));
 }
 
 export async function cancelOrder(id: string) {
-  return refreshingBalance(act((token) => orderService.cancelOrder(token, id)));
+  return act((token) => orderService.cancelOrder(token, id));
 }
 
 export async function changeDelivery(id: string, delivery: DeliveryLocation) {

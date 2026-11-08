@@ -12,6 +12,7 @@ import {
   User,
 } from 'lucide-react';
 
+import { useCreditBalance } from '@/components/credit-balance-provider';
 import type { CreditBalanceResult } from '@/lib/credit-actions';
 import { cn } from '@/lib/utils';
 
@@ -98,8 +99,9 @@ function balanceText(result: CreditBalanceResult) {
   return `${result.balance.available_balance} cr`;
 }
 
-export function SideNav({ credit }: { credit: CreditBalanceResult }) {
+export function SideNav() {
   const isActive = useIsActive();
+  const { credit } = useCreditBalance();
 
   return (
     <aside className='fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r bg-white px-4 py-6 md:flex'>

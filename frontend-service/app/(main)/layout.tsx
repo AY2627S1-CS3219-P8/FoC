@@ -1,4 +1,5 @@
 import { BottomNav, SideNav } from '@/components/app-nav';
+import { CreditBalanceProvider } from '@/components/credit-balance-provider';
 import { getCreditBalance } from '@/lib/credit-balance';
 import { requireCurrentUser } from '@/lib/session';
 
@@ -16,12 +17,14 @@ export default async function MainLayout({
   ]);
 
   return (
-    <div className='bg-surface min-h-dvh md:pl-64'>
-      <SideNav credit={credit} />
-      <main className='pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-10'>
-        {children}
-      </main>
-      <BottomNav />
-    </div>
+    <CreditBalanceProvider initial={credit}>
+      <div className='bg-surface min-h-dvh md:pl-64'>
+        <SideNav />
+        <main className='pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-10'>
+          {children}
+        </main>
+        <BottomNav />
+      </div>
+    </CreditBalanceProvider>
   );
 }
