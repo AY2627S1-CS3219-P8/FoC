@@ -7,16 +7,22 @@
 # Scope: Writing implementation code — add worker-only settings for the Kafka bootstrap servers and a required timezone-aware NOTIFICATIONS_START_AT (ai-20261104-003).
 # Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 # Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Writing implementation code — add and validate NOTIFICATION_RETRY_BACKOFF_SECONDS (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
 
 """Environment-backed configuration for the Notification Service."""
 
 import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
 
 DATABASE_URL_SCHEME = "postgresql+psycopg://"
 LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
+DEFAULT_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0)
 
 
 class ConfigError(RuntimeError):
@@ -72,12 +78,32 @@ def _aware_datetime_env(name: str) -> datetime:
     return parsed
 
 
+def _retry_backoff_env(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
+    """Unset means ``default``; set but empty means no retries."""
+
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    if not raw.strip():
+        return ()
+    message = f"{name} must be a comma-separated list of positive numbers, or empty"
+    try:
+        delays = tuple(float(item) for item in raw.split(","))
+    except ValueError:
+        raise ConfigError(message) from None
+    # float() also accepts "nan" and "inf", and nan compares false to everything.
+    if not all(math.isfinite(delay) and delay > 0 for delay in delays):
+        raise ConfigError(message)
+    return delays
+
+
 @dataclass(frozen=True, kw_only=True)
 class WorkerSettings(Settings):
     """Settings only the worker needs, so the API does not have to supply them."""
 
     kafka_bootstrap_servers: str
     notifications_start_at: datetime
+    retry_backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS
 
     @classmethod
     def from_env(cls) -> "WorkerSettings":
@@ -87,6 +113,9 @@ class WorkerSettings(Settings):
             log_level=shared.log_level,
             kafka_bootstrap_servers=required_env("KAFKA_BOOTSTRAP_SERVERS"),
             notifications_start_at=_aware_datetime_env("NOTIFICATIONS_START_AT"),
+            retry_backoff_seconds=_retry_backoff_env(
+                "NOTIFICATION_RETRY_BACKOFF_SECONDS", DEFAULT_RETRY_BACKOFF_SECONDS
+            ),
         )
 
 

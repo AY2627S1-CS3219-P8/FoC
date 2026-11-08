@@ -8,6 +8,18 @@ Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
 Scope: Refactoring and documentation improvements — write the "Worker" section covering required settings and failure behaviour, and update the "Running tests" skip description (ai-20261104-003).
 Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 Details: notification-service/ai/usage-log.md; ai-20261104-003
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+Scope: Refactoring and documentation improvements — update the "Worker" section for retries and the dead-letter queue (ai-20261105-001).
+Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+Details: notification-service/ai/usage-log.md; ai-20261105-001
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-06
+Scope: Refactoring and documentation improvements — document the DLQ size limit and the real-broker tests (ai-20261106-001).
+Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-001).
+Details: notification-service/ai/usage-log.md; ai-20261106-001
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-06
+Scope: Refactoring and documentation improvements — document the worker's database timeouts and their known limitations (ai-20261106-002).
+Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-002).
+Details: notification-service/ai/usage-log.md; ai-20261106-002
 -->
 
 # Notification Service
@@ -51,6 +63,40 @@ docker stop notification-test-db
 > tests refuse to start if the database contains tables other than
 > `notifications`, `processed_events`, and `alembic_version`.
 
+**With a broker.** The tests in `tests/test_worker_kafka.py` are skipped unless
+`TEST_KAFKA_BOOTSTRAP_SERVERS` is set. The Compose broker publishes no port, so
+start a throwaway broker that advertises a host address, then run
+`event-broker/create-topics.sh` against it. These commands run from the repo root:
+
+```sh
+docker run -d --rm --name notification-test-kafka \
+  -e KAFKA_NODE_ID=1 -e KAFKA_PROCESS_ROLES=broker,controller \
+  -e KAFKA_LISTENERS=PLAINTEXT://:59092,CONTROLLER://:9093 \
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://127.0.0.1:59092 \
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \
+  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \
+  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \
+  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \
+  -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \
+  -e KAFKA_AUTO_CREATE_TOPICS_ENABLE=false \
+  -p 127.0.0.1:59092:59092 apache/kafka:4.1.2
+
+# Repeat until the broker is up and this succeeds.
+docker exec -i -e KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:59092 \
+  notification-test-kafka bash < event-broker/create-topics.sh
+
+cd notification-service
+TEST_KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:59092 \
+  .venv/bin/python -m pytest tests/test_worker_kafka.py
+
+docker stop notification-test-kafka
+```
+
+Each test creates its own source topic and consumer group, and writes to the DLQ
+topic. Use a disposable broker.
+
 ## Worker
 
 `python -m app.worker` consumes `order.events` as the consumer group
@@ -60,13 +106,67 @@ docker stop notification-test-db
 | --- | --- |
 | `KAFKA_BOOTSTRAP_SERVERS` | Kafka brokers. Compose sets `kafka:9092`. |
 | `NOTIFICATIONS_START_AT` | Required ISO-8601 time with a timezone. Compose reads it from `.env`. Events before it are recorded in `processed_events` and create no notifications. |
+| `NOTIFICATION_RETRY_BACKOFF_SECONDS` | Optional comma-separated positive delays, default `0.5,1,2,4`. A transient failure gets one retry after each delay. Empty means a single attempt. An invalid value stops the worker at startup. |
 
-Any failure stops the worker with exit code 1 and leaves the offset uncommitted,
-so the record is processed again after a restart. This includes a malformed
-record. Retries and the dead-letter queue do not exist yet, so run the worker only
-against a topic known to contain no malformed records. Under Compose's
-`restart: unless-stopped`, a record that keeps failing makes the worker restart
-repeatedly until the record is dealt with.
+A failed record is retried or copied to `notification-service.order-events.dlq`,
+so later records in its partition can continue. The exception is a DLQ write
+that keeps failing, described below:
+
+| Failure | Handling | `x-notification-failure-code` |
+| --- | --- | --- |
+| The record fails validation | No retry | `MALFORMED_MESSAGE` |
+| Transient database error (`OperationalError`, `InterfaceError`, `DisconnectionError`, SQLAlchemy `TimeoutError`, or a `DBAPIError` with `connection_invalidated`) | Roll back and retry after each delay | `TRANSIENT_RETRIES_EXHAUSTED` once the delays run out |
+| Anything else, such as text PostgreSQL can't store in `params` | Roll back, no retry | `UNEXPECTED_PROCESSING_ERROR` |
+
+A duplicate `event_id` is not a failure: the event counts as already processed
+and its offset is committed.
+
+The DLQ record has the source key, value, and headers, plus
+`x-notification-failure-code`, `x-notification-failed-at`,
+`x-notification-failed-attempts`, `x-notification-source-topic`,
+`x-notification-source-partition`, and `x-notification-source-offset`. The source
+offset is committed only after Kafka confirms the DLQ write.
+
+The worker stops with exit code 1 and leaves the offset uncommitted if the DLQ
+write or the offset commit fails, or on a fatal Kafka error. The record is then
+processed again after a restart, so a failed offset commit can put a second copy
+in the DLQ. On SIGTERM the worker exits with code 0, also without committing a
+record it has not finished, including during a backoff sleep.
+
+The DLQ producer's `message.max.bytes` and the DLQ topic's `max.message.bytes` are
+both 1,100,000 bytes, above the broker's default limit, so any uncompressed record
+`order.events` accepts fits with the diagnostic headers. A record compressed at
+source can still be too large, because the broker only checked its compressed
+size. The DLQ write then fails, the worker logs
+`notification_dlq_publish_failed kafka_error=MSG_SIZE_TOO_LARGE`, and it restarts
+in a cycle with later records waiting until someone removes the record or moves
+the group's offset past it. No service here produces such a record.
+
+The worker's database connections turn a database that stops responding into a
+normal error, which then follows the retry and DLQ path above. TCP keepalives and
+`tcp_user_timeout` (10 seconds) detect a lost network, and `lock_timeout` (5
+seconds) and `statement_timeout` (10 seconds) limit lock waits and slow queries.
+The API's connections do not have these settings.
+
+Known limitations:
+
+- **A long lock wait or database stall can send a record to the DLQ.** It can use
+  up the retries and send the record to the DLQ as `TRANSIENT_RETRIES_EXHAUSTED`,
+  where it needs a manual replay.
+- **A frozen database server can still hang the worker**, for example under
+  `docker pause`. The OS still answers TCP and the server can't enforce its own
+  timeouts. No data is lost, because the offset stays uncommitted and the record is
+  redelivered after a restart. Under Compose, Docker kills a worker that ignores
+  SIGTERM once its stop timeout runs out.
+- **An `event_type` that doesn't fit `processed_events` goes to the DLQ if it is
+  before the cutoff.** A type over 64 characters can't be stored, so the record goes
+  to the DLQ as `UNEXPECTED_PROCESSING_ERROR`. No notification is lost, because a
+  record before the cutoff never creates one. At or after the cutoff, an unknown type
+  is skipped.
+
+Keep the total retry time well under Kafka's `max.poll.interval.ms` (5 minutes by
+default). Past that, the broker reassigns the partition and the offset commit
+fails.
 
 ## AI Use Summary (Notification Service)
 
@@ -165,4 +265,98 @@ suite; the command and environment were not stated. No wider code review is
 recorded.
 
 See the [usage record](ai/usage-log.md#ai-20261104-003). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### Consumer retries and dead-letter queue (ai-20261105-001)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Boilerplate generation**, and **Refactoring and documentation improvements**:
+`correlation_id` in `app/events.py`, the backoff setting in `app/config.py`,
+failure handling in `app/worker.py`, Notification-related settings in root
+`compose.yaml` and `.env.example`, tests under `tests/`, and the Worker section of
+this README. The work followed the user's specification, with
+`credit-service/app/worker.py` as the conventions reference.
+
+Observed verification (agent only): with PostgreSQL 16 the full suite had 625
+passed and 1 warning; without `TEST_DATABASE_URL` it had 550 passed, 75 skipped,
+and 1 warning. The tests caught all 26 mutations applied. A live run of an isolated
+Compose project covered malformed records, unstorable text, retries running out,
+recovery, SIGTERM during backoff, and a failed DLQ write.
+
+Author review (confirmed by Keith on 2026-11-08, covering ai-20261105-001 to
+ai-20261107-001 as one increment): Keith ran `.venv/bin/python -m pytest -rs` with
+throwaway PostgreSQL 16 and Kafka 4.1.2 (topics from `event-broker/create-topics.sh`)
+and 645 passed; manually read and verified the code; and ran manual checks in an
+isolated Compose project. The specific Compose checks were not stated.
+
+See the [usage record](ai/usage-log.md#ai-20261105-001). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### Oversized records and the DLQ (ai-20261106-001)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Boilerplate generation**, **Debugging assistance**, and **Refactoring and
+documentation improvements**: the DLQ producer limit and Kafka error code logging in
+`app/worker.py`, the topic limit in `event-broker/create-topics.sh`, tests under
+`tests/`, and notes in this README and `event-broker/README.md`. The user reported the
+issue, and chose the limit, the handling of compressed records, the test approach,
+and the upgrade path for existing topics.
+
+Observed verification (agent only): with PostgreSQL 16 and Kafka 4.1.2 the full suite
+had 634 passed and 1 warning; with neither it had 554 passed, 80 skipped, and 1
+warning. The tests caught all 7 mutations applied. A live run of an isolated Compose
+project reproduced the restart cycle before the change, and showed the same records
+reaching the DLQ with no restarts after it.
+
+Author review (confirmed by Keith on 2026-11-08, covering ai-20261105-001 to
+ai-20261107-001 as one increment): Keith ran `.venv/bin/python -m pytest -rs` with
+throwaway PostgreSQL 16 and Kafka 4.1.2 (topics from `event-broker/create-topics.sh`)
+and 645 passed; manually read and verified the code; and ran manual checks in an
+isolated Compose project. The specific Compose checks were not stated.
+
+See the [usage record](ai/usage-log.md#ai-20261106-001). Original per-message
+timestamps are unavailable; no redactions; no header exceptions (a correction: the
+`event-broker/` files now have headers).
+
+### Database hang timeouts (ai-20261106-002)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Debugging assistance**, and **Refactoring and documentation improvements**: a
+worker-only `make_engine` option in `app/db.py` with the user's specified keepalive,
+`tcp_user_timeout`, `lock_timeout`, and `statement_timeout` values, its use in
+`app/worker.py`, tests under `tests/`, and the Worker section of this README.
+
+Observed verification (agent only): with PostgreSQL 16 and Kafka 4.1.2 the full suite
+had 642 passed and 1 warning; with neither it had 557 passed, 85 skipped, and 1
+warning. The tests caught all 8 mutations applied. A live run
+of an isolated Compose project reproduced the hang before the change, and covered a
+network cut, recovery, a held lock, a stopped database, and `docker pause` after it.
+
+Author review (confirmed by Keith on 2026-11-08, covering ai-20261105-001 to
+ai-20261107-001 as one increment): Keith ran `.venv/bin/python -m pytest -rs` with
+throwaway PostgreSQL 16 and Kafka 4.1.2 (topics from `event-broker/create-topics.sh`)
+and 645 passed; manually read and verified the code; and ran manual checks in an
+isolated Compose project. The specific Compose checks were not stated.
+
+See the [usage record](ai/usage-log.md#ai-20261106-002). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### Failure code on offset commit failures (ai-20261107-001)
+
+Claude Code (model: claude-opus-5-5) provided **Debugging assistance** and **Writing
+implementation code**: verified and applied the fix the user identified, so that
+`notification_offset_commit_failed` logs the record's failure code, with tests in
+`tests/test_worker.py`.
+
+Observed verification (agent only): with PostgreSQL 16 and Kafka 4.1.2 the full suite
+had 645 passed and 1 warning; with neither it had 560 passed, 85 skipped, and 1
+warning. With the defect restored on a scratch copy, the new assertions failed.
+
+Author review (confirmed by Keith on 2026-11-08, covering ai-20261105-001 to
+ai-20261107-001 as one increment): Keith ran `.venv/bin/python -m pytest -rs` with
+throwaway PostgreSQL 16 and Kafka 4.1.2 (topics from `event-broker/create-topics.sh`)
+and 645 passed; manually read and verified the code; and ran manual checks in an
+isolated Compose project. The specific Compose checks were not stated.
+
+See the [usage record](ai/usage-log.md#ai-20261107-001). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.

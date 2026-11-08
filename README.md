@@ -637,5 +637,58 @@ and [usage log](notification-service/ai/usage-log.md).
   Exact prompts and verbatim key-response excerpts are recorded; original timestamps unavailable; 
   no redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service consumer retries and DLQ](notification-service/ai/usage-log.md#ai-20261105-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, and Refactoring and documentation improvements for failure
+  classification, retries, the dead-letter queue, Notification-related root
+  `compose.yaml` and `.env.example` settings, tests, and the service README,
+  following the user's specification. Agent checks: the full suite with PostgreSQL
+  16 had 625 passed and 1 warning; without a database, 550 passed, 75 skipped, and
+  1 warning; a live isolated Compose run covered the failure scenarios. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. The
+  exact prompt and key response excerpts are recorded; original timestamps unavailable; no redactions; no header exceptions.
+  See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service oversized DLQ records](notification-service/ai/usage-log.md#ai-20261106-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, Debugging assistance, and Refactoring and documentation improvements
+  for the DLQ size limits, Kafka error code logging, `event-broker/create-topics.sh`,
+  real-broker tests, and documentation, after reproducing the user-reported restart
+  cycle. Agent checks: the full suite with PostgreSQL 16 and Kafka 4.1.2 had 634
+  passed and 1 warning; with neither, 554 passed, 80 skipped, and 1 warning; a live
+  isolated Compose run covered the failure before and after the change. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. Exact
+  prompts and key response excerpts are recorded; original timestamps unavailable; no
+  redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service database hang timeouts](notification-service/ai/usage-log.md#ai-20261106-002):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Debugging
+  assistance, and Refactoring and documentation improvements for a worker-only engine
+  option with network, lock, and statement timeouts, its tests, and the service
+  README, following the user's specification. Agent checks: the full suite with
+  PostgreSQL 16 and Kafka 4.1.2 had 642 passed and 1 warning; with neither, 557 passed,
+  85 skipped, and 1 warning; a live isolated Compose run covered the hang before the
+  change and the failure scenarios after it. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. The exact prompt and key response
+  excerpts are recorded; original timestamps
+  unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service failure code on offset commit failures](notification-service/ai/usage-log.md#ai-20261107-001):
+  Claude Code (claude-opus-5-5) provided Debugging assistance and Writing
+  implementation code, verifying and applying the fix the user identified, with tests.
+  Agent checks: the full suite with PostgreSQL 16 and Kafka 4.1.2 had 645 passed and 1
+  warning; with neither, 560 passed, 85 skipped, and 1 warning. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. Exact prompts
+  and key response excerpts are recorded;
+  original timestamps unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

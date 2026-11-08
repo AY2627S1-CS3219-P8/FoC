@@ -3,6 +3,14 @@
 # Scope: Writing implementation code — write worker integration tests against real PostgreSQL with a Kafka test double, covering the acceptance criteria, commit ordering, redelivery, concurrency, LISTEN/NOTIFY, and failures (ai-20261104-003).
 # Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 # Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Writing implementation code — update the integration tests for the DLQ, and add tests for unstorable text, recovery, a connection lost mid-transaction, and commit ordering against real PostgreSQL (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-06
+# Scope: Writing implementation code — test real lock and statement timeouts through the retry path, and that only the worker's connections have them (ai-20261106-002).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-002).
+# Details: notification-service/ai/usage-log.md; ai-20261106-002
 
 """Worker integration tests: real PostgreSQL, with a Kafka test double.
 
@@ -23,11 +31,13 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 
 from app import worker
 from app.db import make_engine, make_session_factory
 from app.events import Event, NotificationDraft
+from app.main import create_app
 from app.worker import WorkerAbort, handle_message, run, store_event
 from tests.worker_support import (
     ADMIN,
@@ -37,6 +47,7 @@ from tests.worker_support import (
     START_AT,
     FakeConsumer,
     FakeMessage,
+    FakePublisher,
     make_settings,
     order_record,
 )
@@ -119,11 +130,35 @@ def notification_rows(engine) -> set[tuple[str, str, str]]:
     return {(str(recipient), role, type_) for recipient, role, type_ in rows}
 
 
-def run_worker(messages, **consumer_kwargs) -> FakeConsumer:
+def run_worker(messages, *, publisher=None, **consumer_kwargs) -> FakeConsumer:
     stop = threading.Event()
     consumer = FakeConsumer(messages, stop, **consumer_kwargs)
-    run(make_settings(TEST_DATABASE_URL), stop, consumer)
+    # By default a DLQ write fails, which raises, so that it fails the test.
+    publisher = publisher or FakePublisher(error=AssertionError("unexpected DLQ write"))
+    run(make_settings(TEST_DATABASE_URL), stop, consumer, publisher)
     return consumer
+
+
+def deliver(
+    session_factory,
+    consumer,
+    message,
+    *,
+    publisher=None,
+    stop=None,
+    delays=(),
+    sleep=None,
+) -> None:
+    handle_message(
+        session_factory,
+        consumer,
+        publisher or FakePublisher(error=AssertionError("unexpected DLQ write")),
+        message,
+        start_at=START_AT,
+        retry_backoff_seconds=delays,
+        stop=stop or threading.Event(),
+        sleep=sleep or (lambda _delay: None),
+    )
 
 
 def order_lifecycle(order_id: str | None = None) -> list[FakeMessage]:
@@ -283,17 +318,16 @@ def test_duplicate_before_the_cutoff_commits_the_offset(engine) -> None:
     assert consumer.committed == [1, 2]
 
 
-def test_malformed_before_the_cutoff_stops_the_worker(engine) -> None:
+def test_malformed_before_the_cutoff_goes_to_the_dlq(engine) -> None:
     good = order_record("order.created", occurred_at=BEFORE)
     malformed = FakeMessage(None, good.value(), good.headers(), offset=6)
-    stop = threading.Event()
-    consumer = FakeConsumer([malformed], stop)
+    publisher = FakePublisher()
 
-    with pytest.raises(WorkerAbort):
-        run(make_settings(TEST_DATABASE_URL), stop, consumer)
+    consumer = run_worker([malformed], publisher=publisher)
 
     assert counts(engine) == (0, 0)
-    assert consumer.committed == []
+    assert publisher.published == [(6, "MALFORMED_MESSAGE", 1)]
+    assert consumer.committed == [6]
 
 
 def test_record_at_the_cutoff_is_translated(engine) -> None:
@@ -350,7 +384,7 @@ def test_crash_between_database_commit_and_offset_commit_is_a_duplicate_on_resta
     crashing = FakeConsumer([message], stop, commit_error=RuntimeError("broker gone"))
 
     with pytest.raises(WorkerAbort):
-        run(make_settings(TEST_DATABASE_URL), stop, crashing)
+        run(make_settings(TEST_DATABASE_URL), stop, crashing, FakePublisher())
 
     assert crashing.closed
     assert crashing.committed == []
@@ -370,20 +404,14 @@ def test_concurrent_deliveries_create_one_set_of_rows(engine, session_factory) -
     consumers = [FakeConsumer([], threading.Event()) for _ in range(8)]
     failures = []
 
-    def deliver(consumer):
+    def deliver_one(consumer):
         barrier.wait()
         try:
-            handle_message(
-                session_factory,
-                consumer,
-                message,
-                start_at=START_AT,
-                stop=threading.Event(),
-            )
+            deliver(session_factory, consumer, message)
         except BaseException as error:  # noqa: BLE001 - reported on the main thread
             failures.append(error)
 
-    threads = [threading.Thread(target=deliver, args=(c,)) for c in consumers]
+    threads = [threading.Thread(target=deliver_one, args=(c,)) for c in consumers]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -410,11 +438,7 @@ def test_delivery_blocked_by_a_concurrent_transaction_becomes_a_duplicate(
         {"event_id": result_event_id},
     )
 
-    thread = threading.Thread(
-        target=handle_message,
-        args=(session_factory, consumer, message),
-        kwargs={"start_at": START_AT, "stop": threading.Event()},
-    )
+    thread = threading.Thread(target=deliver, args=(session_factory, consumer, message))
     thread.start()
     try:
         deadline = time.monotonic() + 10
@@ -454,9 +478,7 @@ def test_listener_gets_one_notification_per_recipient_only_after_commit(
     message = cancelled(ADMIN, "ACCEPTED", courier_id=BOB)
     consumer = FakeConsumer([], threading.Event())
 
-    handle_message(
-        session_factory, consumer, message, start_at=START_AT, stop=threading.Event()
-    )
+    deliver(session_factory, consumer, message)
 
     assert before_commit == [[], (0, 0)]
     assert drain(listener) == [ALICE, BOB]
@@ -465,23 +487,83 @@ def test_listener_gets_one_notification_per_recipient_only_after_commit(
 # --- Failures and stopping ---
 
 
-def test_nul_in_reason_rolls_back_and_stops_without_committing(
-    engine, listener, caplog
+UNSTORABLE = [
+    pytest.param("SECRET\u0000REASON", id="nul"),
+    pytest.param("SECRET\ud800REASON", id="lone-surrogate"),
+]
+
+
+def rejected(text_value: str, **fields) -> FakeMessage:
+    return order_record("order.rejected", reason=text_value, **fields)
+
+
+@pytest.mark.parametrize("bad_text", UNSTORABLE)
+@pytest.mark.parametrize(
+    "make_record",
+    [
+        pytest.param(rejected, id="rejected-reason"),
+        pytest.param(
+            lambda bad, **fields: cancelled(ALICE, bad, courier_id=BOB, **fields),
+            id="cancelled-by-requester-one-draft",
+        ),
+        pytest.param(
+            lambda bad, **fields: cancelled(ADMIN, bad, **fields),
+            id="cancelled-by-admin-one-draft",
+        ),
+        pytest.param(
+            lambda bad, **fields: cancelled(ADMIN, bad, courier_id=BOB, **fields),
+            id="cancelled-by-admin-two-drafts",
+        ),
+    ],
+)
+def test_unstorable_text_goes_to_the_dlq_after_one_attempt(
+    engine, listener, caplog, make_record, bad_text
 ) -> None:
-    message = order_record("order.rejected", reason="SECRET\u0000REASON", offset=11)
+    message = make_record(bad_text, offset=11)
+    later = order_record("order.expired", offset=12)
     stop = threading.Event()
     consumer = FakeConsumer([message], stop)
+    publisher = FakePublisher()
+    slept = []
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(WorkerAbort):
-        run(make_settings(TEST_DATABASE_URL), stop, consumer)
+    # Backoff is configured, to prove this failure class does not use it.
+    with caplog.at_level(logging.DEBUG):
+        run(
+            make_settings(TEST_DATABASE_URL, (0.5, 1.0)),
+            stop,
+            consumer,
+            publisher,
+            slept.append,
+        )
 
+    assert slept == []
+    assert publisher.published == [(11, "UNEXPECTED_PROCESSING_ERROR", 1)]
+    assert consumer.committed == [11]
     assert counts(engine) == (0, 0)
-    assert consumer.commit_modes == []
-    assert consumer.closed
     assert drain(listener) == []
-    assert "notification_event_failed exception_type=DataError" in caplog.text
-    assert "offset=11" in caplog.text
+    assert "exception_type=DataError" in caplog.text
     assert "SECRET" not in caplog.text
+
+    # The partition is not blocked.
+    assert run_worker([later]).committed == [12]
+    assert counts(engine) == (1, 1)
+
+
+@pytest.mark.parametrize("bad_text", UNSTORABLE)
+def test_unstorable_text_with_no_drafts_is_processed_normally(engine, bad_text) -> None:
+    """Nothing reaches params if the event notifies nobody."""
+
+    consumer = run_worker([cancelled(ALICE, bad_text, offset=3)])
+
+    assert consumer.committed == [3]
+    assert counts(engine) == (1, 0)
+
+
+def test_unstorable_text_before_the_cutoff_is_processed_normally(engine) -> None:
+    consumer = run_worker([rejected("bad\u0000", occurred_at=BEFORE, offset=3)])
+
+    assert consumer.committed == [3]
+    assert counts(engine) == (1, 0)
 
 
 def test_failure_after_processed_event_insert_leaves_no_partial_rows(
@@ -491,17 +573,365 @@ def test_failure_after_processed_event_insert_leaves_no_partial_rows(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(worker, "text", failing_text)
-    message = order_record("order.expired", offset=1)
-    stop = threading.Event()
-    consumer = FakeConsumer([message], stop)
+    publisher = FakePublisher()
 
-    with pytest.raises(WorkerAbort):
-        run(make_settings(TEST_DATABASE_URL), stop, consumer)
+    consumer = run_worker([order_record("order.expired", offset=1)], publisher=publisher)
 
     monkeypatch.undo()
     assert counts(engine) == (0, 0)
-    assert consumer.commit_modes == []
+    assert publisher.published == [(1, "UNEXPECTED_PROCESSING_ERROR", 1)]
+    assert consumer.committed == [1]
     assert drain(listener) == []
+
+
+def test_offset_is_committed_after_the_dlq_write_and_rollback(engine) -> None:
+    seen = []
+
+    def on_publish(_message):
+        seen.append(("dlq", counts(engine)))
+
+    def on_commit(_message):
+        seen.append(("commit", counts(engine)))
+
+    run_worker(
+        [rejected("bad\u0000", offset=1)],
+        publisher=FakePublisher(on_publish=on_publish),
+        on_commit=on_commit,
+    )
+
+    assert seen == [("dlq", (0, 0)), ("commit", (0, 0))]
+
+
+def test_dlq_failure_stops_the_worker_and_the_record_is_reprocessed(engine) -> None:
+    message = rejected("bad\u0000", offset=1)
+    stop = threading.Event()
+    failing = FakeConsumer([message], stop)
+
+    with pytest.raises(WorkerAbort):
+        run(
+            make_settings(TEST_DATABASE_URL),
+            stop,
+            failing,
+            FakePublisher(error=RuntimeError("broker down")),
+        )
+
+    assert failing.commit_modes == []
+    assert failing.closed
+
+    publisher = FakePublisher()
+    restarted = run_worker([message], publisher=publisher)
+
+    assert publisher.published == [(1, "UNEXPECTED_PROCESSING_ERROR", 1)]
+    assert restarted.committed == [1]
+
+
+def test_duplicate_is_not_a_failure(engine, listener) -> None:
+    event_id = str(uuid4())
+    first = order_record("order.expired", event_id=event_id, offset=1)
+    again = order_record("order.expired", event_id=event_id, offset=2)
+    publisher = FakePublisher()
+    stop = threading.Event()
+    consumer = FakeConsumer([first, again], stop)
+    slept = []
+
+    run(make_settings(TEST_DATABASE_URL, (0.5,)), stop, consumer, publisher, slept.append)
+
+    assert counts(engine) == (1, 1)
+    assert consumer.committed == [1, 2]
+    assert publisher.published == []
+    assert slept == []
+    assert drain(listener) == [ALICE]
+
+
+# --- Transient failures with a real connection ---
+
+
+def unreachable_then(session_factory, failures: int):
+    """Session factory for a database that is down for the first ``failures`` uses."""
+
+    dead_engine = make_engine("postgresql+psycopg://nobody@127.0.0.1:1/none")
+    dead_factory = make_session_factory(dead_engine)
+    calls = {"count": 0}
+
+    def factory():
+        calls["count"] += 1
+        return dead_factory() if calls["count"] <= failures else session_factory()
+
+    factory.calls = calls
+    return factory
+
+
+def test_database_recovering_within_the_retry_window_creates_the_notification(
+    engine, session_factory, listener
+) -> None:
+    factory = unreachable_then(session_factory, failures=2)
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+    slept = []
+
+    deliver(
+        factory,
+        consumer,
+        order_record("order.expired", offset=9),
+        publisher=publisher,
+        delays=(0.5, 1.0, 2.0),
+        sleep=slept.append,
+    )
+
+    assert factory.calls["count"] == 3
+    assert slept == [0.5, 1.0]
+    assert counts(engine) == (1, 1)
+    assert publisher.published == []
+    assert consumer.committed == [9]
+    assert drain(listener) == [ALICE]
+
+
+def test_database_down_for_every_attempt_goes_to_the_dlq(engine, session_factory) -> None:
+    factory = unreachable_then(session_factory, failures=99)
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+    slept = []
+
+    deliver(
+        factory,
+        consumer,
+        order_record("order.expired", offset=9),
+        publisher=publisher,
+        delays=(0.5, 1.0),
+        sleep=slept.append,
+    )
+
+    assert factory.calls["count"] == 3
+    assert slept == [0.5, 1.0]
+    assert publisher.published == [(9, "TRANSIENT_RETRIES_EXHAUSTED", 3)]
+    assert consumer.committed == [9]
+    assert counts(engine) == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("kills", "expected_counts", "expected_dlq"),
+    [
+        pytest.param(1, (1, 2), [], id="recovers"),
+        pytest.param(2, (0, 0), [(4, "TRANSIENT_RETRIES_EXHAUSTED", 2)], id="exhausted"),
+    ],
+)
+def test_connection_lost_mid_transaction_leaves_no_partial_rows(
+    engine, session_factory, listener, kills, expected_counts, expected_dlq
+) -> None:
+    """Terminate the backend after every row is flushed, just before COMMIT."""
+
+    observed = []
+
+    def kill_backend(session):
+        if len(observed) >= kills:
+            return
+        pid = session.connection().scalar(text("SELECT pg_backend_pid()"))
+        observed.append(counts(engine))  # Another connection sees nothing yet.
+        with engine.connect() as admin:
+            admin.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
+            admin.commit()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with engine.connect() as admin:
+                alive = admin.scalar(
+                    text("SELECT count(*) FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": pid},
+                )
+            if not alive:
+                return
+        raise AssertionError("backend did not terminate")
+
+    event.listen(session_factory, "before_commit", kill_backend)
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+    slept = []
+
+    deliver(
+        session_factory,
+        consumer,
+        cancelled(ADMIN, "ACCEPTED", courier_id=BOB, offset=4),
+        publisher=publisher,
+        delays=(0.5,),
+        sleep=slept.append,
+    )
+
+    assert slept == [0.5]
+    assert observed == [(0, 0)] * kills
+    assert counts(engine) == expected_counts
+    assert publisher.published == expected_dlq
+    assert consumer.committed == [4]
+    assert drain(listener) == ([ALICE, BOB] if not expected_dlq else [])
+
+
+def test_stop_during_backoff_leaves_no_rows_and_no_commit(engine, session_factory) -> None:
+    factory = unreachable_then(session_factory, failures=99)
+    stop = threading.Event()
+    consumer = FakeConsumer([], stop)
+    publisher = FakePublisher()
+
+    deliver(
+        factory,
+        consumer,
+        order_record("order.expired"),
+        publisher=publisher,
+        stop=stop,
+        delays=(0.5, 1.0),
+        sleep=lambda _delay: stop.set(),
+    )
+
+    assert factory.calls["count"] == 1
+    assert counts(engine) == (0, 0)
+    assert publisher.published == []
+    assert consumer.commit_modes == []
+
+
+# --- Database timeouts ---
+
+
+@pytest.fixture
+def worker_session_factory():
+    engine = make_engine(TEST_DATABASE_URL, worker_timeouts=True)
+    yield make_session_factory(engine)
+    engine.dispose()
+
+
+def session_settings(connection) -> tuple[str, str, str]:
+    return (
+        connection.scalar(text("SHOW lock_timeout")),
+        connection.scalar(text("SHOW statement_timeout")),
+        connection.scalar(text("SHOW timezone")),
+    )
+
+
+def test_worker_engine_applies_the_timeouts_to_real_connections() -> None:
+    engine = make_engine(TEST_DATABASE_URL, worker_timeouts=True)
+    try:
+        with engine.connect() as connection:
+            assert session_settings(connection) == ("5s", "10s", "UTC")
+            parameters = connection.connection.driver_connection.info.get_parameters()
+    finally:
+        engine.dispose()
+
+    assert parameters["keepalives"] == "1"
+    assert parameters["keepalives_idle"] == "5"
+    assert parameters["keepalives_interval"] == "2"
+    assert parameters["keepalives_count"] == "3"
+    assert parameters["tcp_user_timeout"] == "10000"
+
+
+def test_api_engine_has_no_timeouts_on_real_connections(monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+
+    with TestClient(create_app()) as client:
+        with client.app.state.engine.connect() as connection:
+            assert session_settings(connection) == ("0", "0", "UTC")
+            parameters = connection.connection.driver_connection.info.get_parameters()
+
+    assert not {
+        "keepalives",
+        "keepalives_idle",
+        "keepalives_interval",
+        "keepalives_count",
+        "tcp_user_timeout",
+    } & set(parameters)
+
+
+@pytest.fixture
+def notifications_locked(engine):
+    """Block inserts into notifications, after processed_events has been written."""
+
+    holder = engine.connect()
+    transaction = holder.begin()
+    # SHARE conflicts with INSERT, and still lets counts() read.
+    holder.execute(text("LOCK TABLE notifications IN SHARE MODE"))
+
+    def release():
+        if transaction.is_active:
+            transaction.rollback()
+
+    yield release
+    release()
+    holder.close()
+
+
+def test_lock_wait_times_out_retries_and_leaves_no_partial_rows(
+    engine, worker_session_factory, notifications_locked, listener, caplog
+) -> None:
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+    during_backoff = []
+
+    with caplog.at_level(logging.WARNING):
+        deliver(
+            worker_session_factory,
+            consumer,
+            order_record("order.expired", offset=2),
+            publisher=publisher,
+            delays=(0.5,),
+            sleep=lambda _delay: during_backoff.append(counts(engine)),
+        )
+
+    assert during_backoff == [(0, 0)]
+    assert counts(engine) == (0, 0)
+    assert publisher.published == [(2, "TRANSIENT_RETRIES_EXHAUSTED", 2)]
+    assert consumer.committed == [2]
+    assert drain(listener) == []
+    assert "notification_event_retrying attempt=1" in caplog.text
+    assert "sqlstate=55P03" in caplog.text
+
+
+def test_lock_released_within_the_retry_window_creates_the_notification(
+    engine, worker_session_factory, notifications_locked
+) -> None:
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+
+    deliver(
+        worker_session_factory,
+        consumer,
+        order_record("order.expired", offset=2),
+        publisher=publisher,
+        delays=(0.5,),
+        sleep=lambda _delay: notifications_locked(),
+    )
+
+    assert counts(engine) == (1, 1)
+    assert publisher.published == []
+    assert consumer.committed == [2]
+
+
+def test_statement_timeout_retries_and_leaves_no_partial_rows(
+    engine, worker_session_factory, caplog
+) -> None:
+    """The first attempt stalls with every row flushed, just before COMMIT."""
+
+    stalled = []
+
+    def stall_once(session):
+        if not stalled:
+            stalled.append(True)
+            session.execute(text("SELECT pg_sleep(30)"))
+
+    event.listen(worker_session_factory, "before_commit", stall_once)
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+    during_backoff = []
+
+    with caplog.at_level(logging.WARNING):
+        deliver(
+            worker_session_factory,
+            consumer,
+            order_record("order.expired", offset=2),
+            publisher=publisher,
+            delays=(0.5,),
+            sleep=lambda _delay: during_backoff.append(counts(engine)),
+        )
+
+    assert during_backoff == [(0, 0)]
+    assert counts(engine) == (1, 1)
+    assert publisher.published == []
+    assert consumer.committed == [2]
+    assert "sqlstate=57014" in caplog.text
 
 
 def test_other_unique_violation_is_not_treated_as_a_duplicate(
@@ -515,6 +945,7 @@ def test_other_unique_violation_is_not_treated_as_a_duplicate(
         event_type="order.expired",
         occurred_at=datetime.now(timezone.utc),
         order_id=uuid4(),
+        correlation_id=uuid4(),
         drafts=[draft, draft],
     )
 
@@ -538,7 +969,7 @@ def test_sigterm_mid_record_keeps_the_transaction_but_not_the_offset(
     monkeypatch.setattr(worker, "store_event", store_then_signal)
     message = order_record("order.expired", offset=4)
 
-    handle_message(session_factory, consumer, message, start_at=START_AT, stop=stop)
+    deliver(session_factory, consumer, message, stop=stop)
 
     assert counts(engine) == (1, 1)
     assert consumer.commit_modes == []

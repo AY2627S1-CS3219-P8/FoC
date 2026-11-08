@@ -7,6 +7,10 @@
 # Scope: Writing implementation code — pass start_at through a helper, compare Ignore with its new fields, and add cutoff tests (ai-20261104-003).
 # Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 # Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Writing implementation code — expect correlation_id on BeforeCutoff and Event (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
 
 import ast
 import json
@@ -210,6 +214,7 @@ def test_event_carries_identifiers_and_timestamp() -> None:
     assert result.event_id == UUID(EVENT_ID)
     assert result.event_type == "order.accepted"
     assert result.order_id == UUID(ORDER_ID)
+    assert result.correlation_id == UUID(CORRELATION_ID)
     assert result.occurred_at == datetime(
         2026, 11, 4, 8, 30, tzinfo=timezone(timedelta(hours=8))
     )
@@ -825,7 +830,7 @@ AFTER_OCCURRED_AT = OCCURRED_AT + timedelta(microseconds=1)
 
 
 def before_cutoff(event_type: str = "order.accepted") -> BeforeCutoff:
-    return BeforeCutoff(UUID(EVENT_ID), event_type, UUID(ORDER_ID))
+    return BeforeCutoff(UUID(EVENT_ID), event_type, UUID(ORDER_ID), UUID(CORRELATION_ID))
 
 
 def test_start_at_is_a_required_keyword_argument() -> None:

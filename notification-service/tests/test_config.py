@@ -7,6 +7,10 @@
 # Scope: Writing implementation code — add tests for worker-only settings: the Kafka bootstrap servers, NOTIFICATIONS_START_AT validation, and the API not needing either (ai-20261104-003).
 # Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 # Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Writing implementation code — add tests for NOTIFICATION_RETRY_BACKOFF_SECONDS parsing and startup failure (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
 
 import os
 import subprocess
@@ -77,6 +81,7 @@ def test_invalid_log_level_is_rejected(env) -> None:
 def worker_env(env):
     env.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     env.setenv("NOTIFICATIONS_START_AT", "2026-11-04T08:30:00+08:00")
+    env.delenv("NOTIFICATION_RETRY_BACKOFF_SECONDS", raising=False)
     return env
 
 
@@ -125,6 +130,57 @@ def test_invalid_start_at_is_rejected_without_echoing_it(worker_env, value) -> N
     with pytest.raises(ConfigError, match="NOTIFICATIONS_START_AT") as raised:
         WorkerSettings.from_env()
     assert value not in str(raised.value)
+
+
+def test_retry_backoff_defaults_when_unset(worker_env) -> None:
+    assert WorkerSettings.from_env().retry_backoff_seconds == (0.5, 1.0, 2.0, 4.0)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0.25, 1 ,5", (0.25, 1.0, 5.0)),
+        ("3", (3.0,)),
+        ("", ()),
+        ("   ", ()),
+    ],
+)
+def test_retry_backoff_is_parsed(worker_env, value, expected) -> None:
+    worker_env.setenv("NOTIFICATION_RETRY_BACKOFF_SECONDS", value)
+
+    assert WorkerSettings.from_env().retry_backoff_seconds == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["abc", "1,abc", "0", "-1", "1,0", "1,,2", "1,", ",", "nan", "inf", "-inf", "1e999", "1e-999"],
+)
+def test_invalid_retry_backoff_is_rejected(worker_env, value) -> None:
+    worker_env.setenv("NOTIFICATION_RETRY_BACKOFF_SECONDS", value)
+
+    with pytest.raises(ConfigError, match="NOTIFICATION_RETRY_BACKOFF_SECONDS"):
+        WorkerSettings.from_env()
+
+
+def test_worker_exits_non_zero_on_invalid_retry_backoff() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "app.worker"],
+        cwd=SERVICE_ROOT,
+        env={
+            **os.environ,
+            "DATABASE_URL": VALID_URL,
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka:9092",
+            "NOTIFICATIONS_START_AT": "2026-11-04T08:30:00+08:00",
+            "NOTIFICATION_RETRY_BACKOFF_SECONDS": "1,soon",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "NOTIFICATION_RETRY_BACKOFF_SECONDS must be" in result.stderr
+    assert "notification_worker_started" not in result.stderr
 
 
 def test_api_settings_do_not_need_worker_settings(env) -> None:

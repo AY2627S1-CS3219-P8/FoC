@@ -630,3 +630,421 @@ The Kafka consumer is finished and meets the acceptance criteria, but it needs o
 ### Usage summary
 
 Claude Code implemented the Notification Service Kafka consumer to the user's specification: a cutoff in the pure record classifier, worker settings, and a worker that stores each event in one transaction and commits its offset only afterwards. The work was tested against real PostgreSQL with a Kafka test double and in a live isolated Compose run. Retries, the dead-letter queue, the HTTP API, the SSE stream, and `credit.events` remain out of scope for this entry.
+
+## ai-20261105-001
+
+- Recorded at: 2026-11-05T10:04:23+08:00.
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-05 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation of Notification Service consumer retries and the dead-letter queue from the user's specification, with `credit-service/app/worker.py` as the conventions reference.
+- Outcome: Changed `app/events.py` (`correlation_id` on `BeforeCutoff` and `Event`), `app/config.py` (`NOTIFICATION_RETRY_BACKOFF_SECONDS`), `app/worker.py` (classification, retries, DLQ publishing, commit ordering), root `compose.yaml` and `.env.example`, the service README, and tests. No validation or translation rule changed. The user's local `.env` was not changed. Nothing was committed by the agent. 
+- Verification: Agent checks. With a disposable PostgreSQL 16 container, `pytest` in `notification-service/`: 625 passed, 1 warning. Without `TEST_DATABASE_URL`: 550 passed, 75 skipped, 1 warning. `tests/test_events.py`: 450 passed. The tests caught all 26 mutations applied to a scratch copy, in a run before one further `correlation_id` assertion was added. A live run of an isolated Compose project with real Kafka and PostgreSQL showed: malformed records (including a null key and a null header value) in the DLQ with the correct headers and lag 0; `\u0000` and lone-surrogate text in the DLQ as `UNEXPECTED_PROCESSING_ERROR` after one attempt; five attempts at 0.5, 1, 2, and 4 second delays with the database stopped, then `TRANSIENT_RETRIES_EXHAUSTED`; a notification created and nothing added to the DLQ when the database recovered within the window; SIGTERM during a 60-second backoff exiting at once with code 0 and no commit, with the record stored after a restart; and a failed DLQ write stopping the worker with code 1 and no commit, with the record stored after a restart. An empty backoff list was checked by unit test and by `docker compose config`, not in the live run.
+- Author review: Keith stated on 2026-11-08, verbatim: "I ran `.venv/bin/python -m pytest -rs` in notification-service with TEST_DATABASE_URL set to a throwaware PostgreSQL 16 container and TEST_KAFKA_BOOTSTRAP_SERVERS set to a throwaway Kafka 4.1.2 broker set up with event-broker/create-topics.sh. The result was that 645 tests passed. The code has also been manually read and verified. Manual checks were performed where a Compose run was performed in an isolated project as well. All 4 uncommitted entries make up this increment." The "increment" is the four uncommitted entries ai-20261105-001, ai-20261106-001, ai-20261106-002, and ai-20261107-001, so the 645-passed run was of their combined working tree. The specific checks in the Compose run were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-08T17:09:20+08:00
+- Missing evidence: Original per-message timestamps unavailable. Intermediate assistant progress messages are not reproduced. Key responses are verbatim excerpts of the final responses, with omissions marked […]; they were added on 2026-11-08 as a correction, because this entry first omitted them although they were available. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+You are implementing consumer failure handling for the Notification Service in
+the FoC repository. Use the following specification as your single source of
+truth. Do not make assumptions about any requirement not listed here. If
+something needed is unspecified, stop and ask.
+
+Feature: Consumer retries and dead-letter queue
+
+Overview:
+Extend notification-worker so that a failed record is either retried or
+quarantined to notification-service.order-events.dlq, and never blocks its
+partition. Follow credit-service/app/worker.py (process_delivery,
+KafkaPublisher.dead_letter) for conventions.
+First, add a correlation_id field to the Event and BeforeCutoff results of
+process_record in app/events.py, so failure logs can include it. Do not change
+any validation or translation rule.
+Classification:
+- Malformed (from validation): no retry. DLQ with failure code
+  MALFORMED_MESSAGE.
+- Transient database or infrastructure errors (OperationalError,
+  InterfaceError, DisconnectionError, SQLAlchemy TimeoutError, DBAPIError with
+  connection_invalidated): roll back, then retry after each delay in
+  NOTIFICATION_RETRY_BACKOFF_SECONDS (a comma-separated list of positive
+  numbers, which may be empty; default "0.5,1,2,4"). When the delays run out, DLQ with
+  TRANSIENT_RETRIES_EXHAUSTED.
+- Any other exception: roll back, no retry. DLQ with
+  UNEXPECTED_PROCESSING_ERROR. This includes a DataError from a value PostgreSQL
+  cannot store in params.
+DLQ record:
+- the exact source key and value, and the original headers;
+- plus x-notification-failure-code, x-notification-failed-at (UTC ISO-8601 with
+  Z), x-notification-failed-attempts, x-notification-source-topic,
+  x-notification-source-partition, and x-notification-source-offset.
+Publish with an idempotent producer (acks=all) and wait for delivery
+confirmation. Commit the source offset only after the DLQ write is confirmed.
+
+Acceptance criteria:
+- A malformed record produced to order.events appears in the DLQ with
+  x-notification-failure-code MALFORMED_MESSAGE and the correct source
+  partition and offset. Its offset is committed, and later records keep being
+  processed.
+- When the database is stopped while an event is processed, the logs show
+  len(delays) + 1 attempts at the configured delays, then the record is sent to
+  the DLQ as TRANSIENT_RETRIES_EXHAUSTED.
+- When the database recovers within the retry window, the notification is
+  created and nothing goes to the DLQ.
+- A failed attempt never leaves partial rows. Every attempt is rolled back.
+- If publishing to the DLQ fails, the worker raises without committing, so the
+  record is processed again after a restart.
+- A duplicate event_id (unique violation) is not a failure. It keeps the
+  existing behaviour: roll back, treat the event as already processed, and
+  commit the offset.
+- An invalid NOTIFICATION_RETRY_BACKOFF_SECONDS stops the worker at startup
+  with a clear error.
+- Logs for failures include the failure code, the attempts, and the identifiers
+  the record has (event_id, event_type, order_id, correlation_id), but not the
+  full payload. A Malformed record may have no valid identifiers, so its log
+  includes its reason, topic, partition, and offset instead.
+- An order.rejected or order.cancelled record whose reason or previous_status
+  contains \u0000 or a lone surrogate, and that produces at least one draft, goes
+  to the DLQ as UNEXPECTED_PROCESSING_ERROR after one attempt, leaves no partial
+  rows, and has its offset committed.
+- Tests cover each failure class, including the unstorable text case against
+  real PostgreSQL, the retry count and delays (with an injected sleep), the DLQ
+  headers, and the commit ordering.
+
+Out of scope:
+- Tools to replay or inspect the DLQ.
+- Alerting or metrics.
+- Changes to the existing event validation and translation rules.
+
+Edge cases:
+- A record with a null key, or no headers, is copied to the DLQ as it is.
+- The error is transient on early attempts and then non-transient: classify by
+  the final error.
+- An empty backoff list means a single attempt with no retries.
+- The worker receives SIGTERM during a backoff sleep: it exits without
+  committing.
+```
+
+### Key response 1
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+Consumer retries and the DLQ are implemented and working, and nothing is committed. With PostgreSQL the full suite has 625 passed. Without it, 550 passed and 75 skipped. The tests also caught all 26 bugs I deliberately introduced on a scratch copy.
+
+[…]
+
+- **`app/events.py`:** `correlation_id` is now on `Event` and `BeforeCutoff`. No validation or translation rule changed.
+- **`app/config.py`:** adds `NOTIFICATION_RETRY_BACKOFF_SECONDS`. Unset uses the default, empty means one attempt, and anything invalid stops the worker at startup.
+- **`app/worker.py`:** adds `process_delivery` (classification and retries) and `KafkaPublisher.dead_letter`. The offset is committed only after Kafka confirms the DLQ write.
+- **Supporting files:** I also updated `compose.yaml`, `.env.example`, the service README's Worker section, the tests and the AI disclosure records. The disclosure headers say review is pending until you've looked at it.
+
+[…]
+
+Tell me if you want any of these changed:
+- **SIGTERM outside a backoff sleep:** if the worker is already stopping when a record fails, that record skips the DLQ and stays uncommitted, so the next run retries it. Once a DLQ write is confirmed, the offset is committed even if a stop has arrived, which avoids a second DLQ copy.
+- **Whitespace-only backoff value:** it counts as empty, so one attempt.
+- **Log event rename:** `notification_event_malformed` is now `notification_event_failed` with `failure_code=MALFORMED_MESSAGE`, so anything searching for the old name needs updating.
+
+[…]
+
+- **Duplicate DLQ copies:** if the offset commit fails after a confirmed DLQ write, the record reaches the DLQ twice after restart. This follows from at-least-once delivery and is noted in the README.
+- **Retry window limit:** keep total backoff well under Kafka's 5-minute `max.poll.interval.ms`. Past that, the partition is reassigned and the commit fails. This is also in the README.
+
+### Scope
+
+- `notification-service/app/events.py`: Writing implementation code — add `correlation_id` to the `BeforeCutoff` and `Event` results.
+- `notification-service/app/config.py`: Writing implementation code — parse and validate `NOTIFICATION_RETRY_BACKOFF_SECONDS`.
+- `notification-service/app/worker.py`: Writing implementation code — add failure classification, transient retries, an interruptible backoff sleep, the idempotent DLQ publisher, and commit ordering.
+- `notification-service/tests/test_events.py`, `tests/test_config.py`, `tests/test_worker.py`, `tests/test_worker_postgres.py`, `tests/worker_support.py`: Writing implementation code — update tests that expected the worker to stop on failure, and cover each failure class, retry counts and delays, DLQ headers, commit ordering, and stopping.
+- `compose.yaml`: Boilerplate generation — pass `NOTIFICATION_RETRY_BACKOFF_SECONDS` to `notification-worker`, keeping an empty value empty.
+- `.env.example`: Boilerplate generation — add `NOTIFICATION_RETRY_BACKOFF_SECONDS`.
+- `notification-service/README.md`: Refactoring and documentation improvements — update the Worker section. The AI Use Summary is a disclosure record.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code implemented Notification Service consumer failure handling to the user's specification: a failed record is retried or copied to the DLQ, and its offset is committed only after Kafka confirms the DLQ write. The work was tested against real PostgreSQL with Kafka test doubles and in a live isolated Compose run. Tools to replay or inspect the DLQ, alerting, and metrics remain out of scope.
+
+## ai-20261106-001
+
+- Recorded at: 2026-11-06T08:24:27+08:00.
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-06 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Reproduce a user-reported restart cycle caused by records too large for the DLQ, ask the user about implementation choices, then fix it.
+- Outcome: Changed `app/worker.py` (`message.max.bytes` of 1,100,000 on the DLQ producer, `kafka_error` on `notification_dlq_publish_failed`), `event-broker/create-topics.sh` (`max.message.bytes=1100000` on the DLQ topic through `--alter`), `event-broker/README.md`, the service README, and tests, with new `tests/test_worker_kafka.py`. Records compressed at source that still do not fit remain a documented limit, by the user's choice. Credit and Order Service were not changed. Nothing was committed by the agent. 
+- Verification: Agent checks. Before the change, a live isolated Compose run with a default-client 999,900-byte malformed record restarted the worker 11 times in about 2.5 minutes, with no record processed and no error code in the logs. After the change, the same record and a 1,048,400-byte record reached the DLQ with no restarts and later records on both partitions were stored. Rerunning `kafka-topics` restored the limit on a topic whose setting had been removed, and a second rerun also exited 0. A 5 MB gzip record still caused restarts, logging `kafka_error=MSG_SIZE_TOO_LARGE`. `pytest` with PostgreSQL 16 and Kafka 4.1.2: 634 passed, 1 warning. With neither: 554 passed, 80 skipped, 1 warning. `tests/test_worker_kafka.py` passed three times in a row. The tests caught all 7 mutations applied to a scratch copy.
+- Author review: Keith stated on 2026-11-08, verbatim: "I ran `.venv/bin/python -m pytest -rs` in notification-service with TEST_DATABASE_URL set to a throwaware PostgreSQL 16 container and TEST_KAFKA_BOOTSTRAP_SERVERS set to a throwaway Kafka 4.1.2 broker set up with event-broker/create-topics.sh. The result was that 645 tests passed. The code has also been manually read and verified. Manual checks were performed where a Compose run was performed in an isolated project as well. All 4 uncommitted entries make up this increment." The "increment" is the four uncommitted entries ai-20261105-001, ai-20261106-001, ai-20261106-002, and ai-20261107-001, so the 645-passed run was of their combined working tree. The specific checks in the Compose run were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-08T17:09:20+08:00
+- Missing evidence: Original per-message timestamps unavailable. Intermediate assistant progress messages are not reproduced. Key responses are verbatim excerpts of the final responses, with omissions marked […]; they were added on 2026-11-08 as a correction, because this entry first omitted them although they were available. Prompt 2 is the clarifying-question answer record as the tool returned it, not free-form text typed by the user; it replaces, as a correction made on 2026-11-08, a four-line summary that was earlier presented in a prompt block as if verbatim. No redactions.
+- Header exceptions: None. Correction (2026-11-08): this line first listed `event-broker/create-topics.sh` and `event-broker/README.md` as exceptions, but both formats accept comments, so headers for this entry were added to them.
+
+### Prompt 1
+
+```text
+Oversized bad records can stop the notification worker which will be unable to copy it to the dead letter queue, then exits and restarts in a cycle until someone manually removes the record. This can cause later records to not be processed.
+Can we increase message.max.bytes on the producer and max.message.bytes on the DLQ topic which leaves more room for headers, log the Kafka error code when a DLQ publish fails, and test this edge case with a broker.
+Verify that this is a real issue first, then ask me any questions about implementation before solving
+```
+
+### Key response 1
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+**This is a real issue.** I reproduced it with the real worker and broker, and I haven't changed any code. The verification stack is removed, and Docker Desktop is still running because I had to start it.
+
+[…]
+
+I produced a malformed 999,900-byte record to partition 0 with a default client, then good records to partitions 0 and 1:
+- **Restart cycle:** the worker failed the DLQ write and aborted, then restarted 11 times in about 2.5 minutes.
+- **Later records blocked:** nothing was processed (`processed_events` stayed at 0), and that included the good record on partition 1. So in this run it stalled more than just the bad record's partition.
+- **Nothing in the logs says why:** they only show `exception_type=KafkaException`, not the `MSG_SIZE_TOO_LARGE` code.
+
+[…]
+
+- **Your two settings:** both are needed, and together they cover every uncompressed record the source topic accepts.
+- **Compressed records:** these still get through. The broker checks a record's compressed size, but the worker sees it uncompressed. A 5 MB record passed at source; its DLQ copy failed at a 1.2 MB producer limit, and the broker still rejected it uncompressed at a 10 MB limit (DLQ topic limit 1.2 MB). It only went through with a 10 MB limit and gzip on the DLQ producer.
+
+[…]
+
+- **Existing topics:** `create-topics.sh` uses `--create --if-not-exists`, so a new `--config` wouldn't reach a DLQ topic that already exists.
+
+[…]
+
+Logging the error code needs no decision: I'll add `kafka_error=MSG_SIZE_TOO_LARGE` to the `notification_dlq_publish_failed` line. A flush timeout has no Kafka error code, so it would log `kafka_error=None`.
+
+Summary (not a quotation): the agent then asked four multiple-choice questions, covering the size limit, records compressed at source, how the real-broker test runs, and how an existing DLQ topic gets the new limit.
+
+### Prompt 2
+
+```text
+Your questions have been answered: "What limit should the DLQ producer's message.max.bytes and the DLQ topic's max.message.bytes use? The source topic accepts values up to about 1,048,500 bytes, and the DLQ headers add a few hundred bytes."="1,100,000 on both (Recommended)", "A record compressed at source can still be too large for the DLQ after raising the limits (a 5 MB gzip record was accepted by order.events), which would keep the worker in its restart cycle. How should that case be handled?"="Document the limit (Recommended)", "The Compose broker has no published port and advertises kafka:9092, so tests on the host can't reach it. How should the real-broker test for the oversized record run?"="Env-gated pytest (Recommended)", "create-topics.sh won't change the limit on a DLQ topic that already exists, such as one in an existing kafka-data volume. How should existing topics get the new limit?"="Alter in the script (Recommended)". You can now continue with these answers in mind.
+```
+
+### Key response 2
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+The restart cycle is fixed for uncompressed records: the record that used to trigger it now reaches the DLQ with no restarts, and later records keep flowing. A record compressed at source that's still too large will keep the worker cycling, which is the documented limit you chose. Nothing is committed.
+
+With PostgreSQL and Kafka the full suite has 634 passed; with neither, 554 passed and 80 skipped. The tests also caught all 7 bugs I deliberately introduced on a scratch copy.
+
+[…]
+
+- **DLQ producer (`app/worker.py`):** `message.max.bytes` is now 1,100,000.
+- **DLQ topic (`event-broker/create-topics.sh`):** `max.message.bytes=1100000` is applied with `--alter`, so existing topics get it at the next startup. A unit test checks the script and the worker use the same value.
+- **Logging:** a failed publish now logs `notification_dlq_publish_failed kafka_error=MSG_SIZE_TOO_LARGE ...`. A flush timeout has no Kafka code, so it logs `kafka_error=None`.
+- **Broker tests (`tests/test_worker_kafka.py`):** there are 5 tests, skipped unless `TEST_KAFKA_BOOTSTRAP_SERVERS` is set. They use the real producer and consumer, and the README has the throwaway-broker commands.
+- **Docs:** I updated both READMEs and added disclosure entries, with author review marked pending.
+
+[…]
+
+- **Recovering from the compressed case:** someone still has to remove the record or move the consumer group's offset past it. The README says so, and a broker test pins this behaviour, so changing it later will fail that test on purpose.
+- **Other services:** Credit and Order Service don't set `message.max.bytes` either, so they likely have the same restart cycle. I didn't test or change them.
+
+[…]
+
+- **Usage log:** "Prompt 2" in the new entry is a short summary of your four answers, not the exact wording of the question dialog. Edit it if your disclosure rules need the full text.
+
+### Scope
+
+- `notification-service/app/worker.py`: Writing implementation code — raise the DLQ producer's size limit and log the Kafka error code.
+- `event-broker/create-topics.sh`: Boilerplate generation — set `max.message.bytes` on the DLQ topic, including a topic that already exists.
+- `notification-service/tests/test_worker.py`: Writing implementation code — test the producer limit, the script's value, and the logged code.
+- `notification-service/tests/test_worker_kafka.py`: Writing implementation code; Debugging assistance — write real-broker tests; fix a metadata race in a test helper and a test record that exceeded the source limit.
+- `notification-service/README.md`, `event-broker/README.md`: Refactoring and documentation improvements — document the limit and the broker tests. The service README's AI Use Summary is a disclosure record.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code confirmed the reported restart cycle on a real broker, measured where it occurs, and raised the DLQ size limits to the values the user chose, so that every uncompressed record the source topic accepts reaches the DLQ. Compressed source records that still do not fit are a documented limit.
+
+## ai-20261106-002
+
+- Recorded at: 2026-11-06T16:43:00+08:00.
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-06 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Agentic fix for a Notification Service worker hang when the database stops responding without returning an error, from the user's specification.
+- Outcome: Changed `app/db.py` (a `worker_timeouts` option on `make_engine`), `app/worker.py` (uses it), the Worker section of the service README, and tests. The API's engine is unchanged. No client-side watchdog was added. No other service was changed. Nothing was committed by the agent.
+- Verification: Agent checks. Real `lock_timeout` and `statement_timeout` errors were confirmed as SQLAlchemy `OperationalError` (`LockNotAvailable` 55P03, `QueryCanceled` 57014) and transient. Before the change, a network cut during a blocked insert in a live isolated Compose run gave no log line, DLQ write, or commit for 90 seconds. After the change, live runs showed: a network cut during a blocked insert reaching the DLQ as `TRANSIENT_RETRIES_EXHAUSTED` about 18 seconds later after 5 attempts; a network cut with an idle connection doing the same in about 8 seconds; the network returning within the window storing the notification with nothing added to the DLQ; a held lock retrying with sqlstate 55P03 and reaching the DLQ after about 33 seconds with no partial rows; a lock released within the window storing the notification; a stopped database behaving as before; and `docker pause` hanging the worker for 60 seconds, then Docker killing it (exit 137) with the offset uncommitted and the record stored after unpause and restart. `pytest` with PostgreSQL 16 and Kafka 4.1.2: 642 passed, 1 warning. With neither: 557 passed, 85 skipped, 1 warning. `tests/test_events.py`: 450 passed. The tests caught all 8 mutations applied to a scratch copy. The 72.5-second retry budget in the tests assumes each attempt ends at its first timeout; several statements in one attempt that each finish just under the limit could take longer.
+- Author review: Keith stated on 2026-11-08, verbatim: "I ran `.venv/bin/python -m pytest -rs` in notification-service with TEST_DATABASE_URL set to a throwaware PostgreSQL 16 container and TEST_KAFKA_BOOTSTRAP_SERVERS set to a throwaway Kafka 4.1.2 broker set up with event-broker/create-topics.sh. The result was that 645 tests passed. The code has also been manually read and verified. Manual checks were performed where a Compose run was performed in an isolated project as well. All 4 uncommitted entries make up this increment." The "increment" is the four uncommitted entries ai-20261105-001, ai-20261106-001, ai-20261106-002, and ai-20261107-001, so the 645-passed run was of their combined working tree. The specific checks in the Compose run were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-08T17:09:20+08:00
+- Missing evidence: Original per-message timestamps unavailable. Intermediate assistant progress messages are not reproduced. Key responses are verbatim excerpts of the final responses, with omissions marked […]; they were added on 2026-11-08 as a correction, because this entry first omitted them although they were available. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+Fix a Notification Service worker hang when the database stops responding
+without returning an error.
+
+Problem:
+The worker's retries and DLQ only react to database errors. Only opening a
+connection has a timeout (connect_timeout=3 in app/db.py). If the network drops
+silently or a query waits on a lock, the worker can wait indefinitely on an open
+connection: no retries, no DLQ write, and the partition stays blocked. SIGTERM
+only sets a stop flag, which isn't checked until the database call returns.
+
+Fix:
+Make these hangs raise normal database errors, so the existing retry and DLQ path
+handles them.
+1. Add TCP keepalives and tcp_user_timeout to detect a lost network. Start with
+   keepalives=1, keepalives_idle=5, keepalives_interval=2, keepalives_count=3,
+   tcp_user_timeout=10000 (milliseconds).
+2. Add lock_timeout=5s and statement_timeout=10s to limit lock waits and slow
+   queries.
+3. Apply these settings to the worker only. make_engine is shared with the API,
+   so add a worker-specific option and leave the API's behaviour unchanged.
+4. Do not add a client-side watchdog.
+
+Document:
+In the Worker section of notification-service/README.md, state as a known
+limitation that a frozen database server (for example, under docker pause) can
+still hang the worker. The OS still answers TCP and the server can't enforce its
+own timeouts. No data is lost, because the offset stays uncommitted and the record
+is redelivered after a restart. Under Compose, Docker kills a worker that ignores
+SIGTERM once its stop timeout runs out.
+
+Also state that a long lock wait or database stall can now use up the retries and
+send the record to the DLQ as TRANSIENT_RETRIES_EXHAUSTED, where it needs a manual
+replay.
+
+Acceptance criteria:
+- With the network to the database cut (docker network disconnect) during
+  processing, the worker logs retries and then sends the record to the DLQ as
+  TRANSIENT_RETRIES_EXHAUSTED. If the network returns within the retry window, the
+  notification is created and nothing goes to the DLQ.
+- With a row or table lock held so that the insert blocks, the worker raises a
+  lock timeout, retries it as transient, and leaves no partial rows.
+- Confirm that lock and statement timeouts are classified as transient. If
+  either isn't, stop and ask.
+- The API's engine does not get these timeouts, and a test confirms it.
+- A stopped database and all existing tests behave as before.
+- Total retry time with the default backoff stays well under Kafka's 5-minute
+  max.poll.interval.ms.
+
+Out of scope:
+- Handling a frozen server
+- Changes to implementation in other services
+```
+
+### Key response 1
+
+Verbatim excerpts of the final response; omitted passages are marked […]:
+
+The hang is fixed for a lost network and for lock or statement waits: they now raise normal database errors and go through the existing retry and DLQ path. Nothing is committed. Lock and statement timeouts both classify as transient (`OperationalError`, sqlstate 55P03 and 57014), so I didn't need to stop and ask.
+
+With PostgreSQL and Kafka the full suite has 642 passed; with neither, 557 passed and 85 skipped. The tests also caught all 8 bugs I deliberately introduced on a scratch copy.
+
+[…]
+
+- **`app/db.py`:** `make_engine(url, worker_timeouts=True)` adds your keepalive, `tcp_user_timeout`, `lock_timeout` and `statement_timeout` values. The default is off, so the API's engine is unchanged.
+- **`app/worker.py`:** `run` passes `worker_timeouts=True`. There's no watchdog.
+- **Docs and tests:** the README's Worker section has both limitations you specified, and the tests and disclosure records are updated.
+- **API check:** tests confirm the API has none of these settings, both from the connection arguments and on a real connection (`SHOW lock_timeout` and `SHOW statement_timeout` return `0`).
+
+[…]
+
+- **Measured:** about 18s for a network cut and about 33s for a held lock. A stall on every attempt would take about 58s (calculated, not measured).
+- **Upper figure:** a test holds the budget at 72.5s, which assumes each attempt ends at its first timeout and then has to reconnect.
+- **Exception:** an attempt runs several statements, and the timeout applies to each one separately. If every statement in every attempt finished just under 10s, the total could approach 5 minutes. That's very unlikely. If it did happen, the commit would fail and the worker would restart and reprocess the record, so nothing is lost.
+
+[…]
+
+- **SIGTERM:** it's now noticed once the database call returns, within about 10s in these failure cases, but that can still be longer than Docker's stop timeout. If Docker kills the worker first, the offset stays uncommitted and the record is redelivered.
+
+### Scope
+
+- `notification-service/app/db.py`: Writing implementation code — add the worker-only timeout option.
+- `notification-service/app/worker.py`: Writing implementation code — use the option.
+- `notification-service/tests/test_worker.py`, `tests/test_worker_postgres.py`: Writing implementation code — test the settings on worker and API connections, real lock and statement timeouts, and the retry budget.
+- `notification-service/README.md`: Refactoring and documentation improvements — document the timeouts and known limitations. The AI Use Summary is a disclosure record.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code reproduced the hang on a real stack and gave the worker's connections the user's specified network and server-side timeouts, so that a lost network or long lock wait now follows the existing retry and DLQ path. A frozen server remains a documented limitation.
+
+## ai-20261107-001
+
+- Recorded at: 2026-11-07T15:42:02+08:00.
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-07 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Verify and apply a user-reported fix: `notification_offset_commit_failed` logged `failure_code=None` for a record already sent to the DLQ.
+- Outcome: Changed `app/worker.py` to pass `outcome.failure_code` to the log, and `tests/test_worker.py` to assert the logged code. The user identified the defect and the fix. Behaviour other than this log field is unchanged. Nothing was committed by the agent.
+- Verification: Agent checks. On a scratch copy, a failed offset commit logged `failure_code=None` for malformed, retries-exhausted, and unexpected records before the change and the real code after it, and `None` for stored and ignored records both times. With the defect restored on a scratch copy, 3 of the 5 offset-commit-failure tests failed; the other 2 cover records that have no failure code or do not read the log. `pytest` with PostgreSQL 16 and Kafka 4.1.2: 645 passed, 1 warning. With neither: 560 passed, 85 skipped, 1 warning. Kafka test doubles were used for the failed commit; it was not triggered on a live broker.
+- Author review: Keith stated on 2026-11-08, verbatim: "I ran `.venv/bin/python -m pytest -rs` in notification-service with TEST_DATABASE_URL set to a throwaware PostgreSQL 16 container and TEST_KAFKA_BOOTSTRAP_SERVERS set to a throwaway Kafka 4.1.2 broker set up with event-broker/create-topics.sh. The result was that 645 tests passed. The code has also been manually read and verified. Manual checks were performed where a Compose run was performed in an isolated project as well. All 4 uncommitted entries make up this increment." The "increment" is the four uncommitted entries ai-20261105-001, ai-20261106-001, ai-20261106-002, and ai-20261107-001, so the 645-passed run was of their combined working tree. The specific checks in the Compose run were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-08T17:09:20+08:00
+- Missing evidence: Original per-message timestamps unavailable. Key response 1 is the full verbatim response to Prompt 1, and Key response 2 is the verbatim final response with its two section headings omitted; both were added on 2026-11-08 as a correction, because this entry first omitted them although they were available. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+If the offset commit fails after a record has gone to the DLQ, the log will say failure_code=None, even the record has a code. The worker hard-codes None instead of passing the code it already has at in line 455 of worker.py. 
+Verify that changing the hardcoded None to outcome.failure_code allows this issue to be solved.
+```
+
+### Key response 1
+
+Verbatim response:
+
+**Yes, that change fixes it.** `worker.py:455` hard-codes `None`, and changing it to `outcome.failure_code` makes the log show the record's real code. I tested this on a scratch copy, so your working tree is unchanged and the fix still needs applying.
+
+I made the offset commit fail for each kind of outcome, using Kafka test doubles rather than a real broker:
+
+| Record | Sent to DLQ | Logged before | Logged after |
+| --- | --- | --- | --- |
+| Malformed | Yes | `failure_code=None` | `failure_code=MALFORMED_MESSAGE` |
+| Retries exhausted | Yes | `failure_code=None` | `failure_code=TRANSIENT_RETRIES_EXHAUSTED` |
+| Unexpected error | Yes | `failure_code=None` | `failure_code=UNEXPECTED_PROCESSING_ERROR` |
+| Stored successfully | No | `failure_code=None` | `failure_code=None` (correct) |
+| Ignored | No | `failure_code=None` | `failure_code=None` (correct) |
+
+- **No side effects:** records that never failed still log `None`, because `outcome.failure_code` is `None` for them. The change only affects this log line, and `attempts` was already correct.
+- **Test results:** with the change, the suite on the copy has 557 passed and 85 skipped. PostgreSQL and Kafka weren't running, so those 85 tests didn't run. They don't check this log line, so I don't expect them to be affected.
+- **Test gap:** no existing test catches this bug. The only test that looks at this log line (`test_worker.py:753`) just checks that the event name appears, which is why it passed with `None`.
+
+This was my mistake from the original DLQ work, and the bug matters most in this exact case. A failed commit means the record is reprocessed after restart and can reach the DLQ twice, and this log line is the clue that explains the duplicate.
+
+Do you want me to apply it? I'd make the one-word change and add a test that a failed commit logs the real code for a DLQ record and `None` otherwise, then update the disclosure records.
+
+### Prompt 2
+
+```text
+Apply
+```
+
+### Key response 2
+
+Verbatim final response; the two section headings are omitted and marked […]:
+
+The fix is applied: when the offset commit fails, `notification_offset_commit_failed` now logs the record's real failure code. Records that never failed still log `failure_code=None`. Nothing is committed.
+
+[…]
+
+- **`app/worker.py`:** the hard-coded `None` is now `outcome.failure_code`. The disclosure header I added pushed it from line 455 to line 459.
+- **`tests/test_worker.py`:** tests now check the logged code for malformed, retries-exhausted and unexpected-error records, and `None` for a stored record. An ignored record logged `None` in the earlier scratch check but has no permanent test, since it takes the same code path as a stored one.
+- **Disclosure records:** I added a new usage-log entry that credits you with finding the bug and the fix, and marks author review as pending.
+
+[…]
+
+- **Full suite:** 645 passed with PostgreSQL and Kafka, and 560 passed with 85 skipped without them.
+- **Bug restored on a scratch copy:** 3 of the 5 offset-commit-failure tests fail, so this bug can't come back unnoticed. The other 2 don't depend on the code: one is the stored record, which logs `None` either way, and the other only checks the record wasn't sent to the DLQ.
+
+The failed commit itself was only simulated with a Kafka test double, not triggered on a real broker. That doesn't affect this fix, since it only changes which value gets logged. All my test containers are removed, and Docker Desktop is still running.
+
+### Scope
+
+- `notification-service/app/worker.py`: Debugging assistance — log the record's failure code when the offset commit fails.
+- `notification-service/tests/test_worker.py`: Writing implementation code — assert the logged code for each kind of record.
+- `notification-service/README.md`: Disclosure record only — update the AI Use Summary.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code verified the user's proposed one-word fix on a scratch copy, applied it, and added tests that fail if the defect returns.

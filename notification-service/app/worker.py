@@ -7,6 +7,22 @@
 # Scope: Writing implementation code — replace the idle loop with the order.events consumer: store events in one transaction with NOTIFY, then commit the offset synchronously; stop on malformed records and on any exception (ai-20261104-003).
 # Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 # Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Writing implementation code — add failure classification, transient retries, and the dead-letter queue, with the offset committed only after the DLQ write is confirmed (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-06
+# Scope: Writing implementation code — raise the DLQ producer's message size limit and log the Kafka error code when a DLQ publish fails (ai-20261106-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-001).
+# Details: notification-service/ai/usage-log.md; ai-20261106-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-06
+# Scope: Writing implementation code — use the engine with worker timeouts (ai-20261106-002).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261106-002).
+# Details: notification-service/ai/usage-log.md; ai-20261106-002
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-07
+# Scope: Debugging assistance — log the record's failure code when the offset commit fails (ai-20261107-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261107-001).
+# Details: notification-service/ai/usage-log.md; ai-20261107-001
 
 """Consume ``order.events`` and write notifications.
 
@@ -15,24 +31,40 @@ only after that transaction has committed. A crash in between redelivers the
 record, and the ``processed_events`` primary key then identifies it as a
 duplicate, so delivery is at-least-once but the stored effect happens once.
 
-Failures stop the worker without committing the offset. Failure logs give the
-exception type and stack frames, never its message: driver errors can quote
-statement parameters and JSON from the record.
+A record that fails is either retried or copied to the dead-letter queue, so
+later records in its partition can continue. Its offset is committed only after
+Kafka confirms the DLQ write. The worker stops without committing only if that
+write or the offset commit fails, or on a fatal Kafka error, so the record is
+processed again after a restart and may reach the DLQ twice. If the DLQ write
+keeps failing, such as for a compressed record too large for the DLQ, the
+partition stays blocked until someone moves the offset past the record.
+
+Failure logs give the exception type and stack frames, never its message: driver
+errors can quote statement parameters and JSON from the record.
 """
 
 import logging
 import signal
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Literal, Protocol
 
-from confluent_kafka import Consumer, KafkaException, Message
+from confluent_kafka import Consumer, KafkaError, KafkaException, Message, Producer
 from psycopg.errors import UniqueViolation
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import (
+    DBAPIError,
+    DisconnectionError,
+    IntegrityError,
+    InterfaceError,
+    OperationalError,
+    TimeoutError as SQLAlchemyTimeoutError,
+)
 from sqlalchemy.orm import Session
 
 from app.config import WorkerSettings, configure_logging
@@ -43,11 +75,25 @@ from app.models import Notification, ProcessedEvent
 logger = logging.getLogger(__name__)
 
 ORDER_TOPIC = "order.events"
+DLQ_TOPIC = "notification-service.order-events.dlq"
 CONSUMER_GROUP = "notification-service-order"
 POLL_TIMEOUT_SECONDS = 1.0
 NOTIFY_CHANNEL = "notifications"
 # PostgreSQL's default name for the primary key in the initial migration.
 PROCESSED_EVENTS_PKEY = "processed_events_pkey"
+PUBLISH_TIMEOUT_SECONDS = 10
+# Above the broker's default limit, so that any uncompressed record order.events
+# accepts still fits with the diagnostic headers. event-broker/create-topics.sh
+# sets the same value as max.message.bytes on the DLQ topic.
+DLQ_MAX_MESSAGE_BYTES = 1_100_000
+# How quickly a backoff sleep notices a stop request.
+STOP_CHECK_SECONDS = 0.1
+
+FailureCode = Literal[
+    "MALFORMED_MESSAGE",
+    "TRANSIENT_RETRIES_EXHAUSTED",
+    "UNEXPECTED_PROCESSING_ERROR",
+]
 
 
 class WorkerAbort(Exception):
@@ -60,6 +106,69 @@ class CommittingConsumer(Protocol):
     def commit(self, *, message: Message, asynchronous: bool) -> object: ...
 
     def close(self) -> None: ...
+
+
+class DeadLetterPublisher(Protocol):
+    def dead_letter(
+        self, message: Message, *, failure_code: FailureCode, attempts: int
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    """How one record ended. ``failure_code`` is set if it needs the DLQ."""
+
+    result: BeforeCutoff | Ignore | Event | None
+    attempts: int
+    failure_code: FailureCode | None = None
+
+
+class _Delivery:
+    """Delivery callback state for one Kafka produce call."""
+
+    def __init__(self) -> None:
+        self.error = None
+        self.done = False
+
+    def __call__(self, error, _message) -> None:
+        self.error = error
+        self.done = True
+
+
+class KafkaPublisher:
+    """Copy failed records to the DLQ and wait for the broker's confirmation."""
+
+    def __init__(self, producer: Producer) -> None:
+        self._producer = producer
+
+    def dead_letter(
+        self, message: Message, *, failure_code: FailureCode, attempts: int
+    ) -> None:
+        failed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        headers = list(message.headers() or [])
+        headers.extend(
+            [
+                ("x-notification-failure-code", failure_code.encode()),
+                ("x-notification-failed-at", failed_at.encode()),
+                ("x-notification-failed-attempts", str(attempts).encode()),
+                ("x-notification-source-topic", message.topic().encode()),
+                ("x-notification-source-partition", str(message.partition()).encode()),
+                ("x-notification-source-offset", str(message.offset()).encode()),
+            ]
+        )
+        delivery = _Delivery()
+        self._producer.produce(
+            topic=DLQ_TOPIC,
+            key=message.key(),
+            value=message.value(),
+            headers=headers,
+            on_delivery=delivery,
+        )
+        remaining = self._producer.flush(PUBLISH_TIMEOUT_SECONDS)
+        if delivery.error is not None:
+            raise KafkaException(delivery.error)
+        if remaining or not delivery.done:
+            raise RuntimeError("Kafka did not acknowledge the DLQ record")
 
 
 def _is_duplicate_event(error: IntegrityError) -> bool:
@@ -135,17 +244,39 @@ def _log_outcome(
     )
 
 
-def _log_failure(
+def _is_transient(error: Exception) -> bool:
+    if isinstance(
+        error,
+        (
+            OperationalError,
+            InterfaceError,
+            DisconnectionError,
+            SQLAlchemyTimeoutError,
+        ),
+    ):
+        return True
+    return isinstance(error, DBAPIError) and error.connection_invalidated
+
+
+def _kafka_error_name(error: Exception) -> str | None:
+    """The Kafka error code, such as MSG_SIZE_TOO_LARGE, if ``error`` has one."""
+
+    if isinstance(error, KafkaException) and error.args:
+        if isinstance(error.args[0], KafkaError):
+            return error.args[0].name()
+    return None
+
+
+def _failure_fields(
     error: Exception, result: BeforeCutoff | Ignore | Event | None, message: Message
-) -> None:
-    logger.error(
-        "notification_event_failed exception_type=%s sqlstate=%s event_id=%s "
-        "event_type=%r order_id=%s topic=%s partition=%s offset=%s\n%s",
+) -> tuple:
+    return (
         type(error).__name__,
         getattr(getattr(error, "orig", None), "sqlstate", None),
         getattr(result, "event_id", None),
         getattr(result, "event_type", None),
         getattr(result, "order_id", None),
+        getattr(result, "correlation_id", None),
         message.topic(),
         message.partition(),
         message.offset(),
@@ -153,30 +284,110 @@ def _log_failure(
     )
 
 
-def _apply(
-    session_factory: Callable[[], Session],
-    result: BeforeCutoff | Ignore | Event,
+_FAILURE_FORMAT = (
+    "exception_type=%s sqlstate=%s event_id=%s event_type=%r order_id=%s "
+    "correlation_id=%s topic=%s partition=%s offset=%s\n%s"
+)
+
+
+def _log_failure(
+    failure_code: FailureCode | None,
+    attempts: int,
+    error: Exception,
+    result: BeforeCutoff | Ignore | Event | None,
     message: Message,
+    *,
+    event: str = "notification_event_failed",
 ) -> None:
-    """Perform and log the database work for one valid record."""
+    logger.error(
+        f"{event} failure_code=%s attempts=%s {_FAILURE_FORMAT}",
+        failure_code,
+        attempts,
+        *_failure_fields(error, result, message),
+    )
+
+
+def process_delivery(
+    session_factory: Callable[[], Session],
+    message: Message,
+    *,
+    start_at: datetime,
+    retry_backoff_seconds: tuple[float, ...],
+    stop: threading.Event,
+    sleep: Callable[[float], None],
+) -> DeliveryResult:
+    """Apply one record, retrying transient errors. Record failures never raise.
+
+    If ``stop`` is set during a backoff sleep, return without a failure code. The
+    caller sees ``stop`` and leaves the offset uncommitted.
+    """
+
+    try:
+        result = process_record(
+            message.key(), message.value(), message.headers(), start_at=start_at
+        )
+    except Exception as error:
+        _log_failure("UNEXPECTED_PROCESSING_ERROR", 1, error, None, message)
+        return DeliveryResult(None, 1, "UNEXPECTED_PROCESSING_ERROR")
+
+    if isinstance(result, Malformed):
+        logger.error(
+            "notification_event_failed failure_code=MALFORMED_MESSAGE attempts=1 "
+            "reason=%s topic=%s partition=%s offset=%s",
+            result.reason,
+            message.topic(),
+            message.partition(),
+            message.offset(),
+        )
+        return DeliveryResult(None, 1, "MALFORMED_MESSAGE")
 
     if isinstance(result, Ignore):
         _log_outcome("ignored", result, message)
-    elif not store_event(session_factory, result):
-        _log_outcome("duplicate", result, message)
-    elif isinstance(result, BeforeCutoff):
-        _log_outcome("before_cutoff", result, message)
-    else:
-        _log_outcome("stored", result, message, notifications=len(result.drafts))
+        return DeliveryResult(result, 1)
+
+    for attempts, delay in enumerate((*retry_backoff_seconds, None), start=1):
+        try:
+            stored = store_event(session_factory, result)
+        except Exception as error:
+            if not _is_transient(error):
+                failure_code: FailureCode = "UNEXPECTED_PROCESSING_ERROR"
+            elif delay is None:
+                failure_code = "TRANSIENT_RETRIES_EXHAUSTED"
+            else:
+                logger.warning(
+                    f"notification_event_retrying attempt=%s retry_delay_seconds=%s "
+                    f"{_FAILURE_FORMAT}",
+                    attempts,
+                    delay,
+                    *_failure_fields(error, result, message),
+                )
+                sleep(delay)
+                if stop.is_set():
+                    return DeliveryResult(result, attempts)
+                continue
+            _log_failure(failure_code, attempts, error, result, message)
+            return DeliveryResult(result, attempts, failure_code)
+
+        if not stored:
+            _log_outcome("duplicate", result, message)
+        elif isinstance(result, BeforeCutoff):
+            _log_outcome("before_cutoff", result, message)
+        else:
+            _log_outcome("stored", result, message, notifications=len(result.drafts))
+        return DeliveryResult(result, attempts)
+    raise AssertionError("Retry loop exited without a delivery result")
 
 
 def handle_message(
     session_factory: Callable[[], Session],
     consumer: CommittingConsumer,
+    publisher: DeadLetterPublisher,
     message: Message,
     *,
     start_at: datetime,
+    retry_backoff_seconds: tuple[float, ...],
     stop: threading.Event,
+    sleep: Callable[[float], None],
 ) -> None:
     """Process one polled message, then synchronously commit its offset."""
 
@@ -192,40 +403,83 @@ def handle_message(
     if stop.is_set():
         return
 
-    result = None
-    try:
-        result = process_record(
-            message.key(), message.value(), message.headers(), start_at=start_at
+    outcome = process_delivery(
+        session_factory,
+        message,
+        start_at=start_at,
+        retry_backoff_seconds=retry_backoff_seconds,
+        stop=stop,
+        sleep=sleep,
+    )
+
+    if stop.is_set():
+        # The next run sees a duplicate, or reprocesses the record.
+        logger.info(
+            "notification_offset_not_committed event_id=%s topic=%s "
+            "partition=%s offset=%s",
+            getattr(outcome.result, "event_id", None),
+            message.topic(),
+            message.partition(),
+            message.offset(),
         )
-        if isinstance(result, Malformed):
-            logger.error(
-                "notification_event_malformed reason=%s topic=%s partition=%s offset=%s",
-                result.reason,
-                message.topic(),
-                message.partition(),
-                message.offset(),
-            )
-            raise WorkerAbort
+        return
 
-        _apply(session_factory, result, message)
-
-        if stop.is_set():
-            # The next run sees a duplicate, or reprocesses an ignored record.
-            logger.info(
-                "notification_offset_not_committed event_id=%s topic=%s "
-                "partition=%s offset=%s",
-                result.event_id,
-                message.topic(),
-                message.partition(),
-                message.offset(),
+    if outcome.failure_code is not None:
+        try:
+            publisher.dead_letter(
+                message, failure_code=outcome.failure_code, attempts=outcome.attempts
             )
-            return
+        except Exception as failure:
+            _log_failure(
+                outcome.failure_code,
+                outcome.attempts,
+                failure,
+                outcome.result,
+                message,
+                event=(
+                    "notification_dlq_publish_failed "
+                    f"kafka_error={_kafka_error_name(failure)}"
+                ),
+            )
+            raise WorkerAbort from None
+        logger.error(
+            "notification_event_sent_to_dlq failure_code=%s attempts=%s "
+            "topic=%s partition=%s offset=%s",
+            outcome.failure_code,
+            outcome.attempts,
+            message.topic(),
+            message.partition(),
+            message.offset(),
+        )
+
+    try:
         consumer.commit(message=message, asynchronous=False)
-    except WorkerAbort:
-        raise
     except Exception as failure:
-        _log_failure(failure, result, message)
+        _log_failure(
+            outcome.failure_code,
+            outcome.attempts,
+            failure,
+            outcome.result,
+            message,
+            event="notification_offset_commit_failed",
+        )
         raise WorkerAbort from None
+
+
+def sleep_until_stopped(delay: float, stop: threading.Event) -> None:
+    """Sleep for ``delay`` seconds, returning early once ``stop`` is set.
+
+    Not ``stop.wait(delay)``: the signal handler calls ``stop.set()`` on this same
+    thread, and that deadlocks if the signal lands while ``wait`` holds the
+    Event's non-reentrant lock.
+    """
+
+    deadline = time.monotonic() + delay
+    while not stop.is_set():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(remaining, STOP_CHECK_SECONDS))
 
 
 def make_consumer(settings: WorkerSettings) -> Consumer:
@@ -242,16 +496,32 @@ def make_consumer(settings: WorkerSettings) -> Consumer:
     return consumer
 
 
+def make_producer(settings: WorkerSettings) -> Producer:
+    return Producer(
+        {
+            "bootstrap.servers": settings.kafka_bootstrap_servers,
+            "enable.idempotence": True,
+            "acks": "all",
+            "message.timeout.ms": PUBLISH_TIMEOUT_SECONDS * 1000,
+            "message.max.bytes": DLQ_MAX_MESSAGE_BYTES,
+        }
+    )
+
+
 def run(
     settings: WorkerSettings,
     stop: threading.Event,
     consumer: CommittingConsumer | None = None,
+    publisher: DeadLetterPublisher | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> None:
-    """Consume until ``stop`` is set. Raise WorkerAbort on any failure."""
+    """Consume until ``stop`` is set. Raise WorkerAbort if the worker must stop."""
 
-    engine = make_engine(settings.database_url)
+    engine = make_engine(settings.database_url, worker_timeouts=True)
     session_factory = make_session_factory(engine)
     consumer = consumer or make_consumer(settings)
+    publisher = publisher or KafkaPublisher(make_producer(settings))
+    sleep = sleep or (lambda delay: sleep_until_stopped(delay, stop))
     logger.info(
         "notification_worker_started topic=%s consumer_group=%s",
         ORDER_TOPIC,
@@ -268,9 +538,12 @@ def run(
                 handle_message(
                     session_factory,
                     consumer,
+                    publisher,
                     message,
                     start_at=settings.notifications_start_at,
+                    retry_backoff_seconds=settings.retry_backoff_seconds,
                     stop=stop,
+                    sleep=sleep,
                 )
     finally:
         consumer.close()

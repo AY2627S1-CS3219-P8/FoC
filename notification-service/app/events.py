@@ -7,6 +7,10 @@
 # Scope: Writing implementation code — add the start_at cutoff and the BeforeCutoff result, and add identifiers to Ignore (ai-20261104-003).
 # Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
 # Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Writing implementation code — add correlation_id to the BeforeCutoff and Event results for failure logs (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
 
 """Validate raw ``order.events`` records and translate them into drafts.
 
@@ -73,6 +77,7 @@ class BeforeCutoff:
     event_id: UUID
     event_type: str
     order_id: UUID
+    correlation_id: UUID
 
 
 @dataclass(frozen=True)
@@ -102,6 +107,7 @@ class Event:
     event_type: str
     occurred_at: datetime
     order_id: UUID
+    correlation_id: UUID
     drafts: list[NotificationDraft]
 
 
@@ -144,7 +150,7 @@ def _parse(
     if type(schema_version) is not int or schema_version != 1:
         raise _Invalid("envelope.schema_version: not the integer 1")
     event_id = _uuid(envelope["event_id"], "envelope.event_id")
-    _uuid(envelope["correlation_id"], "envelope.correlation_id")
+    correlation_id = _uuid(envelope["correlation_id"], "envelope.correlation_id")
     occurred_at = _occurred_at(envelope["occurred_at"])
 
     payload = envelope["payload"]
@@ -165,7 +171,7 @@ def _parse(
     order_id = _order_id(key, payload)
 
     if occurred_at < start_at:
-        return BeforeCutoff(event_id, event_type, order_id)
+        return BeforeCutoff(event_id, event_type, order_id, correlation_id)
 
     if event_type not in HANDLED_EVENT_TYPES:
         return Ignore(event_id, event_type, order_id)
@@ -175,6 +181,7 @@ def _parse(
         event_type=event_type,
         occurred_at=occurred_at,
         order_id=order_id,
+        correlation_id=correlation_id,
         drafts=_translate(event_type, payload),
     )
 
