@@ -36,6 +36,10 @@ class RequestContextMiddleware:
             normalize_identifier(_header_value(scope, CORRELATION_ID_HEADER))
             or request_id
         )
+        scope = dict(scope)
+        scope["headers"] = _inject_context_headers(
+            scope.get("headers", []), request_id, correlation_id
+        )
         started_at = time.perf_counter()
         status_code: int | None = None
 
@@ -44,25 +48,9 @@ class RequestContextMiddleware:
             if message.get("type") == "http.response.start":
                 status_code = int(message.get("status", 500))
                 response = dict(message)
-                headers = [
-                    (name, value)
-                    for name, value in message.get("headers", [])
-                    if name.lower()
-                    not in {
-                        REQUEST_ID_HEADER.lower().encode("ascii"),
-                        CORRELATION_ID_HEADER.lower().encode("ascii"),
-                    }
-                ]
-                headers.extend(
-                    [
-                        (REQUEST_ID_HEADER.lower().encode("ascii"), request_id.encode()),
-                        (
-                            CORRELATION_ID_HEADER.lower().encode("ascii"),
-                            correlation_id.encode(),
-                        ),
-                    ]
+                response["headers"] = _apply_context_headers(
+                    message.get("headers", []), request_id, correlation_id
                 )
-                response["headers"] = headers
                 message = response
             await send(message)
 
@@ -107,6 +95,55 @@ def _route_template(scope: dict[str, Any]) -> str:
     if isinstance(template, str) and template:
         return template
     return str(scope.get("path") or "<unknown>")
+
+
+def _apply_context_headers(
+    headers: list[tuple[bytes, bytes]],
+    request_id: str,
+    correlation_id: str,
+) -> list[tuple[bytes, bytes]]:
+    context_header_names = {
+        REQUEST_ID_HEADER.lower().encode("ascii"),
+        CORRELATION_ID_HEADER.lower().encode("ascii"),
+    }
+    filtered = [
+        (name, value)
+        for name, value in headers
+        if name.lower() not in context_header_names
+    ]
+    filtered.extend(
+        [
+            (REQUEST_ID_HEADER.lower().encode("ascii"), request_id.encode("ascii")),
+            (
+                CORRELATION_ID_HEADER.lower().encode("ascii"),
+                correlation_id.encode("ascii"),
+            ),
+        ]
+    )
+    return filtered
+
+
+def _inject_context_headers(
+    headers: list[tuple[bytes, bytes]],
+    request_id: str,
+    correlation_id: str,
+) -> list[tuple[bytes, bytes]]:
+    """Add generated IDs only when the caller did not supply those headers."""
+
+    present = {name.lower() for name, _ in headers}
+    injected = list(headers)
+    if REQUEST_ID_HEADER.lower().encode("ascii") not in present:
+        injected.append(
+            (REQUEST_ID_HEADER.lower().encode("ascii"), request_id.encode("ascii"))
+        )
+    if CORRELATION_ID_HEADER.lower().encode("ascii") not in present:
+        injected.append(
+            (
+                CORRELATION_ID_HEADER.lower().encode("ascii"),
+                correlation_id.encode("ascii"),
+            )
+        )
+    return injected
 
 
 def _request_outcome(status_code: int, exception_type: str | None) -> str:

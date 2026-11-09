@@ -26,6 +26,12 @@ def context_from_event_body(body: bytes | None) -> dict[str, str]:
         if identifier is not None:
             fields[name] = identifier
 
+    # A domain event is the unit of work for a Kafka consumer. Reusing its
+    # immutable event ID as request_id lets logs and outbound HTTP calls follow
+    # the same operation across service boundaries.
+    if "event_id" in fields:
+        fields["request_id"] = fields["event_id"]
+
     event_type = envelope.get("event_type")
     if (
         isinstance(event_type, str)
@@ -36,7 +42,16 @@ def context_from_event_body(body: bytes | None) -> dict[str, str]:
 
     payload = envelope.get("payload")
     if isinstance(payload, dict):
-        order_id = normalize_identifier(payload.get("order_id"))
-        if order_id is not None:
-            fields["order_id"] = order_id
+        for name in (
+            "order_id",
+            "requester_id",
+            "courier_id",
+            "user_id",
+            "actor_user_id",
+            "target_user_id",
+            "cancelled_by",
+        ):
+            identifier = normalize_identifier(payload.get(name))
+            if identifier is not None:
+                fields[name] = identifier
     return fields

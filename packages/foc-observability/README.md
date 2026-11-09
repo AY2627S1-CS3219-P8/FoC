@@ -46,7 +46,9 @@ app.add_middleware(RequestContextMiddleware)
 
 Outbound HTTP clients should use `context_headers()`. Kafka consumers can use
 `context_from_event_body()` together with the topic, partition, and offset in
-`log_context`.
+`log_context`; a valid event's `event_id` is also installed as `request_id`,
+and bounded UUID actor fields such as `requester_id` and `courier_id` are
+carried into the log context.
 
 Configure the process once at its entry point:
 

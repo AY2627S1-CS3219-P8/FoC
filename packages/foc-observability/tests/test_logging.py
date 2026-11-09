@@ -18,6 +18,7 @@ from foc_observability import (
     log_context,
     log_event,
 )
+from foc_observability.context import normalize_identifier
 
 
 def _record(message: str = "event") -> logging.LogRecord:
@@ -167,10 +168,12 @@ def test_request_middleware_binds_context_and_returns_headers():
     request_id = "11111111-1111-4111-8111-111111111111"
     correlation_id = "22222222-2222-4222-8222-222222222222"
     observed = {}
+    observed_headers = {}
     sent = []
 
     async def app(scope, receive, send):
         observed.update(get_context())
+        observed_headers.update(dict(scope["headers"]))
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
@@ -196,10 +199,66 @@ def test_request_middleware_binds_context_and_returns_headers():
         "request_id": request_id,
         "correlation_id": correlation_id,
     }
+    assert observed_headers[b"x-request-id"] == request_id.encode()
+    assert observed_headers[b"x-correlation-id"] == correlation_id.encode()
     response_headers = dict(sent[0]["headers"])
     assert response_headers[b"x-request-id"] == request_id.encode()
     assert response_headers[b"x-correlation-id"] == correlation_id.encode()
     assert get_context() == {}
+
+
+def test_request_middleware_injects_missing_context_headers():
+    observed_headers = {}
+
+    async def app(scope, receive, send):
+        observed_headers.update(dict(scope["headers"]))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def send(message):
+        return None
+
+    middleware = RequestContextMiddleware(app)
+    asyncio.run(
+        middleware(
+            {"type": "http", "headers": []},
+            None,
+            send,
+        )
+    )
+
+    assert normalize_identifier(
+        observed_headers[b"x-request-id"].decode("ascii")
+    ) is not None
+    assert normalize_identifier(
+        observed_headers[b"x-correlation-id"].decode("ascii")
+    ) is not None
+
+
+def test_request_middleware_preserves_invalid_supplied_correlation_header():
+    observed_headers = {}
+
+    async def app(scope, receive, send):
+        observed_headers.update(dict(scope["headers"]))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def send(message):
+        return None
+
+    middleware = RequestContextMiddleware(app)
+    asyncio.run(
+        middleware(
+            {
+                "type": "http",
+                "headers": [(b"x-correlation-id", b"not-a-uuid")],
+            },
+            None,
+            send,
+        )
+    )
+
+    assert observed_headers[b"x-correlation-id"] == b"not-a-uuid"
 
 
 def test_request_middleware_emits_structured_completion_event(caplog):
@@ -273,7 +332,11 @@ def test_context_headers_and_event_context_are_bounded():
             "event_id": event_id,
             "event_type": "order.created",
             "correlation_id": correlation_id,
-            "payload": {"order_id": order_id},
+            "payload": {
+                "order_id": order_id,
+                "requester_id": "55555555-5555-4555-8555-555555555555",
+                "courier_id": "66666666-6666-4666-8666-666666666666",
+            },
         }
     ).encode()
 
@@ -287,6 +350,14 @@ def test_context_headers_and_event_context_are_bounded():
         "event_id": event_id,
         "event_type": "order.created",
         "correlation_id": correlation_id,
+        "request_id": event_id,
         "order_id": order_id,
+        "requester_id": "55555555-5555-4555-8555-555555555555",
+        "courier_id": "66666666-6666-4666-8666-666666666666",
     }
+    with log_context(**context_from_event_body(body)):
+        assert context_headers() == {
+            REQUEST_ID_HEADER: event_id,
+            CORRELATION_ID_HEADER: correlation_id,
+        }
     assert context_from_event_body(b"not-json") == {}
