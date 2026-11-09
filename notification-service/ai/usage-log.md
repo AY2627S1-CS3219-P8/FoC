@@ -1191,7 +1191,6 @@ Claude Code implemented the authenticated history and read-status API to the use
 - Verification: Agent checks. With a disposable PostgreSQL 16 container, `pytest -rs` in `notification-service/`: 918 passed, 5 skipped (real-broker tests; no Kafka), and 1 existing Starlette deprecation warning. Without `TEST_DATABASE_URL`: 753 passed, 170 skipped. The stream tests passed in three consecutive runs. The PostgreSQL stream tests run the app in a real uvicorn server and write rows through the worker's `store_event`, so they use its real NOTIFY; live delivery is asserted within 1 second. On a scratch copy the tests caught all 14 mutations applied (subscribing after the starting-point query, clearing the wake-up after the query, no catch-up after reconnecting, no recipient scope, no clamp, an inclusive `id >=`, no unsubscribe, no reconnect, accepting negative ids, resetting the heartbeat on activity, no lifetime, a wrong content type, no batch continuation, waking every stream). A manual `curl -N` against a local uvicorn with the test database showed the headers, an `id:`/`data:` event, and `: ping` lines. Before Prompt 2: on SIGTERM with a stream open, uvicorn waited for the connection, and the process was still running 15 s later. After Prompt 2, with the same uvicorn flags as the new command, one open stream, and the test database: the process exited 5 s after SIGTERM, the app's shutdown ran, the `LISTEN` connection count went from 1 to 0, curl saw the stream cut off (exit 18), and uvicorn logged `Exception in ASGI application` with a `CancelledError` for the cancelled stream. The image built under a separate tag (`ns-sse-verify:local`, removed afterwards) with the new command. The test suite was not rerun after Prompt 2, which changed only the Dockerfile and documentation. `docker compose config` succeeded. Not done: a live run against the Compose stack with User Service, Order Service, and Kafka.
 - Author review: Keith stated on 2026-11-09, verbatim: "Keith ran .venv/bin/python -m pytest -rs, 918 passed, 5 skipped. Keith also performed manual SSE checks against the local Compose stack." The test environment was not stated; the counts match a run in `notification-service/` with `TEST_DATABASE_URL` set and no Kafka broker, where the 5 skips are the real-broker worker tests. The run was after Prompt 2, so it covers the final working tree. The manual SSE checks cover the agent's "Not done" item, a run against the Compose stack; the specific checks were not stated. A code read was not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
 - Review confirmation recorded at: 2026-11-09T09:34:40+08:00
-- Missing evidence: Original per-message timestamps unavailable. Prompt 1 is copied from Step 8 of `docs/implementation-steps.md`, which matches the prompt the user pasted. The clarifying questions and the user's selections are reproduced from the question tool. Key responses 1 and 2 are the full verbatim final responses. Intermediate progress messages are not reproduced. No redactions.
 - Header exceptions: None.
 
 ### Prompt 1
@@ -1339,3 +1338,170 @@ The API image now runs uvicorn with `--timeout-graceful-shutdown 5`. With a stre
 ### Usage summary
 
 Claude Code implemented the live notification stream to the user's specification and the user's answers on `Last-Event-ID`, with User Service replaced by a test double, a real PostgreSQL database, and a real uvicorn server in the tests, then added uvicorn's graceful-shutdown timeout to the image at the user's request.
+
+## ai-20261109-001
+
+- Recorded at: 2026-11-09T11:44:23+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-09 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, Kafka console tools, curl, and pytest tools in the local workspace.
+- Mode and scenario: Agentic documentation from the user's specification, with every command checked against the user's running local Compose stack. One clarifying question was asked, about a blocking Order Service bug. Prompt 2 asked for clearer instructions on which terminal and directory each command runs from.
+- Outcome: Rewrote `notification-service/README.md`. New sections cover the purpose and the event-to-notification table, the contract assumption, links to the planning documents, "Running it" (Compose services, ports, health, and one configuration table for the variables the code reads plus a table of the `.env` values Compose uses), an end-to-end walkthrough, an API reference with the DTO and error statuses, a DLQ investigation runbook adapted from `credit-service/README.md`, a Frontend Service handover written as a numbered list (entry 1: the Step 9 relay), and one full-suite test command. The existing API, "Live stream", Worker, and "Running tests" content was kept, reorganised under those sections, and the worker settings table moved into the configuration table. The existing AI Use Summary was kept verbatim; a subsection and a header block were added. The agent found that Order Service in Compose returns 503 for every authenticated request, because its httpx client trusts only the `certifi` bundle and cannot verify User Service's certificate from the internal CA. The bug was reported and not fixed. By the user's choice, the walkthrough documents a temporary workaround: a combined CA bundle and a Compose override file, both in the git-ignored `certs/` directory, that mount the bundle over Order Service's `certifi/cacert.pem`. No service code, `compose.yaml`, `.env.example`, frontend file, or `contracts/asyncapi.yaml` was changed. Left in the user's local stack: `certs/order-ca-bundle.pem` and `certs/compose.order-ca.yaml`, `order-service` recreated with the override, two throwaway users with two walkthrough orders, and two hand-made `order.rejected` records in `order.events`. One of those records is in the DLQ; the other was escaped wrongly and was stored as an ordinary notification for the throwaway user. After Prompt 2: every command block in the README was labelled with a first-line comment naming the terminal and directory to run it from. The walkthrough gained a table defining the repository root, Terminal 1, and Terminal 2, and its live stream moved from a background job into the foreground of Terminal 2, with its own login. "Running tests" was reordered into numbered steps (install, start the throwaway containers, run, stop) and uses `python3` and an `until` loop for topic creation. The runbook states its directory. Nothing was committed by the agent.
+- Verification: Agent checks against the local Compose stack with the override. Before the override, a valid token got 503 from Order Service and 200 from Notification Service; after it, 200 from both. The walkthrough blocks in steps 4–8 ran as written in zsh, using tokens from the login helper, which was run separately in bash and zsh with piped input. The order reached `OPEN`; `notification-db` and the history API showed `order.opened`; a background `curl -N` stream received `order.accepted` and `order.picked_up` live; Bob's history showed `order.completed`; read, unread-count, read-all, and the `Last-Event-ID` resume behaved as documented. `docker compose up -d --wait --wait-timeout 300` exited 0 (without `--build`), and `supplier-seed --dry-run` exited 0. Handover statuses observed: 200; 401 with `WWW-Authenticate: Bearer` for a missing or bad token on every endpoint, including the stream as JSON; 401 before 422 for an invalid query or id with no token; 404 for another user's notification; 422 for `limit=0`, `cursor=x`, and a non-numeric id; 503 as JSON on unread-count and the stream with `user-service` stopped, then 200 after it was restarted. The stream's `Content-Type`, `Cache-Control`, and `X-Accel-Buffering` headers matched. `http://notification-service:8080/health` answered from inside `frontend-service`. A well-formed `order.rejected` with a NUL in `reason` was stored as `UNEXPECTED_PROCESSING_ERROR` (`DataError`, SQL state `22P05`) in the DLQ; the documented runbook commands read it, found its source record by partition and offset, matched the worker log lines, and showed no `processed_events` row. With throwaway PostgreSQL 16 and Kafka 4.1.2 (topics from `event-broker/create-topics.sh`), the documented full-suite command `.venv/bin/python -m pytest -rs` in `notification-service/` gave 923 passed, 0 skipped, and 1 existing Starlette deprecation warning. Not done: a full `docker compose up` from empty volumes, and a run of `docker compose up --build`. The full-stack check used the user's existing stack. After Prompt 2: all 32 shell blocks passed `bash -n` and `zsh -n`, and every in-page anchor resolved. The edited walkthrough and test procedure were not rerun. During the attempt, the FoC Compose containers had been removed (volumes intact), and `notification-test-db` and `notification-test-kafka` had been started at 12:16 outside the agent's session. The agent's test script stopped at the container-name conflict before doing anything, and the agent left the stack and those containers untouched.
+- Author review: Keith stated on 2026-11-09, verbatim: "Keith performed all end-to-end checks and tests included in the README and confirmed validity of the whole document." This was stated after Prompt 2, so it covers the final README, including the edited walkthrough (Terminal 1 and Terminal 2), the DLQ runbook, and the numbered test procedure that the agent only syntax-checked. Keith added on 2026-11-09, verbatim: "Forgot to add that 923 passed when running tests". Skipped counts and the results of the end-to-end checks were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Header exceptions: None.
+- Missing evidence: Original per-message timestamps unavailable. The clarifying question and the user's selection are reproduced from the question tool. Prompt 2 is the user's message verbatim. Key responses 1 and 2 are the full verbatim final responses. Intermediate progress messages are not reproduced. No redactions.
+
+### Prompt 1
+
+```text
+You are writing the documentation and end-to-end walkthrough for the
+Notification Service in the FoC repository. Use the following specification
+as your single source of truth. Do not make assumptions about any requirement
+not listed here. If something needed is unspecified, stop and ask.
+
+Overview:
+Write notification-service/README.md for the service as it is implemented.
+The Compose wiring, schema, DLQ topic, consumer, history and read-status API,
+and SSE stream all exist. The Next.js relay in the Frontend Service does not
+exist yet: it is deferred and will be built by the Frontend Service owner.
+Every command must be checked against the running system. The README covers:
+1. Purpose: consumes order.events and turns order lifecycle events into
+   per-user notifications, served through a history API and an SSE stream,
+   which the Frontend Service will relay to the browser.
+2. Contract assumption: the service depends on order.opened, order.rejected,
+   cancelled_by, and the rejection reason codes, which the Order Service team
+   is adding to contracts/asyncapi.yaml.
+3. Running it: the Compose services, ports, and configuration variables, with
+   the purpose and default of each.
+4. A walkthrough: log in as two users, create and progress an order through
+   the Order Service API, then see the notification:
+   - in the database;
+   - through "curl" on the history API;
+   - live through "curl -N" on the stream.
+5. API reference: a summary of the endpoints and the DTO, with a link to
+   /docs for the full schemas.
+6. DLQ investigation runbook, adapted from credit-service/README.md: how to
+   read notification-service.order-events.dlq, what each x-notification-*
+   header means, what each failure code means (including that
+   UNEXPECTED_PROCESSING_ERROR covers text PostgreSQL cannot store), how to
+   correlate a record with logs and the source event, and the rule that records
+   are never replayed automatically.
+7. Frontend Service handover: a section the Frontend Service owner follows to
+   build the relay. It must:
+   - state that the relay does not exist yet, and that the browser must never
+     call Notification Service directly;
+   - map each relay route to the Notification Service endpoint it forwards to:
+       GET  /api/notifications              -> GET  /notifications (cursor, limit)
+       GET  /api/notifications/unread-count -> GET  /notifications/unread-count
+       POST /api/notifications/[id]/read    -> POST /notifications/{id}/read
+       POST /api/notifications/read-all     -> POST /notifications/read-all
+       GET  /api/notifications/stream       -> GET  /notifications/stream
+   - give the base URL to use from the frontend-service container
+     (http://notification-service:8080) and from a host-run "next dev"
+     (http://127.0.0.1:8084), and the NOTIFICATION_SERVICE_URL variable name;
+   - explain authentication: send the foc_session cookie value as
+     "Authorization: Bearer <token>"; which statuses each endpoint can return
+     (200, 401, 404, 422, 503) and when;
+   - list what the stream relay must forward and set: Last-Event-ID, the
+     Content-Type, Cache-Control, and X-Accel-Buffering response headers,
+     passing the body through without buffering, aborting the upstream request
+     when the browser disconnects, and that a 401 or 503 arrives as JSON before
+     any SSE bytes;
+   - link to /docs for the DTO and the params schema of each type;
+   - be written as a list that can grow, so later handovers to the Frontend
+     Service (for example, UI notes) can be added as new entries.
+Record AI assistance in the same disclosure format the repository already uses
+(see the header of compose.yaml and supplier-service/ai/usage-log.md).
+
+Acceptance criteria:
+- Starting from a fresh "docker compose up", a teammate can follow only the
+  README and see one notification created, listed, and delivered live through
+  the stream.
+- Every command in the README runs as written, with placeholders clearly
+  marked.
+- The full test suite runs with one documented command and passes.
+- The runbook lets someone find a quarantined record and match it to the source
+  event and the worker logs.
+- Every route-to-endpoint mapping, base URL, header, and status in the handover
+  section matches the running API.
+- The configuration table matches the variables the code actually reads.
+- The AI-assistance disclosure is present and follows the existing format.
+
+Out of scope:
+- Implementing the relay, or any change to frontend-service or to the
+  frontend-service entry in compose.yaml.
+- Changes to service behaviour. If the documentation reveals a bug or a
+  mismatch with this specification, report it instead of fixing it as part of
+  this documentation work.
+- Frontend UI documentation.
+- Editing contracts/asyncapi.yaml.
+
+Edge cases:
+- The walkthrough must set NOTIFICATIONS_START_AT so that new test orders are
+  not filtered out by the cutoff.
+- Mention that "curl -N" is needed to see SSE output as it arrives, and that
+  streams close after SSE_MAX_LIFETIME_SECONDS.
+- Show how to get a session token from User Service, without printing real
+  credentials.
+```
+
+### Clarifying questions and answers
+
+The agent asked one multiple-choice question. The question and the user's selection, verbatim:
+
+- "I found a blocker for the README walkthrough. Order Service in Compose returns 503 "Authentication temporarily unavailable" for every logged-in request. Its httpx client only trusts the public certifi bundle and has no way to trust certs/ca.crt, so it can't reach User Service. I confirmed this on your running stack: the same token gets 200 from Notification Service and 503 from Order Service. The spec requires the walkthrough to create orders through the Order Service API and says not to change service behaviour. How should the README handle this?" — "Documented override (Recommended)" ("The README adds a temporary, clearly labelled step: build a combined CA bundle (certifi + certs/ca.crt) and run with a local compose override that mounts it over Order Service's certifi cacert.pem. compose.yaml and Order Service code stay unchanged, and I report the bug. I'd verify the whole walkthrough end to end this way.")
+
+### Key response 1
+
+The README is written and checked against the running stack. Nothing is committed.
+
+**Blocker found and worked around (reported, not fixed).** Order Service in Compose returns 503 for every logged-in request because it can't trust `certs/ca.crt`. As you chose, the walkthrough has a temporary step that mounts a combined CA bundle through a git-ignored override (`certs/compose.order-ca.yaml`). This needs to go to the Order Service team. A plain `docker compose up` drops the override, so step 2 has to be rerun after one.
+
+**What I verified**
+- Walkthrough: ran in zsh exactly as written. One order produced `order.opened`, `accepted`, `picked_up`, and `completed`, seen in the DB, in the history API, and live with `curl -N`.
+- Handover: every status matched: 401 (before 422), 404, 422, and 503 with User Service briefly stopped. I also checked the SSE headers, the `Last-Event-ID` resume, and that `http://notification-service:8080` is reachable from `frontend-service`.
+- Runbook: I put a real record in the DLQ (a NUL in `reason` → `UNEXPECTED_PROCESSING_ERROR`, `22P05`), then traced it to the source offset and the worker log lines.
+- Tests: the documented one-command run, with throwaway PostgreSQL and Kafka, gave **923 passed, 0 skipped**.
+
+**Not verified:** a fresh `docker compose up` from empty volumes. I used your existing stack.
+
+**Left in your local stack**
+- Two throwaway users (`A9573311X`, `A9573311Y`) with two orders.
+- Two hand-made `order.rejected` records in `order.events`, which is kept forever. One is in the DLQ; the other, with bad escaping, became an ordinary notification for the test user.
+- `order-service` is running with the override.
+
+**Notes**
+- I kept the existing API, Worker, and test detail but reorganised it, and moved the worker settings into one configuration table.
+- Disclosure: a new header block, a README summary entry, and `ai-20261109-001` in the usage log and the root README, with author review marked pending. Your uncommitted one-line edit to `usage-log.md` is untouched.
+
+### Prompt 2
+
+```text
+Further enhance the clarity of the README, in terms of the manual checks as well as tests. Provide more information on:
+- (If the manual run is to be performed across a few terminals) Specify which terminal the command should be run from
+- Specify from which directory the command should be run (e.g. the repository root or from notification-service)
+```
+
+### Key response 2
+
+I've updated the README. Nothing is committed.
+
+**What changed**
+- **Every command block now says where to run it.** Its first line is a comment, for example `# Run in: Terminal 1, repository root` or `# Run in: notification-service/`. That's 32 blocks across the walkthrough, the DLQ runbook, and the tests.
+- **Walkthrough:** a table at the top defines "repository root", Terminal 1, and Terminal 2. Each step heading names its terminal. The live stream now runs in the foreground in Terminal 2 (with its own login, since shell variables don't carry over) instead of as a background job. The text says what appears in which terminal, and Ctrl+C closes the stream.
+- **Tests:** reordered into four numbered steps: install (`notification-service/`), start the throwaway DB and broker (repository root), run (`notification-service/`), and stop. The "repeat until it succeeds" note is now an `until` loop. Partial runs and the warnings follow. It also notes Python 3.12 (`python3`, not `python`).
+- **Runbook:** states that it runs from the repository root, with the stack up.
+
+**Not verified this time.** Partway through, the FoC Compose containers were removed (the volumes are intact). `notification-test-db` and `notification-test-kafka` were also started at 12:16 outside this session, so I assumed that was you and touched nothing. As a result, the edited walkthrough and test steps were only syntax-checked, in bash and zsh; all blocks and anchors passed. The commands themselves are unchanged from the previous verified run, apart from the Terminal 2 split and the `until` loop. If you'd like, I can bring the stack back up and rerun both once you're done.
+
+Disclosure: Prompt 2 and this response are added to `ai-20261109-001`, and the README header and summary are updated.
+
+### Scope
+
+- `notification-service/README.md`: Refactoring and documentation improvements — the new sections, the restructuring, the full-suite test command, and (Prompt 2) the terminal and directory labels; Disclosure record — header block and AI Use Summary.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code wrote the Notification Service README to the user's specification and checked every command against the user's running Compose stack. It reported an Order Service CA-trust bug and, at the user's choice, documented a temporary git-ignored override instead of fixing it. At the user's follow-up request, it labelled every command with the terminal and directory to run it from.

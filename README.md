@@ -720,5 +720,22 @@ and [usage log](notification-service/ai/usage-log.md).
   responses are recorded; original timestamps unavailable; no
   redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service documentation and walkthrough](notification-service/ai/usage-log.md#ai-20261109-001):
+  Claude Code (claude-opus-5-5) provided Refactoring and documentation
+  improvements for the Notification Service README: purpose, contract assumption,
+  Compose and configuration reference, an end-to-end walkthrough, API reference,
+  DLQ investigation runbook, Frontend Service handover, and a single full-suite
+  test command, following the user's specification. It reported an Order Service
+  CA-trust bug and, at the user's choice, documented a temporary git-ignored
+  Compose override instead of fixing it. A follow-up labelled every command with
+  the terminal and directory to run it from. Agent checks: the walkthrough, the
+  handover statuses, and the runbook were run against the local Compose stack;
+  the full suite with PostgreSQL 16 and Kafka 4.1.2 had 923 passed and 0
+  skipped. The follow-up's edits were only syntax-checked by the agent. Keith
+  confirmed on 2026-11-09 performing all end-to-end checks and tests included in
+  the README, with 923 tests passed, and the validity of the whole document. The
+  exact prompts, the clarifying answer, and the final responses are recorded;
+  original timestamps unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.
