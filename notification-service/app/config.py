@@ -15,6 +15,10 @@
 # Scope: Writing implementation code — add API-only ApiSettings with a required HTTPS USER_SERVICE_URL and USER_SERVICE_CA_FILE (ai-20261108-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
 # Details: notification-service/ai/usage-log.md; ai-20261108-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — add API-only SSE_HEARTBEAT_SECONDS and SSE_MAX_LIFETIME_SECONDS settings, validated as positive numbers of seconds (ai-20261108-002).
+# Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
+# Details: notification-service/ai/usage-log.md; ai-20261108-002
 
 """Environment-backed configuration for the Notification Service."""
 
@@ -28,6 +32,8 @@ from urllib.parse import urlsplit
 DATABASE_URL_SCHEME = "postgresql+psycopg://"
 LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
 DEFAULT_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0, 4.0)
+DEFAULT_SSE_HEARTBEAT_SECONDS = 20.0
+DEFAULT_SSE_MAX_LIFETIME_SECONDS = 600.0
 
 
 class ConfigError(RuntimeError):
@@ -68,12 +74,31 @@ class Settings:
         )
 
 
+def _positive_seconds_env(name: str, default: float) -> float:
+    """Unset or empty means ``default``; otherwise a positive finite number."""
+
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    message = f"{name} must be a positive number of seconds"
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ConfigError(message) from None
+    # float() also accepts "nan" and "inf", and nan compares false to everything.
+    if not (math.isfinite(value) and value > 0):
+        raise ConfigError(message)
+    return value
+
+
 @dataclass(frozen=True, kw_only=True)
 class ApiSettings(Settings):
     """Settings only the API needs, so the worker does not have to supply them."""
 
     user_service_url: str
     user_service_ca_file: str
+    sse_heartbeat_seconds: float = DEFAULT_SSE_HEARTBEAT_SECONDS
+    sse_max_lifetime_seconds: float = DEFAULT_SSE_MAX_LIFETIME_SECONDS
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
@@ -87,6 +112,12 @@ class ApiSettings(Settings):
             log_level=shared.log_level,
             user_service_url=user_service_url,
             user_service_ca_file=required_env("USER_SERVICE_CA_FILE"),
+            sse_heartbeat_seconds=_positive_seconds_env(
+                "SSE_HEARTBEAT_SECONDS", DEFAULT_SSE_HEARTBEAT_SECONDS
+            ),
+            sse_max_lifetime_seconds=_positive_seconds_env(
+                "SSE_MAX_LIFETIME_SECONDS", DEFAULT_SSE_MAX_LIFETIME_SECONDS
+            ),
         )
 
 

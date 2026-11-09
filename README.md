@@ -704,5 +704,21 @@ and [usage log](notification-service/ai/usage-log.md).
   Compose stack with the real User Service. The exact prompt and the final response
   are recorded; original timestamps unavailable; no redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service live stream](notification-service/ai/usage-log.md#ai-20261108-002):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, and Refactoring and documentation improvements for the per-process
+  `LISTEN` connection, the `GET /notifications/stream` Server-Sent Events endpoint,
+  the `SSE_HEARTBEAT_SECONDS` and `SSE_MAX_LIFETIME_SECONDS` settings (including
+  root `compose.yaml` and `.env.example`), uvicorn's `--timeout-graceful-shutdown 5`
+  in the Dockerfile, tests, and the service README, following
+  the user's specification and answers. Agent checks: the full suite with
+  PostgreSQL 16 had 918 passed and 5 skipped; without a database, 753 passed and
+  170 skipped; the tests caught all 14 mutations applied; with a stream open, the API
+  stopped 5 seconds after SIGTERM. Keith confirmed on 2026-11-09 running
+  `.venv/bin/python -m pytest -rs` with 918 passed and 5 skipped, and manual SSE
+  checks against the local Compose stack. The exact prompts, the clarifying answers, and the final
+  responses are recorded; original timestamps unavailable; no
+  redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

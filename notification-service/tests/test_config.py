@@ -15,6 +15,10 @@
 # Scope: Writing implementation code — add tests for the API-only User Service settings (ai-20261108-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
 # Details: notification-service/ai/usage-log.md; ai-20261108-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — add tests for the SSE_HEARTBEAT_SECONDS and SSE_MAX_LIFETIME_SECONDS settings (ai-20261108-002).
+# Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
+# Details: notification-service/ai/usage-log.md; ai-20261108-002
 
 import os
 import subprocess
@@ -238,6 +242,54 @@ def test_non_https_user_service_url_is_rejected(api_env, value) -> None:
 
     with pytest.raises(ConfigError, match="USER_SERVICE_URL must be an HTTPS URL"):
         ApiSettings.from_env()
+
+
+def test_sse_settings_default_when_unset(api_env) -> None:
+    api_env.delenv("SSE_HEARTBEAT_SECONDS", raising=False)
+    api_env.delenv("SSE_MAX_LIFETIME_SECONDS", raising=False)
+
+    settings = ApiSettings.from_env()
+
+    assert settings.sse_heartbeat_seconds == 20
+    assert settings.sse_max_lifetime_seconds == 600
+
+
+@pytest.mark.parametrize("name", ["SSE_HEARTBEAT_SECONDS", "SSE_MAX_LIFETIME_SECONDS"])
+@pytest.mark.parametrize("value", ["", "   "])
+def test_empty_sse_setting_uses_the_default(api_env, name, value) -> None:
+    api_env.setenv(name, value)
+
+    settings = ApiSettings.from_env()
+
+    assert settings.sse_heartbeat_seconds == 20
+    assert settings.sse_max_lifetime_seconds == 600
+
+
+def test_sse_settings_are_parsed(api_env) -> None:
+    api_env.setenv("SSE_HEARTBEAT_SECONDS", " 5 ")
+    api_env.setenv("SSE_MAX_LIFETIME_SECONDS", "30.5")
+
+    settings = ApiSettings.from_env()
+
+    assert settings.sse_heartbeat_seconds == 5
+    assert settings.sse_max_lifetime_seconds == 30.5
+
+
+@pytest.mark.parametrize("name", ["SSE_HEARTBEAT_SECONDS", "SSE_MAX_LIFETIME_SECONDS"])
+@pytest.mark.parametrize("value", ["0", "-1", "abc", "nan", "inf", "1,2", "20s"])
+def test_invalid_sse_setting_is_rejected(api_env, name, value) -> None:
+    api_env.setenv(name, value)
+
+    with pytest.raises(ConfigError, match=f"{name} must be a positive number of seconds"):
+        ApiSettings.from_env()
+
+
+def test_worker_settings_do_not_need_sse_settings(env) -> None:
+    env.setenv("SSE_HEARTBEAT_SECONDS", "abc")
+    env.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    env.setenv("NOTIFICATIONS_START_AT", "2026-11-04T08:30:00+08:00")
+
+    assert WorkerSettings.from_env().database_url == VALID_URL
 
 
 def test_api_startup_fails_without_user_service_url(api_env) -> None:

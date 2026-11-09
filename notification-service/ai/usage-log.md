@@ -1059,7 +1059,6 @@ Claude Code verified the user's proposed one-word fix on a scratch copy, applied
 - Verification: Agent checks. With a disposable PostgreSQL 16 container, `pytest` in `notification-service/`: 790 passed, 5 skipped (real-broker tests; no Kafka). Without `TEST_DATABASE_URL`: 668 passed, 127 skipped. EXPLAIN (captured from the statements the API sent, on a 20,300-row dataset after `ANALYZE`): both list queries used an Index Scan on `ix_notifications_recipient_id_desc`; unread-count and read-all used a Bitmap Index Scan on `ix_notifications_recipient_unread`; mark-read used an Index Scan on `ix_notifications_recipient_id_desc`; no Seq Scan. The concurrency test holds the row lock until both requests are waiting on it. The tests caught all 8 mutations applied (no recipient scope on mark-read, overwriting `read_at`, no look-ahead row, inclusive cursor, read-all touching read rows, no `bigint` clamp, a case-sensitive scheme, no `WWW-Authenticate`). `docker compose config` succeeded. Not done: a live Compose run with a real User Service token.
 - Author review: Keith stated on 2026-11-08, verbatim: "Keith has ran .venv/bin/python -m pytest -rs on the notification service test suite.  with TEST_DATABASE_URL set to a throwaway PostgreSQL 16 container; the result was 790 passed, 5 (real-broker worker tests) skipped, read and verified the code, and ran manual checks against the full Compose stack with the real User Service" The run was in `notification-service/` without `TEST_KAFKA_BOOTSTRAP_SERVERS`, so the 5 skips are the real-broker worker tests. The manual Compose checks cover the agent's "Not done" item, a run with the real User Service; the specific checks were not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
 - Review confirmation recorded at: 2026-11-08T20:49:25+08:00
-- Missing evidence: Original per-message timestamps unavailable. Prompt 1 is copied from Step 7 of `docs/implementation-steps.md`, which matches the prompt the user pasted. Key response 1 is the full verbatim final response to Prompt 1, added on 2026-11-08 as a correction, because this entry first omitted it although it became available. Intermediate progress messages are not reproduced. No redactions.
 - Header exceptions: None.
 
 ### Prompt 1
@@ -1181,3 +1180,162 @@ The history and read-status API is built. Every acceptance criterion has a test,
 ### Usage summary
 
 Claude Code implemented the authenticated history and read-status API to the user's specification, with User Service replaced by test doubles in the tests and a real PostgreSQL database for the data and query-plan tests.
+
+## ai-20261108-002
+
+- Recorded at: 2026-11-08T21:39:21+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-08 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation of the live notification stream (Server-Sent Events) from the user's specification, after one round of clarifying questions on `Last-Event-ID` edge cases.
+- Outcome: New `app/listener.py` (one `LISTEN notifications` connection per API process; a hub that wakes the open streams for the notified recipient; reconnect after a drop, then wake every stream), `app/routes/stream.py` (`GET /notifications/stream`), `tests/test_stream.py`, and `tests/test_stream_postgres.py`. Changed `app/config.py` (`SSE_HEARTBEAT_SECONDS`, default 20, and `SSE_MAX_LIFETIME_SECONDS`, default 600, as positive numbers), `app/main.py` (start and stop the listener; include the router), `tests/test_config.py`, `tests/test_notifications_api.py` (the stream joins the authentication tests; `Last-Event-ID` is allowed in the OpenAPI parameter check; an OpenAPI test for the stream), root `compose.yaml` and `.env.example` (the two settings), this service's README ("Live stream"), and, after Prompt 2, the `Dockerfile` command (`--timeout-graceful-shutdown 5`; 5 was the agent's choice, inside Docker's 10-second stop timeout). User decisions from the clarifying questions: a `Last-Event-ID` above the caller's newest id is treated as that id; negative and non-integer values are invalid (new notifications only); `0` is valid and sends the whole history. Design choices the specification left open: heartbeats run on a fixed schedule; the stream subscribes and chooses its starting point before the response headers are sent; rows are queried 100 at a time; a query failure after the headers are sent is logged and ends the stream, while a failure of the starting-point query returns 500 as other endpoints do; the listener retries every second and uses TCP keepalives. During testing the agent found and fixed its own defect: the starting point was first chosen inside the response body, after the headers had been sent, so a notification committed just after the client saw the response start could be treated as already seen. The worker is unchanged. Nothing was committed by the agent.
+- Verification: Agent checks. With a disposable PostgreSQL 16 container, `pytest -rs` in `notification-service/`: 918 passed, 5 skipped (real-broker tests; no Kafka), and 1 existing Starlette deprecation warning. Without `TEST_DATABASE_URL`: 753 passed, 170 skipped. The stream tests passed in three consecutive runs. The PostgreSQL stream tests run the app in a real uvicorn server and write rows through the worker's `store_event`, so they use its real NOTIFY; live delivery is asserted within 1 second. On a scratch copy the tests caught all 14 mutations applied (subscribing after the starting-point query, clearing the wake-up after the query, no catch-up after reconnecting, no recipient scope, no clamp, an inclusive `id >=`, no unsubscribe, no reconnect, accepting negative ids, resetting the heartbeat on activity, no lifetime, a wrong content type, no batch continuation, waking every stream). A manual `curl -N` against a local uvicorn with the test database showed the headers, an `id:`/`data:` event, and `: ping` lines. Before Prompt 2: on SIGTERM with a stream open, uvicorn waited for the connection, and the process was still running 15 s later. After Prompt 2, with the same uvicorn flags as the new command, one open stream, and the test database: the process exited 5 s after SIGTERM, the app's shutdown ran, the `LISTEN` connection count went from 1 to 0, curl saw the stream cut off (exit 18), and uvicorn logged `Exception in ASGI application` with a `CancelledError` for the cancelled stream. The image built under a separate tag (`ns-sse-verify:local`, removed afterwards) with the new command. The test suite was not rerun after Prompt 2, which changed only the Dockerfile and documentation. `docker compose config` succeeded. Not done: a live run against the Compose stack with User Service, Order Service, and Kafka.
+- Author review: Keith stated on 2026-11-09, verbatim: "Keith ran .venv/bin/python -m pytest -rs, 918 passed, 5 skipped. Keith also performed manual SSE checks against the local Compose stack." The test environment was not stated; the counts match a run in `notification-service/` with `TEST_DATABASE_URL` set and no Kafka broker, where the 5 skips are the real-broker worker tests. The run was after Prompt 2, so it covers the final working tree. The manual SSE checks cover the agent's "Not done" item, a run against the Compose stack; the specific checks were not stated. A code read was not stated. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-09T09:34:40+08:00
+- Missing evidence: Original per-message timestamps unavailable. Prompt 1 is copied from Step 8 of `docs/implementation-steps.md`, which matches the prompt the user pasted. The clarifying questions and the user's selections are reproduced from the question tool. Key responses 1 and 2 are the full verbatim final responses. Intermediate progress messages are not reproduced. No redactions.
+- Header exceptions: None.
+
+### Prompt 1
+
+```text
+You are implementing the live notification stream for the Notification Service
+in the FoC repository. Use the following specification as your single source of
+truth. Do not make assumptions about any requirement not listed here. If
+something needed is unspecified, stop and ask.
+
+Feature: Live notification stream (Server-Sent Events)
+
+Overview:
+Add GET /notifications/stream to the API, authenticated the same way as the
+other endpoints (resolve the bearer token through User Service before the
+stream opens).
+Wake-up mechanism: the consumer already runs
+"NOTIFY notifications, '<recipient_id>'" when it commits. Each API process
+holds one dedicated database connection that runs "LISTEN notifications" and
+wakes the open streams for that recipient. When woken, a stream queries
+"recipient_id = caller AND id > last_sent_id ORDER BY id" and sends each row.
+Protocol:
+- Response headers: Content-Type text/event-stream,
+  Cache-Control no-cache, no-transform, and X-Accel-Buffering no.
+- Each notification is sent as "id: <notification id>" and
+  "data: <DTO JSON>" (the same DTO as the history API), followed by a blank
+  line.
+- On connect with a Last-Event-ID header: first send every row with id greater
+  than that value, then continue live. Without the header, or with an invalid
+  value, start after the caller's current newest id (new notifications only).
+- Send a ": ping" comment every SSE_HEARTBEAT_SECONDS (default 20).
+- Close the stream after SSE_MAX_LIFETIME_SECONDS (default 600). The client is
+  expected to reconnect.
+
+Acceptance criteria:
+- With Alice's stream open via "curl -N", an order.accepted notification
+  appears within about a second of Bob accepting her order.
+- ": ping" lines arrive at the configured interval while there is no other
+  activity.
+- After a reconnect with Last-Event-ID, the stream sends exactly the missed
+  notifications in id order, with no duplicates or gaps, before any new ones.
+- The stream closes cleanly after SSE_MAX_LIFETIME_SECONDS.
+- Each user's stream only ever contains that user's notifications.
+- An invalid token returns 401 and no stream opens. An unreachable User Service
+  returns 503.
+- When the client disconnects, its stream's resources are released and the
+  process stops waking it.
+- Each API process holds one LISTEN connection, not one per stream.
+- Tests cover live delivery, resume, heartbeat, lifetime, isolation between
+  users, auth failures, and disconnect cleanup, with short configured
+  intervals.
+
+Out of scope:
+- Re-validating the token during a stream (the lifetime limit covers this).
+- Any message broker other than Postgres LISTEN/NOTIFY, and delivery tracking.
+- The Next.js relay in the Frontend Service. This will be added in the
+  future.
+
+Edge cases:
+- Several notifications are committed in quick succession, or several NOTIFYs
+  arrive at once: each row is sent exactly once, in id order.
+- The same user has several streams open (several tabs): every stream receives
+  every notification.
+- The LISTEN connection drops: reconnect it, then run the catch-up query for
+  every open stream so nothing that arrived in between is missed.
+- Last-Event-ID is not an integer, is negative, or is higher than any existing
+  id.
+- A NOTIFY arrives for a recipient with no open streams: nothing happens.
+- A notification arrives between the catch-up query and the start of listening
+  on connect: it must still be delivered, exactly once.
+```
+
+### Clarifying questions and answers
+
+The agent asked two multiple-choice questions. The user's selections, verbatim:
+
+- "SSE stream: a client sends a Last-Event-ID that is higher than any existing notification id (e.g. 999999 when the newest is 50). If taken literally ('continue live after id > 999999'), notifications 51…999999 would never be sent on that stream. What should happen?" — "Clamp to newest (Recommended)" ("Treat it as the caller's current newest id: no catch-up rows, then every new notification is sent live.")
+- "SSE stream: what counts as an 'invalid' Last-Event-ID (which falls back to 'new notifications only')? Ids are bigserial and start at 1." — "Negative = invalid, 0 valid (Recommended)" ("Non-integers and negatives are invalid → new only. '0' is valid → sends the caller's whole history, then live.")
+
+### Key response 1
+
+Verbatim final response:
+
+The live stream is built, and the full suite passes against a throwaway PostgreSQL 16: 918 passed, 5 skipped. The 5 skips are the Kafka broker tests. Without a database, 753 pass and 170 are skipped. Nothing is committed.
+
+**What I added**
+- **Listener:** `app/listener.py` holds one `LISTEN notifications` connection per API process. It wakes only the streams of the recipient in each NOTIFY, and ignores recipients with no open stream. If the connection drops, it reconnects every second and then wakes every open stream, so each one runs its catch-up query.
+- **Endpoint:** `GET /notifications/stream` is in `app/routes/stream.py`. A woken stream sends the caller's rows with `id > last_sent_id`, 100 at a time, as `id:`/`data:` events. The data is the history DTO. It also sends heartbeats and closes at the lifetime limit. An open stream holds no database connection while it waits.
+- **Settings:** `SSE_HEARTBEAT_SECONDS` (default 20) and `SSE_MAX_LIFETIME_SECONDS` (default 600) are in `app/config.py`, and also in root `compose.yaml` and `.env.example`.
+- **Tests:** `tests/test_stream.py` has 48 tests that need no database. `tests/test_stream_postgres.py` has 43 tests that use a real uvicorn server and the worker's real NOTIFY. Together they cover every acceptance criterion and edge case, including a 1-second delivery check, a dropped `LISTEN` connection, and races when a stream connects. I made 14 deliberate bugs on a scratch copy, and the tests caught all 14.
+
+**A bug I found and fixed during testing:** Starlette sends the response headers before the stream body starts. At first, I chose the starting point inside the body. So a notification committed just after the client saw `200 OK` could count as already seen and never be sent. Now the stream subscribes and chooses its starting point before the headers go out, and it's released however the response ends.
+
+**Your answers, as implemented:** a `Last-Event-ID` above your newest id counts as your newest id. A negative or non-integer value means new notifications only. `0` sends the whole history.
+
+**Decisions I made without asking.** Please check them:
+1. **Heartbeats:** they run on a fixed schedule, so they keep coming even while notifications are being sent.
+2. **Query failures:** if a query fails after the stream has started, the error is logged and the stream ends, and the client reconnects. If the starting-point query fails, the request gets a 500, like the other endpoints.
+3. **Commit order:** `id > last_sent_id` assumes rows commit in id order. That holds with your one worker storing one event per transaction. The README lists it as a limitation.
+
+**Needs your decision:** while a stream is open, `docker compose stop notification-service` waits Docker's 10 seconds and then kills the API. That's because uvicorn waits for open connections, and a stream stays open until its lifetime ends. Clients reconnect, so nothing is lost. Adding `--timeout-graceful-shutdown` to the Dockerfile's command would fix it. The spec doesn't cover that, so I only documented it.
+
+**Not done:** I didn't run it on your Compose stack, where Bob really accepts Alice's order. That would mean rebuilding and restarting your running `notification-service` container. Instead I ran `curl -N` against a local uvicorn with the test database and saw the headers, an event, and the pings.
+
+**Disclosure records:** every changed file has a header, there's a usage-log entry `ai-20261108-002`, and both READMEs have summaries. Author review is marked pending. The service README has a new "Live stream" section. I stopped and removed the test container.
+
+### Prompt 2
+
+```text
+Add the --timeout-graceful-shutdown to the Dockerfile's command.
+```
+
+### Key response 2
+
+Verbatim final response:
+
+The API image now runs uvicorn with `--timeout-graceful-shutdown 5`. With a stream open, a SIGTERM now stops the API after 5 seconds instead of waiting until Docker kills it. Nothing is committed.
+
+**The change:** I added `"--timeout-graceful-shutdown", "5"` to the `CMD` in `notification-service/Dockerfile`, with a short comment explaining it. I picked 5 seconds because it fits inside Docker's default 10-second stop timeout. That leaves uvicorn time to run the app's shutdown, which closes the `LISTEN` connection and the database pool, before Docker would kill it. The worker isn't affected, because Compose gives it its own `command`.
+
+**Checked:**
+- **Shutdown:** I ran uvicorn with the same flags against a throwaway PostgreSQL 16, with one stream open, then sent SIGTERM.
+  - The process exited 5 seconds later.
+  - The app's shutdown ran.
+  - The `LISTEN` connection count went from 1 to 0.
+  - curl saw the stream cut off (exit 18), which is the point where a real client reconnects with `Last-Event-ID`.
+- **Image:** it builds, and its command is the one above. I built it under a separate tag and removed it afterwards, so your `foc-notification-service:local` image and running containers are untouched.
+
+**One side effect:** for each stream it cuts off, uvicorn logs `ERROR: Exception in ASGI application` with a `CancelledError` traceback. It's noise, not a failure, and the README says so.
+
+**Docs and records:** the README's shutdown paragraph now describes the new behaviour. The Dockerfile has a disclosure header, and entry `ai-20261108-002` and both README summaries include this change, with author review still pending. I didn't rerun the test suite, since only the Dockerfile and docs changed. I stopped the test container.
+
+### Scope
+
+- `notification-service/app/listener.py`, `app/routes/stream.py`: Writing implementation code — the LISTEN connection, the hub, and the stream endpoint.
+- `notification-service/app/config.py`, `app/main.py`: Writing implementation code — SSE settings and wiring.
+- `notification-service/tests/test_stream.py`, `tests/test_stream_postgres.py`: Writing implementation code — new tests.
+- `notification-service/tests/test_config.py`, `tests/test_notifications_api.py`: Writing implementation code — tests for the settings, authentication, and OpenAPI.
+- Root `compose.yaml`, `.env.example`: Boilerplate generation — the two settings.
+- `notification-service/Dockerfile`: Boilerplate generation — `--timeout-graceful-shutdown 5` (Prompt 2).
+- `notification-service/README.md`: Refactoring and documentation improvements — "Live stream" section; Disclosure record — AI Use Summary.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code implemented the live notification stream to the user's specification and the user's answers on `Last-Event-ID`, with User Service replaced by a test double, a real PostgreSQL database, and a real uvicorn server in the tests, then added uvicorn's graceful-shutdown timeout to the image at the user's request.

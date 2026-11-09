@@ -7,6 +7,10 @@
 # Scope: Writing implementation code — create the User Service client at startup, allow a test double to replace it, close it on shutdown, and include the notifications router (ai-20261108-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
 # Details: notification-service/ai/usage-log.md; ai-20261108-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — start the notification hub and the process's LISTEN connection at startup, stop it on shutdown, and include the stream router (ai-20261108-002).
+# Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
+# Details: notification-service/ai/usage-log.md; ai-20261108-002
 
 """FastAPI application factory for the Notification Service."""
 
@@ -23,7 +27,9 @@ from sqlalchemy.engine import Engine
 from app.clients import UserServiceClient
 from app.config import ApiSettings, configure_logging
 from app.db import make_engine, make_session_factory
+from app.listener import NotificationHub, NotificationListener
 from app.routes.notifications import router as notifications_router
+from app.routes.stream import router as stream_router
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +97,19 @@ def create_app(
             active_settings.user_service_url,
             active_settings.user_service_ca_file,
         )
+        app.state.hub = NotificationHub()
+        app.state.listener = None
+        # Only PostgreSQL has LISTEN; the SQLite engine some tests use does not.
+        if active_settings.database_url.startswith("postgresql"):
+            app.state.listener = NotificationListener(
+                app.state.hub, active_settings.database_url
+            )
+            app.state.listener.start()
         try:
             yield
         finally:
+            if app.state.listener is not None:
+                await app.state.listener.stop()
             app.state.user_client.close()
             app.state.readiness.close()
             app.state.engine.dispose()
@@ -102,6 +118,7 @@ def create_app(
         title="FoC Notification Service", version="0.1.0", lifespan=lifespan
     )
 
+    app.include_router(stream_router)
     app.include_router(notifications_router)
 
     @app.get("/health")

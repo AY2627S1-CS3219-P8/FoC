@@ -3,6 +3,10 @@
 # Scope: Writing implementation code — tests for 401 and 503 authentication outcomes, 422 validation, and the OpenAPI DTO and params schemas, without a database (ai-20261108-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
 # Details: notification-service/ai/usage-log.md; ai-20261108-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Writing implementation code — include GET /notifications/stream in the authentication tests and allow its Last-Event-ID header in the OpenAPI parameter check (ai-20261108-002).
+# Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
+# Details: notification-service/ai/usage-log.md; ai-20261108-002
 
 """Notification API tests that need no database: authentication, request
 validation, and the OpenAPI document.
@@ -27,6 +31,7 @@ ENDPOINTS = [
     ("GET", "/notifications/unread-count"),
     ("POST", "/notifications/1/read"),
     ("POST", "/notifications/read-all"),
+    ("GET", "/notifications/stream"),
 ]
 
 PARAMS_SCHEMAS = {
@@ -259,8 +264,27 @@ def test_openapi_does_not_accept_a_user_id_parameter(client) -> None:
             continue
         for operation in operations.values():
             names = {parameter["name"] for parameter in operation.get("parameters", [])}
-            assert names <= {"cursor", "limit", "id", "authorization"}
+            assert names <= {"cursor", "limit", "id", "authorization", "Last-Event-ID"}
             assert "requestBody" not in operation
+
+
+def test_openapi_documents_the_stream(client) -> None:
+    operation = client.get("/openapi.json").json()["paths"]["/notifications/stream"]["get"]
+
+    assert set(operation["responses"]["200"]["content"]) == {"text/event-stream"}
+    assert {"401", "503"} <= set(operation["responses"])
+    [last_event_id] = [p for p in operation["parameters"] if p["name"] == "Last-Event-ID"]
+    assert last_event_id["in"] == "header"
+    assert last_event_id["required"] is False
+
+
+def test_stream_without_a_database_listener_still_rejects_bad_tokens(client) -> None:
+    # The SQLite test app starts no LISTEN connection; auth runs first anyway.
+    assert client.app.state.listener is None
+    response = client.get("/notifications/stream", headers=auth("forged"))
+
+    assert response.status_code == 401
+    assert client.app.state.hub.stream_count() == 0
 
 
 def test_shutdown_closes_the_user_client(tmp_path: Path) -> None:

@@ -24,6 +24,10 @@ Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
 Scope: Refactoring and documentation improvements — write the "API" section and update the "Running tests" skip description (ai-20261108-001).
 Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
 Details: notification-service/ai/usage-log.md; ai-20261108-001
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+Scope: Refactoring and documentation improvements — write the "Live stream" part of the "API" section, including shutdown with --timeout-graceful-shutdown, and update the "Running tests" skip description (ai-20261108-002).
+Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
+Details: notification-service/ai/usage-log.md; ai-20261108-002
 -->
 
 # Notification Service
@@ -40,9 +44,10 @@ python -m venv .venv
 ```
 
 **Without a database.** If `TEST_DATABASE_URL` is unset, the API, configuration,
-event, API authentication and validation, and Kafka-double worker tests run.
-The PostgreSQL tests in `tests/test_schema.py`, `tests/test_worker_postgres.py`,
-and `tests/test_notifications_postgres.py` are skipped. Run `pytest -rs` to list
+event, API authentication and validation, stream (with in-memory queries), and
+Kafka-double worker tests run. The PostgreSQL tests in `tests/test_schema.py`,
+`tests/test_worker_postgres.py`, `tests/test_notifications_postgres.py`, and
+`tests/test_stream_postgres.py` are skipped. Run `pytest -rs` to list
 the skips.
 
 **With a database.** Set `TEST_DATABASE_URL` to an empty, disposable
@@ -67,6 +72,11 @@ docker stop notification-test-db
 > `notification-db` or any database whose data you need. As a safeguard, the
 > tests refuse to start if the database contains tables other than
 > `notifications`, `processed_events`, and `alembic_version`.
+>
+> `tests/test_stream_postgres.py` starts the API in a real uvicorn server on a
+> free local port. It also ends the API's `LISTEN` connection with
+> `pg_terminate_backend`, so the test role must be allowed to do that (the
+> `postgres` superuser in the example above is).
 
 **With a broker.** The tests in `tests/test_worker_kafka.py` are skipped unless
 `TEST_KAFKA_BOOTSTRAP_SERVERS` is set. The Compose broker publishes no port, so
@@ -135,6 +145,86 @@ empty page. A non-integer cursor, limit, or id, or a limit outside 1–100, retu
 Two requests that mark the same notification read both get 200 and the same
 `read_at`. The update keeps an existing `read_at` with `COALESCE`, and the second
 request waits for the first one's row lock.
+
+### Live stream
+
+`GET /notifications/stream` sends the caller's new notifications as
+Server-Sent Events. The token is resolved when the stream opens, as for the other
+endpoints, so a bad token gets 401 and a User Service outage gets 503 before
+any stream starts. The token isn't checked again while the stream is open; the
+maximum lifetime limits how long a revoked session keeps receiving.
+
+| Variable | Purpose |
+| --- | --- |
+| `SSE_HEARTBEAT_SECONDS` | Optional, default 20. Seconds between `: ping` comments. Compose reads it from `.env`. |
+| `SSE_MAX_LIFETIME_SECONDS` | Optional, default 600. The server ends the stream after this many seconds and the client reconnects. Compose reads it from `.env`. |
+
+Both must be positive numbers; empty means the default, and an invalid value
+stops the API at startup.
+
+The response has `Content-Type: text/event-stream`,
+`Cache-Control: no-cache, no-transform`, and `X-Accel-Buffering: no`. Each
+notification is one event:
+
+```text
+id: 1042
+data: {"id":1042,"type":"order.accepted", ...}
+
+```
+
+`data` is the same JSON object as one item of `GET /notifications`.
+
+| `Last-Event-ID` header | What the stream sends first |
+| --- | --- |
+| Absent, or not a non-negative integer (`abc`, `-1`, `1.5`, empty) | Nothing: only notifications created after the stream opens. |
+| A non-negative integer | Every notification of the caller's with a higher id, in id order. `0` sends the whole history. |
+| Higher than the caller's newest id | Treated as the caller's newest id, so later notifications are still sent. |
+
+After that, notifications arrive live, in id order, each exactly once.
+
+How it works:
+
+- Each API process holds one dedicated database connection that runs
+  `LISTEN notifications`, whatever the number of streams. The worker runs
+  `NOTIFY notifications, '<recipient_id>'` in the transaction that stores the
+  rows. The listener wakes only that recipient's open streams. A recipient with
+  no open stream is ignored.
+- A woken stream queries `recipient_id = caller AND id > last_sent_id ORDER BY
+  id`, 100 rows at a time, and sends each row. Several wake-ups at once just
+  cause another query that finds nothing new, so nothing is sent twice. An open
+  stream holds no database connection between queries.
+- A stream subscribes before it chooses its starting point, and both happen
+  before the response headers are sent. So any notification committed after the
+  client sees the response start is delivered.
+- If the `LISTEN` connection drops, the listener reconnects every second until it
+  succeeds, then wakes every open stream to run its catch-up query, so nothing
+  committed in between is missed.
+- When the client disconnects, its stream is removed at once and is no longer
+  woken.
+- If a stream's query fails after the headers are sent, the error is logged and
+  the stream ends; the client reconnects with `Last-Event-ID`.
+
+Limitation: `id > last_sent_id` relies on rows committing in id order. That holds
+because one worker stores one event per transaction. Several workers committing
+at the same time could commit a lower id after a higher one has been sent, and
+that row would then only appear in the history.
+
+Shutdown: an open stream only closes at its maximum lifetime, so the image runs
+uvicorn with `--timeout-graceful-shutdown 5`. On SIGTERM, uvicorn waits up to 5
+seconds for connections to close, then cancels the open streams and runs the
+app's shutdown, which closes the `LISTEN` connection and the database pool. This
+fits inside Docker's 10-second stop timeout. Clients see the stream cut off and
+reconnect with `Last-Event-ID`, so nothing is lost. uvicorn logs
+`Exception in ASGI application` with a `CancelledError` for each stream it
+cancels.
+
+Try it with a token from User Service:
+
+```sh
+curl -N -H "Authorization: Bearer <token>" http://127.0.0.1:8084/notifications/stream
+curl -N -H "Authorization: Bearer <token>" -H "Last-Event-ID: 1041" \
+  http://127.0.0.1:8084/notifications/stream
+```
 
 ## Worker
 
@@ -426,4 +516,34 @@ checks against the full Compose stack with the real User Service. The specific
 Compose checks were not stated.
 
 See the [usage record](ai/usage-log.md#ai-20261108-001). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### Live notification stream (ai-20261108-002)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Boilerplate generation**, and **Refactoring and documentation improvements**:
+the `LISTEN` connection and stream hub (`app/listener.py`), the
+`GET /notifications/stream` endpoint (`app/routes/stream.py`), the
+`SSE_HEARTBEAT_SECONDS` and `SSE_MAX_LIFETIME_SECONDS` settings in
+`app/config.py`, root `compose.yaml`, and `.env.example`, the wiring in
+`app/main.py`, `--timeout-graceful-shutdown 5` in the `Dockerfile` command, tests
+under `tests/`, and the "Live stream" section of this README.
+The work followed the user's specification and the user's answers on
+`Last-Event-ID` edge cases.
+
+Observed verification (agent only): with PostgreSQL 16 the full suite had 918
+passed and 5 skipped (the real-broker tests, with no Kafka); without a database it
+had 753 passed and 170 skipped. The PostgreSQL stream tests use a real uvicorn
+server and the worker's real NOTIFY. The tests caught all 14 mutations applied.
+With the shutdown timeout and a stream open, uvicorn stopped 5 seconds after
+SIGTERM, ran the app's shutdown, and closed the `LISTEN` connection; the image
+built with the new command. No live Compose run with User Service, Order Service,
+and Kafka was done by the agent.
+
+Author review (confirmed by Keith on 2026-11-09): Keith ran
+`.venv/bin/python -m pytest -rs` and 918 passed, with 5 skipped; and performed
+manual SSE checks against the local Compose stack. The test environment and the
+specific Compose checks were not stated.
+
+See the [usage record](ai/usage-log.md#ai-20261108-002). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.
