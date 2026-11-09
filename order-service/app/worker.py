@@ -33,6 +33,7 @@ from app.messaging import (
     RELAY_BATCH_SIZE,
     RELAY_POLL_SECONDS,
     RETRY_BACKOFF_SECONDS,
+    WORKER_HEARTBEAT_SECONDS,
 )
 from app.models import OutboxEvent, ParkedMessage, utc_now
 from app.services.orders import expire_overdue_orders, handle_delivery
@@ -149,7 +150,16 @@ def process_delivery(
     """Apply one message. Returns 'ack' or 'nack' after bounded backoff."""
 
     with log_context(**context_from_event_body(body)):
-        return _process_delivery(session_factory, body, sleep=sleep)
+        started = time.perf_counter()
+        outcome = _process_delivery(session_factory, body, sleep=sleep)
+        log_event(
+            logger,
+            logging.INFO,
+            "message_processing_completed",
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
+            outcome=outcome,
+        )
+        return outcome
 
 
 def _process_delivery(
@@ -168,7 +178,16 @@ def _process_delivery(
                 log_event(
                     logger,
                     logging.ERROR,
+                    "message_retry_exhausted",
+                    attempts=attempt + 1,
+                    max_attempts=MAX_ATTEMPTS,
+                )
+                log_event(
+                    logger,
+                    logging.ERROR,
                     "message_dead_lettered",
+                    attempts=attempt + 1,
+                    max_attempts=MAX_ATTEMPTS,
                     exc_info=True,
                 )
                 return "nack"
@@ -229,6 +248,15 @@ def _handle_message_in_context(
     if process_delivery(session_factory, body) == "nack":
         try:
             publisher.dead_letter(message.key(), message.value(), message.headers())
+            log_event(
+                logger,
+                logging.ERROR,
+                "message_sent_to_dlq",
+                dlq_topic=CREDIT_DLQ_TOPIC,
+                source_topic=message.topic(),
+                source_partition=message.partition(),
+                source_offset=message.offset(),
+            )
         except (KafkaException, RuntimeError):
             log_event(
                 logger,
@@ -240,6 +268,15 @@ def _handle_message_in_context(
                 # Rewind so the message is retried instead of skipped by a later commit.
                 consumer.seek(TopicPartition(message.topic(), message.partition(), message.offset()))
                 return
+            log_event(
+                logger,
+                logging.ERROR,
+                "message_parked_for_dlq",
+                dlq_topic=CREDIT_DLQ_TOPIC,
+                source_topic=message.topic(),
+                source_partition=message.partition(),
+                source_offset=message.offset(),
+            )
     consumer.commit(message=message, asynchronous=False)
 
 
@@ -278,10 +315,19 @@ def _relay(
     session_factory: Callable[[], Session],
     publisher: Publisher,
     relay: Callable[[Session, Publisher], int] = relay_once,
-) -> None:
+) -> int:
     db = session_factory()
     try:
-        relay(db, publisher)
+        published = relay(db, publisher)
+        if published:
+            log_event(
+                logger,
+                logging.INFO,
+                "worker_relay_completed",
+                relay=relay.__name__,
+                count=published,
+            )
+        return published
     except Exception:
         db.rollback()
         log_event(
@@ -291,6 +337,7 @@ def _relay(
             relay=relay.__name__,
             exc_info=True,
         )
+        return 0
     finally:
         db.close()
 
@@ -333,7 +380,15 @@ def main() -> None:
     )
     consumer.subscribe([CREDIT_TOPIC])
     next_sweep = time.monotonic()
-    log_event(logger, logging.INFO, "worker_started")
+    last_heartbeat = next_sweep
+    log_event(
+        logger,
+        logging.INFO,
+        "worker_started",
+        worker="order-worker",
+        topic=CREDIT_TOPIC,
+        consumer_group=CONSUMER_GROUP,
+    )
     try:
         while True:
             message = consumer.poll(RELAY_POLL_SECONDS)
@@ -342,7 +397,26 @@ def main() -> None:
             _relay(session_factory, publisher)
             _relay(session_factory, publisher, relay_parked_once)
             next_sweep = _sweep(session_factory, next_sweep)
+            now = time.monotonic()
+            if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "worker_heartbeat",
+                    worker="order-worker",
+                    topic=CREDIT_TOPIC,
+                    consumer_group=CONSUMER_GROUP,
+                )
+                last_heartbeat = now
     finally:
+        log_event(
+            logger,
+            logging.INFO,
+            "worker_shutdown",
+            worker="order-worker",
+            topic=CREDIT_TOPIC,
+            consumer_group=CONSUMER_GROUP,
+        )
         consumer.close()
         producer.flush(PUBLISH_TIMEOUT_SECONDS)
         engine.dispose()

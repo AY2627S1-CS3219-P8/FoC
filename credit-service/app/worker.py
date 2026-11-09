@@ -36,6 +36,7 @@ from app.messaging import (
     PUBLISH_TIMEOUT_SECONDS,
     RELAY_BATCH_SIZE,
     RELAY_POLL_SECONDS,
+    WORKER_HEARTBEAT_SECONDS,
     EventStream,
 )
 from app.models import OutboxEvent, utc_now
@@ -254,6 +255,18 @@ def _is_transient_infrastructure_failure(error: Exception) -> bool:
 
 
 def _log_failure(result: DeliveryResult, error: Exception) -> None:
+    if result.failure_code == "TRANSIENT_RETRIES_EXHAUSTED":
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_event_retry_exhausted",
+            attempts=result.attempts,
+            event_type=result.event_type,
+            event_id=result.event_id,
+            correlation_id=result.correlation_id,
+            order_id=result.order_id,
+            exc_info=(type(error), error, error.__traceback__),
+        )
     log_event(
         logger,
         logging.ERROR,
@@ -280,13 +293,24 @@ def process_delivery(
     """Process once, retry only infrastructure failures, or quarantine safely."""
 
     with log_context(**context_from_event_body(body)):
-        return _process_delivery(
+        started = time.perf_counter()
+        result = _process_delivery(
             session_factory,
             body,
             initial_allocation=initial_allocation,
             retry_backoff_seconds=retry_backoff_seconds,
             sleep=sleep,
         )
+        log_event(
+            logger,
+            logging.ERROR if result.disposition == "QUARANTINE" else logging.INFO,
+            "credit_event_processing_completed",
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
+            outcome=result.disposition,
+            attempts=result.attempts,
+            failure_code=result.failure_code,
+        )
+        return result
 
 
 def _process_delivery(
@@ -547,27 +571,37 @@ def _handle_message_in_context(
         )
 
     if outcome.disposition == "QUARANTINE":
+        publisher.dead_letter(
+            message, dlq_topic=stream.dlq_topic, result=outcome
+        )
         log_event(
             logger,
             logging.ERROR,
             "credit_event_sent_to_dlq",
             failure_code=outcome.failure_code,
             attempts=outcome.attempts,
+            dlq_topic=stream.dlq_topic,
             topic=message.topic(),
             partition=message.partition(),
             offset=message.offset(),
-        )
-        publisher.dead_letter(
-            message, dlq_topic=stream.dlq_topic, result=outcome
         )
     # Failed DLQ publication or database work raises before this point.
     consumer.commit(message=message, asynchronous=False)
 
 
-def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> None:
+def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> int:
     db = session_factory()
     try:
-        relay_once(db, publisher)
+        published = relay_once(db, publisher)
+        if published:
+            log_event(
+                logger,
+                logging.INFO,
+                "worker_relay_completed",
+                relay="credit_outbox",
+                count=published,
+            )
+        return published
     except Exception:
         db.rollback()
         log_event(
@@ -576,6 +610,7 @@ def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> None
             "credit_outbox_relay_failed",
             exc_info=True,
         )
+        return 0
     finally:
         db.close()
 
@@ -616,11 +651,13 @@ def main() -> None:
     log_event(
         logger,
         logging.INFO,
-        "credit_worker_started",
+        "worker_started",
+        worker="credit-worker",
         event_stream=stream_name,
         topic=stream.topic,
         consumer_group=stream.group_id,
     )
+    last_heartbeat = time.monotonic()
     try:
         while True:
             message = consumer.poll(RELAY_POLL_SECONDS)
@@ -635,7 +672,28 @@ def main() -> None:
                     retry_backoff_seconds=settings.retry_backoff_seconds,
                 )
             _relay(session_factory, publisher)
+            now = time.monotonic()
+            if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "worker_heartbeat",
+                    worker="credit-worker",
+                    event_stream=stream_name,
+                    topic=stream.topic,
+                    consumer_group=stream.group_id,
+                )
+                last_heartbeat = now
     finally:
+        log_event(
+            logger,
+            logging.INFO,
+            "worker_shutdown",
+            worker="credit-worker",
+            event_stream=stream_name,
+            topic=stream.topic,
+            consumer_group=stream.group_id,
+        )
         consumer.close()
         producer.flush(PUBLISH_TIMEOUT_SECONDS)
         engine.dispose()
