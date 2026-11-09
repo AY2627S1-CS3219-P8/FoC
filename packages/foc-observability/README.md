@@ -14,6 +14,9 @@ This package provides the shared logging contract for FoC Python services.
   route, status code, duration, and outcome.
 - Uvicorn's duplicate text-style access log is suppressed in favor of that
   structured request event.
+- Only values supplied through the structured `fields` mapping are emitted;
+  unstructured `LogRecord.extra` values are ignored. Sensitive field names,
+  bearer credentials, credentialed URLs, and exception text are redacted.
 - Never log credentials, bearer tokens, passwords, database URLs, or raw
   request/response bodies.
 

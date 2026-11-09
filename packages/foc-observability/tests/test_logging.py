@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -50,7 +51,7 @@ def test_formatter_emits_context_and_fields_as_json():
     assert payload["correlation_id"] == "correlation-1"
 
 
-def test_formatter_preserves_legacy_extra_fields():
+def test_formatter_ignores_unstructured_legacy_extra_fields():
     record = _record("readiness_failed")
     record.path = "/ready"
 
@@ -61,7 +62,57 @@ def test_formatter_preserves_legacy_extra_fields():
     )
 
     assert payload["event"] == "readiness_failed"
-    assert payload["path"] == "/ready"
+    assert "path" not in payload
+
+
+def test_formatter_redacts_sensitive_fields_and_nested_values():
+    record = _record()
+    record.event = "request_failed"
+    record.fields = {
+        "authorization": "Bearer access-token-value",
+        "password": "plain-password",
+        "database_url": "postgresql://db-user:db-password@db:5432/foc",
+        "safe_value": "password=inline-password",
+        "nested": {
+            "session_token": "session-token-value",
+            "message": "dsn=postgresql://user:secret@db/foc",
+        },
+    }
+
+    output = JsonFormatter(service="test-service", environment="test").format(record)
+    payload = json.loads(output)
+
+    assert payload["authorization"] == "[REDACTED]"
+    assert payload["password"] == "[REDACTED]"
+    assert payload["database_url"] == "[REDACTED]"
+    assert payload["safe_value"] == "password=[REDACTED]"
+    assert payload["nested"]["session_token"] == "[REDACTED]"
+    assert payload["nested"]["message"] == "dsn=[REDACTED]"
+    for secret in (
+        "access-token-value",
+        "plain-password",
+        "db-password",
+        "inline-password",
+        "session-token-value",
+    ):
+        assert secret not in output
+
+
+def test_formatter_redacts_sensitive_exception_text():
+    record = _record("database operation failed")
+    try:
+        raise RuntimeError(
+            "connect failed: postgresql://db-user:db-password@db/foc "
+            "password=query-password"
+        )
+    except RuntimeError:
+        record.exc_info = sys.exc_info()
+
+    output = JsonFormatter(service="test-service", environment="test").format(record)
+
+    assert "db-password" not in output
+    assert "query-password" not in output
+    assert "[REDACTED]" in json.loads(output)["exception"]
 
 
 def test_context_is_restored_after_nested_scope():
@@ -85,6 +136,25 @@ def test_log_event_uses_an_explicit_event_and_fields(caplog):
     record = caplog.records[-1]
     assert record.event == "worker_started"
     assert record.fields == {"component": "worker"}
+
+
+def test_log_event_sanitizes_fields_before_handlers(caplog):
+    logger = logging.getLogger("test.safe-events")
+
+    with caplog.at_level(logging.INFO, logger="test.safe-events"):
+        log_event(
+            logger,
+            logging.INFO,
+            "credentials_checked",
+            password="plain-password",
+            detail="token=inline-token",
+        )
+
+    record = caplog.records[-1]
+    assert record.fields == {
+        "password": "[REDACTED]",
+        "detail": "token=[REDACTED]",
+    }
 
 
 def test_configure_logging_suppresses_opaque_uvicorn_access_logs():

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,34 +14,48 @@ from .context import get_context
 
 _DEFAULT_LEVEL = "INFO"
 _DEFAULT_ENVIRONMENT = "development"
-_STANDARD_RECORD_FIELDS = frozenset(
+_REDACTED = "[REDACTED]"
+_SENSITIVE_KEY_MARKERS = frozenset(
     {
-        "name",
-        "msg",
-        "args",
-        "levelname",
-        "levelno",
-        "pathname",
-        "filename",
-        "module",
-        "exc_info",
-        "exc_text",
-        "stack_info",
-        "lineno",
-        "funcName",
-        "created",
-        "msecs",
-        "relativeCreated",
-        "thread",
-        "threadName",
-        "processName",
-        "process",
-        "taskName",
-        "message",
-        "asctime",
-        "event",
-        "fields",
+        "access_token",
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer",
+        "body",
+        "connection_string",
+        "connection_url",
+        "cookie",
+        "credential",
+        "credentials",
+        "database_url",
+        "db_url",
+        "dsn",
+        "header",
+        "headers",
+        "password",
+        "passwd",
+        "pwd",
+        "raw_body",
+        "refresh_token",
+        "request_body",
+        "response_body",
+        "secret",
+        "session_token",
+        "set_cookie",
+        "token",
     }
+)
+_BEARER_PATTERN = re.compile(r"(\bbearer\s+)[^\s,;]+", re.IGNORECASE)
+_CREDENTIAL_URL_PATTERN = re.compile(
+    r"(\b[a-z][a-z0-9+.-]*://)[^/\s:@]+(?::[^/\s@]*)?@",
+    re.IGNORECASE,
+)
+_KEY_VALUE_SECRET_PATTERN = re.compile(
+    r"\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|"
+    r"credential|credentials|database[_-]?url|dsn|connection[_-]?string)"
+    r"\s*[:=]\s*[^\s,;&]+",
+    re.IGNORECASE,
 )
 
 
@@ -69,6 +84,9 @@ class JsonFormatter(logging.Formatter):
         self.environment = environment
 
     def format(self, record: logging.LogRecord) -> str:
+        event = getattr(record, "event", record.getMessage())
+        if not isinstance(event, str):
+            event = record.getMessage()
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(
                 record.created, timezone.utc
@@ -77,7 +95,7 @@ class JsonFormatter(logging.Formatter):
             "service": self.service,
             "environment": self.environment,
             "logger": record.name,
-            "event": getattr(record, "event", record.getMessage()),
+            "event": _redact_string(event),
         }
 
         context = get_context()
@@ -85,23 +103,52 @@ class JsonFormatter(logging.Formatter):
         if fields:
             if not isinstance(fields, dict):
                 raise TypeError("logging extra['fields'] must be a dictionary")
-            payload.update(fields)
-
-        # Preserve existing call sites that use logger calls such as
-        # ``extra={"attempt": attempt}`` while they migrate to the explicit
-        # ``fields`` mapping.
-        legacy_fields = {
-            key: value
-            for key, value in record.__dict__.items()
-            if key not in _STANDARD_RECORD_FIELDS and not key.startswith("_")
-        }
-        payload.update(legacy_fields)
-        payload.update(context)
+            payload.update(_sanitize_mapping(fields))
+        payload.update(_sanitize_mapping(context))
 
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception"] = _redact_string(
+                self.formatException(record.exc_info)
+            )
 
         return json.dumps(payload, default=str, ensure_ascii=True)
+
+
+def _is_sensitive_key(key: object) -> bool:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
+    return any(
+        marker == normalized or marker in normalized
+        for marker in _SENSITIVE_KEY_MARKERS
+    )
+
+
+def _redact_string(value: str) -> str:
+    value = _BEARER_PATTERN.sub(r"\1" + _REDACTED, value)
+    value = _CREDENTIAL_URL_PATTERN.sub(r"\1" + _REDACTED + "@", value)
+    return _KEY_VALUE_SECRET_PATTERN.sub(
+        lambda match: f"{match.group(1)}={_REDACTED}", value
+    )
+
+
+def _sanitize_value(key: object, value: Any) -> Any:
+    if _is_sensitive_key(key):
+        return _REDACTED
+    if isinstance(value, dict):
+        return _sanitize_mapping(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_sanitize_value(key, item) for item in value]
+    if isinstance(value, str):
+        return _redact_string(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _redact_string(str(value))
+
+
+def _sanitize_mapping(fields: dict[Any, Any]) -> dict[str, Any]:
+    return {
+        str(key): _sanitize_value(key, value)
+        for key, value in fields.items()
+    }
 
 
 def _level_name(level: str | int | None) -> str:
@@ -204,9 +251,10 @@ def log_event(
 
     if not event or any(character.isspace() for character in event):
         raise ValueError("event must be a non-empty name without whitespace")
+    safe_event = _redact_string(event)
     logger.log(
         level,
-        event,
-        extra={"event": event, "fields": fields},
+        safe_event,
+        extra={"event": safe_event, "fields": _sanitize_mapping(fields)},
         exc_info=exc_info,
     )
