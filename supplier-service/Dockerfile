@@ -12,19 +12,21 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Copy requirements.txt into the working directory
-COPY requirements.txt .
+COPY supplier-service/requirements.txt .
 
 # Install its dependencies using pip without caching downloads
 RUN python -m pip install --no-cache-dir -r requirements.txt
+COPY packages/foc-observability /tmp/foc-observability
+RUN python -m pip install --no-cache-dir /tmp/foc-observability
 
 # Create the runtime user
 RUN useradd --create-home --uid 10001 supplier
 
 # Replace your existing application COPY with one that sets ownership.
-COPY --chown=supplier:supplier app ./app
-COPY --chown=supplier:supplier alembic.ini ./
-COPY --chown=supplier:supplier migrations ./migrations
-COPY --chown=supplier:supplier seed ./seed
+COPY --chown=supplier:supplier supplier-service/app ./app
+COPY --chown=supplier:supplier supplier-service/alembic.ini ./
+COPY --chown=supplier:supplier supplier-service/migrations ./migrations
+COPY --chown=supplier:supplier supplier-service/seed ./seed
 
 # Switch subsequent instructions to the runtime user
 USER supplier

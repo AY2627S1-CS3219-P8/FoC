@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 from app.clients import SupplierServiceClient, UserServiceClient
 from app.config import required_env
 from app.db import database_url, get_db, make_engine, make_session_factory
+from foc_observability import configure_logging
 from app.routes.orders import router as orders_router
 
 
 logger = logging.getLogger(__name__)
+configure_logging("order-service")
 
 
 @asynccontextmanager

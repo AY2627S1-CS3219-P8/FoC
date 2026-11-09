@@ -2,13 +2,15 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY user-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+COPY packages/foc-observability /tmp/foc-observability
+RUN pip install --no-cache-dir /tmp/foc-observability
 
-COPY alembic.ini .
-COPY alembic ./alembic
-COPY app ./app
-COPY scripts ./scripts
+COPY user-service/alembic.ini .
+COPY user-service/alembic ./alembic
+COPY user-service/app ./app
+COPY user-service/scripts ./scripts
 
 EXPOSE 8080
 

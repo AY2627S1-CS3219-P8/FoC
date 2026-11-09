@@ -5,7 +5,6 @@ The API process does not connect to Kafka. A broker outage cannot fail a request
 
 import base64
 import logging
-import os
 import time
 from collections.abc import Callable
 from typing import Protocol
@@ -18,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.config import required_env
 from app.db import database_url, make_engine, make_session_factory
 from app.events import dump_event
+from foc_observability import configure_logging
 from app.messaging import (
     CONSUMER_GROUP,
     CREDIT_DLQ_TOPIC,
@@ -253,10 +253,7 @@ def _sweep(session_factory: Callable[[], Session], next_sweep: float) -> float:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging("order-worker")
     engine = make_engine(database_url())
     session_factory = make_session_factory(engine)
     producer = Producer(

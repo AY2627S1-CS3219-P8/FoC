@@ -12,9 +12,11 @@ from sqlalchemy.orm import Session
 from app.auth import SESSION_CLEANUP_INTERVAL, cleanup_sessions
 from app.db import SessionLocal, get_db
 from app.routes.users import router as users_router
+from foc_observability import configure_logging
 
 
 logger = logging.getLogger(__name__)
+configure_logging("user-service")
 
 
 def run_session_cleanup() -> None:

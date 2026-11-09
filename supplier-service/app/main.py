@@ -20,11 +20,14 @@ from app.auth import ProtectedRouteError
 from app.clients.user_service import UserServiceClient
 from app.db import create_db_engine, create_session_factory
 from app.config import Settings
+from foc_observability import configure_logging
 from app.routes.admin_suppliers import router as admin_supplier_router
 from app.routes.health import router as health_router
 from app.routes.reference_data import router as reference_router
 from app.routes.suppliers import router as supplier_router
 from app.validation.errors import DomainValidationError, request_validation_issues
+
+configure_logging("supplier-service")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -34,6 +37,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.settings = Settings()
         else:
             app.state.settings = settings
+        configure_logging(
+            "supplier-service",
+            environment=app.state.settings.app_env,
+            level=app.state.settings.log_level,
+        )
 
         with ExitStack() as resources:
             app.state.engine = create_db_engine(app.state.settings)

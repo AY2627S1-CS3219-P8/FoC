@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings, required_env
 from app.db import make_engine, make_session_factory
 from app.events import MalformedMessage, dump_event, parse_incoming_event
+from foc_observability import configure_logging
 from app.messaging import (
     CREDIT_TOPIC,
     EVENT_STREAMS,
@@ -516,9 +517,10 @@ def _client_config() -> dict[str, object]:
 
 def main() -> None:
     settings = Settings.from_env()
-    logging.basicConfig(
+    configure_logging(
+        "credit-worker",
+        environment=os.getenv("APP_ENV", "production"),
         level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     stream_name, stream = selected_stream()
     engine = make_engine(settings.database_url)

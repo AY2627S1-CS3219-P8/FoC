@@ -1,6 +1,7 @@
 """FastAPI application factory for the Credit Service."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from sqlalchemy import text
 from app.clients import UserServiceClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
+from foc_observability import configure_logging
 from app.routes.credits import router as credits_router
 from app.services.credits import (
     CreditAccountNotFound,
@@ -21,6 +23,10 @@ from app.services.credits import (
 )
 
 logger = logging.getLogger(__name__)
+configure_logging(
+    "credit-service",
+    environment=os.getenv("APP_ENV", "production"),
+)
 ALEMBIC_CONFIG_PATH = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
@@ -28,9 +34,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         active_settings = settings or Settings.from_env()
-        logging.basicConfig(
+        configure_logging(
+            "credit-service",
+            environment=os.getenv("APP_ENV", "production"),
             level=active_settings.log_level,
-            format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
         app.state.settings = active_settings
         app.state.engine = make_engine(active_settings.database_url)

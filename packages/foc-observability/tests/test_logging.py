@@ -35,6 +35,20 @@ def test_formatter_emits_context_and_fields_as_json():
     assert payload["correlation_id"] == "correlation-1"
 
 
+def test_formatter_preserves_legacy_extra_fields():
+    record = _record("readiness_failed")
+    record.path = "/ready"
+
+    payload = json.loads(
+        JsonFormatter(service="supplier-service", environment="test").format(
+            record
+        )
+    )
+
+    assert payload["event"] == "readiness_failed"
+    assert payload["path"] == "/ready"
+
+
 def test_context_is_restored_after_nested_scope():
     with log_context(request_id="outer"):
         with log_context(correlation_id="inner"):

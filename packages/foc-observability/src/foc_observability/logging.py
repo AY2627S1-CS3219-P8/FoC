@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import logging.config
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -14,6 +13,41 @@ from .context import get_context
 
 _DEFAULT_LEVEL = "INFO"
 _DEFAULT_ENVIRONMENT = "development"
+_STANDARD_RECORD_FIELDS = frozenset(
+    {
+        "name",
+        "msg",
+        "args",
+        "levelname",
+        "levelno",
+        "pathname",
+        "filename",
+        "module",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "lineno",
+        "funcName",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "processName",
+        "process",
+        "taskName",
+        "message",
+        "asctime",
+        "event",
+        "fields",
+    }
+)
+
+
+class _JsonStreamHandler(logging.StreamHandler):
+    """Marker type used to replace only handlers owned by this package."""
+
+    foc_observability_handler = True
 
 
 class JsonFormatter(logging.Formatter):
@@ -52,6 +86,16 @@ class JsonFormatter(logging.Formatter):
             if not isinstance(fields, dict):
                 raise TypeError("logging extra['fields'] must be a dictionary")
             payload.update(fields)
+
+        # Preserve existing call sites that use logger calls such as
+        # ``extra={"attempt": attempt}`` while they migrate to the explicit
+        # ``fields`` mapping.
+        legacy_fields = {
+            key: value
+            for key, value in record.__dict__.items()
+            if key not in _STANDARD_RECORD_FIELDS and not key.startswith("_")
+        }
+        payload.update(legacy_fields)
         payload.update(context)
 
         if record.exc_info:
@@ -80,7 +124,8 @@ def configure_logging(
     """Configure the root logger and Uvicorn loggers for one process.
 
     Logs go to stdout so the container runtime can collect them. Calling this
-    more than once is safe and replaces handlers installed by a process host.
+    more than once is safe. Existing non-FoC root handlers are preserved so
+    test capture handlers and embedding applications continue to work.
     """
 
     if not service or any(character.isspace() for character in service):
@@ -89,56 +134,52 @@ def configure_logging(
     active_environment = environment or os.getenv(
         "APP_ENV", _DEFAULT_ENVIRONMENT
     )
-    formatter = {
-        "()": "foc_observability.logging.JsonFormatter",
-        "service": service,
-        "environment": active_environment,
-    }
-    handler = {
-        "class": "logging.StreamHandler",
-        "level": "NOTSET",
-        "formatter": "json",
-        "stream": "ext://sys.stdout",
-    }
-
-    logging.config.dictConfig(
-        {
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {"json": formatter},
-            "handlers": {"stdout": handler},
-            "root": {
-                "level": _level_name(level),
-                "handlers": ["stdout"],
-            },
-            "loggers": {
-                # Uvicorn otherwise keeps its own text handlers and can emit
-                # duplicate records after application startup configuration.
-                "uvicorn": {
-                    "level": "INFO",
-                    "handlers": ["stdout"],
-                    "propagate": False,
-                },
-                "uvicorn.access": {
-                    "level": "INFO",
-                    "handlers": ["stdout"],
-                    "propagate": False,
-                },
-                "uvicorn.error": {
-                    "level": "INFO",
-                    "handlers": ["stdout"],
-                    "propagate": False,
-                },
-                # SQL statements and connection details should stay out of
-                # normal production logs unless explicitly enabled locally.
-                "sqlalchemy.engine": {
-                    "level": "WARNING",
-                    "handlers": [],
-                    "propagate": True,
-                },
-            },
-        }
+    formatter = JsonFormatter(
+        service=service,
+        environment=active_environment,
     )
+    active_level = _level_name(level)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(active_level)
+    _replace_owned_handlers(root_logger, formatter)
+
+    # Uvicorn otherwise keeps its own text handlers and can emit duplicate
+    # records after application startup configuration.
+    for logger_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        server_logger = logging.getLogger(logger_name)
+        _remove_owned_handlers(server_logger)
+        for handler in list(server_logger.handlers):
+            server_logger.removeHandler(handler)
+            handler.close()
+        server_logger.addHandler(_new_handler(formatter))
+        server_logger.setLevel(active_level)
+        server_logger.propagate = False
+
+    # SQL statements and connection details should stay out of normal
+    # production logs unless explicitly enabled locally.
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+
+
+def _new_handler(formatter: JsonFormatter) -> _JsonStreamHandler:
+    handler = _JsonStreamHandler()
+    handler.setLevel(logging.NOTSET)
+    handler.setFormatter(formatter)
+    return handler
+
+
+def _remove_owned_handlers(logger: logging.Logger) -> None:
+    for handler in list(logger.handlers):
+        if getattr(handler, "foc_observability_handler", False):
+            logger.removeHandler(handler)
+            handler.close()
+
+
+def _replace_owned_handlers(
+    logger: logging.Logger, formatter: JsonFormatter
+) -> None:
+    _remove_owned_handlers(logger)
+    logger.addHandler(_new_handler(formatter))
 
 
 def log_event(

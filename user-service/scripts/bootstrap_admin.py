@@ -10,8 +10,12 @@ from pydantic import ValidationError
 # Support both ``python -m scripts.bootstrap_admin`` (used by Compose) and
 # ``python scripts/bootstrap_admin.py`` from the service directory.
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    service_root = Path(__file__).resolve().parents[1]
+    repository_root = service_root.parent
+    sys.path.insert(0, str(service_root))
+    sys.path.insert(0, str(repository_root / "packages/foc-observability/src"))
 
+from foc_observability import configure_logging
 from app.db import SessionLocal
 from app.schemas import UserCreate
 from app.services.bootstrap import BootstrapError, bootstrap_admin
@@ -71,10 +75,7 @@ def payload_from_environment() -> UserCreate | None:
 def main() -> int:
     """Run the one-shot bootstrap command and return a process exit code."""
 
-    logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging("user-bootstrap")
     logger = logging.getLogger(__name__)
 
     try:
