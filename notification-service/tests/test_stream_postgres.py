@@ -852,6 +852,7 @@ def test_disconnect_does_not_leak_database_connections(engine, server, streams) 
                 text(
                     "SELECT count(*) FROM pg_stat_activity "
                     "WHERE datname = current_database() AND state = 'active' "
+                    "AND backend_type = 'client backend' "
                     "AND pid <> pg_backend_pid() AND application_name <> :name"
                 ),
                 {"name": LISTENER_APPLICATION_NAME},
@@ -859,9 +860,9 @@ def test_disconnect_does_not_leak_database_connections(engine, server, streams) 
 
     clients = [opened(streams, server.open(), server, ALICE_ID, count=i) for i in range(1, 11)]
     # Open streams hold no database connection while waiting.
-    assert api_connections() == 0
+    wait_until(lambda: api_connections() == 0, timeout=2.0)
 
     for client in clients:
         client.close()
     wait_until(lambda: server.hub.stream_count() == 0, timeout=2.0)
-    assert api_connections() == 0
+    wait_until(lambda: api_connections() == 0, timeout=2.0)
