@@ -1,12 +1,16 @@
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
+
+import pytest
 
 from foc_observability import (
     CORRELATION_ID_HEADER,
     REQUEST_ID_HEADER,
     JsonFormatter,
     RequestContextMiddleware,
+    configure_logging,
     context_from_event_body,
     context_headers,
     get_context,
@@ -83,6 +87,12 @@ def test_log_event_uses_an_explicit_event_and_fields(caplog):
     assert record.fields == {"component": "worker"}
 
 
+def test_configure_logging_suppresses_opaque_uvicorn_access_logs():
+    configure_logging("test-service", environment="test")
+
+    assert logging.getLogger("uvicorn.access").disabled is True
+
+
 def test_request_middleware_binds_context_and_returns_headers():
     request_id = "11111111-1111-4111-8111-111111111111"
     correlation_id = "22222222-2222-4222-8222-222222222222"
@@ -120,6 +130,68 @@ def test_request_middleware_binds_context_and_returns_headers():
     assert response_headers[b"x-request-id"] == request_id.encode()
     assert response_headers[b"x-correlation-id"] == correlation_id.encode()
     assert get_context() == {}
+
+
+def test_request_middleware_emits_structured_completion_event(caplog):
+    sent = []
+
+    async def app(scope, receive, send):
+        scope["route"] = SimpleNamespace(path="/orders/{order_id}")
+        await send({"type": "http.response.start", "status": 201, "headers": []})
+        await send({"type": "http.response.body", "body": b"created"})
+
+    async def send(message):
+        sent.append(message)
+
+    middleware = RequestContextMiddleware(app)
+    with caplog.at_level(logging.INFO, logger="foc_observability.middleware"):
+        asyncio.run(
+            middleware(
+                {"type": "http", "method": "post", "path": "/orders/1", "headers": []},
+                None,
+                send,
+            )
+        )
+
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "http_request_completed"
+    )
+    assert record.fields["method"] == "POST"
+    assert record.fields["route"] == "/orders/{order_id}"
+    assert record.fields["status_code"] == 201
+    assert record.fields["outcome"] == "success"
+    assert isinstance(record.fields["duration_ms"], float)
+    assert sent[0]["status"] == 201
+
+
+def test_request_middleware_logs_unhandled_exception(caplog):
+    async def app(scope, receive, send):
+        raise RuntimeError("boom")
+
+    async def send(message):
+        raise AssertionError("the failing app must not send a response")
+
+    middleware = RequestContextMiddleware(app)
+    with caplog.at_level(logging.ERROR, logger="foc_observability.middleware"):
+        with pytest.raises(RuntimeError, match="boom"):
+            asyncio.run(
+                middleware(
+                    {"type": "http", "method": "GET", "path": "/broken", "headers": []},
+                    None,
+                    send,
+                )
+            )
+
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "http_request_completed"
+    )
+    assert record.fields["status_code"] == 500
+    assert record.fields["outcome"] == "exception"
+    assert record.fields["exception_type"] == "RuntimeError"
 
 
 def test_context_headers_and_event_context_are_bounded():

@@ -10,6 +10,10 @@ This package provides the shared logging contract for FoC Python services.
 - Put application values in `fields`, not directly in `LogRecord.extra`.
 - Carry request and message identifiers with `log_context`.
 - Add `RequestContextMiddleware` to FastAPI applications.
+- Emit one `http_request_completed` event per HTTP request with the method,
+  route, status code, duration, and outcome.
+- Uvicorn's duplicate text-style access log is suppressed in favor of that
+  structured request event.
 - Never log credentials, bearer tokens, passwords, database URLs, or raw
   request/response bodies.
 

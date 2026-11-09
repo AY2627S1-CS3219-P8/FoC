@@ -145,8 +145,10 @@ def configure_logging(
     _replace_owned_handlers(root_logger, formatter)
 
     # Uvicorn otherwise keeps its own text handlers and can emit duplicate
-    # records after application startup configuration.
-    for logger_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+    # records after application startup configuration. RequestContextMiddleware
+    # emits the canonical structured access event, so suppress Uvicorn's
+    # opaque duplicate access line.
+    for logger_name in ("uvicorn", "uvicorn.error"):
         server_logger = logging.getLogger(logger_name)
         _remove_owned_handlers(server_logger)
         for handler in list(server_logger.handlers):
@@ -155,6 +157,14 @@ def configure_logging(
         server_logger.addHandler(_new_handler(formatter))
         server_logger.setLevel(active_level)
         server_logger.propagate = False
+
+    access_logger = logging.getLogger("uvicorn.access")
+    _remove_owned_handlers(access_logger)
+    for handler in list(access_logger.handlers):
+        access_logger.removeHandler(handler)
+        handler.close()
+    access_logger.propagate = False
+    access_logger.disabled = True
 
     # SQL statements and connection details should stay out of normal
     # production logs unless explicitly enabled locally.
