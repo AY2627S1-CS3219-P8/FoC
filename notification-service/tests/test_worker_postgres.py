@@ -15,6 +15,10 @@
 # Scope: Writing implementation code — supply the User Service settings the API now requires (ai-20261108-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
 # Details: notification-service/ai/usage-log.md; ai-20261108-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-10
+# Scope: Writing implementation code — test the per-recipient lock against real PostgreSQL: waiting, other recipients, two recipients, deadlock-free swapped order, lock timeouts through the retry path and DLQ, no drafts, duplicates, a repeated recipient, a hash collision, rollback, and stop while waiting (ai-20261110-001).
+# Author review: Keith confirmed on 2026-11-10: verification and testing with the full pytest suite (.venv/bin/python -m pytest -rs), 940 passed (ai-20261110-001).
+# Details: notification-service/ai/usage-log.md; ai-20261110-001
 
 """Worker integration tests: real PostgreSQL, with a Kafka test double.
 
@@ -37,13 +41,22 @@ import certifi
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event, text
+from psycopg.errors import LockNotAvailable
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError
 
 from app import worker
-from app.db import make_engine, make_session_factory
-from app.events import Event, NotificationDraft
+from app.db import SESSION_OPTIONS, make_engine, make_session_factory
+from app.events import BeforeCutoff, Event, NotificationDraft, process_record
 from app.main import create_app
-from app.worker import WorkerAbort, handle_message, run, store_event
+from app.worker import (
+    RECIPIENT_LOCK_NAMESPACE,
+    WorkerAbort,
+    handle_message,
+    run,
+    store_event,
+)
 from tests.worker_support import (
     ADMIN,
     ALICE,
@@ -1000,3 +1013,402 @@ def test_outcome_log_includes_every_identifier(engine, caplog) -> None:
         "offset=12",
     ):
         assert expected in caplog.text
+
+
+# --- Per-recipient lock ---
+
+# Two recipient ids with the same hashtext(), so the same lock key.
+COLLIDING_RECIPIENTS = (
+    "53357027-c34f-4705-98d4-34e124e043e1",
+    "7dc908c5-acc3-469c-93ee-9bcaacdd8cac",
+)
+LOCK_SQL = text("SELECT pg_advisory_xact_lock(:namespace, hashtext(:recipient_id))")
+TRY_LOCK_SQL = text(
+    "SELECT pg_try_advisory_xact_lock(:namespace, hashtext(:recipient_id))"
+)
+WAIT_SECONDS = 10
+
+
+def lock_params(recipient_id: str) -> dict:
+    return {"namespace": RECIPIENT_LOCK_NAMESPACE, "recipient_id": recipient_id}
+
+
+def parse(message: FakeMessage):
+    return process_record(
+        message.key(), message.value(), message.headers(), start_at=START_AT
+    )
+
+
+@pytest.fixture
+def short_lock_session_factory():
+    """Like the worker's sessions, with a lock_timeout short enough for tests.
+
+    Tests that expect no wait use it too, so that a wrong wait fails quickly
+    instead of hanging.
+    """
+
+    engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args={"options": f"{SESSION_OPTIONS} -c lock_timeout=500ms"},
+    )
+    yield make_session_factory(engine)
+    engine.dispose()
+
+
+@pytest.fixture
+def hold_recipient_locks(engine):
+    """Take recipients' locks in a separate session, as another worker would.
+
+    Returns a function that commits that session, releasing the locks.
+    """
+
+    held = []
+
+    def hold(*recipient_ids: str):
+        connection = engine.connect()
+        transaction = connection.begin()
+        held.append((connection, transaction))
+        for recipient_id in recipient_ids:
+            connection.execute(LOCK_SQL, lock_params(recipient_id))
+
+        def release():
+            if transaction.is_active:
+                transaction.commit()
+
+        return release
+
+    yield hold
+    for connection, transaction in held:
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
+
+
+@pytest.fixture
+def lock_requests():
+    """The recipient ids of every recipient lock requested, in request order."""
+
+    requested: list[str] = []
+
+    def record(_conn, _cursor, statement, parameters, _context, _many):
+        if "pg_advisory_xact_lock" in statement:
+            assert parameters["namespace"] == RECIPIENT_LOCK_NAMESPACE
+            requested.append(parameters["recipient_id"])
+
+    event.listen(Engine, "before_cursor_execute", record)
+    yield requested
+    event.remove(Engine, "before_cursor_execute", record)
+
+
+def wait_for_advisory_waiters(engine, expected: int) -> int:
+    """Poll until ``expected`` sessions wait on an advisory lock, or time out."""
+
+    deadline = time.monotonic() + WAIT_SECONDS
+    waiting = 0
+    while time.monotonic() < deadline:
+        with engine.connect() as connection:
+            waiting = connection.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE wait_event_type = 'Lock' AND wait_event = 'advisory' "
+                    "AND datname = current_database()"
+                )
+            )
+        if waiting >= expected:
+            break
+    return waiting
+
+
+def store_in_thread(session_factory, result) -> tuple[threading.Thread, dict]:
+    outcome: dict = {}
+
+    def target():
+        try:
+            outcome["stored"] = store_event(session_factory, result)
+        except BaseException as error:  # noqa: BLE001 - reported on the main thread
+            outcome["error"] = error
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, outcome
+
+
+def test_store_waits_for_the_recipient_lock_held_elsewhere(
+    engine, session_factory, hold_recipient_locks, listener
+) -> None:
+    release = hold_recipient_locks(ALICE)
+
+    thread, outcome = store_in_thread(session_factory, parse(order_record("order.expired")))
+    try:
+        assert wait_for_advisory_waiters(engine, 1) == 1
+        assert thread.is_alive()
+        assert outcome == {}
+        assert counts(engine) == (0, 0)
+        assert drain(listener) == []
+    finally:
+        release()
+        thread.join(timeout=WAIT_SECONDS)
+
+    assert not thread.is_alive()
+    assert outcome == {"stored": True}
+    assert notification_rows(engine) == {(ALICE, "requester", "order.expired")}
+    assert drain(listener) == [ALICE]
+
+
+def test_lock_on_another_recipient_does_not_block(
+    engine, short_lock_session_factory, hold_recipient_locks
+) -> None:
+    hold_recipient_locks(ALICE)
+    result = parse(cancelled(ALICE, "ACCEPTED", courier_id=BOB))
+
+    assert store_event(short_lock_session_factory, result) is True
+    assert notification_rows(engine) == {(BOB, "courier", "order.cancelled")}
+
+
+@pytest.mark.parametrize("held", [ALICE, BOB], ids=["requester", "courier"])
+def test_event_with_two_recipients_waits_for_either_lock(
+    engine, session_factory, hold_recipient_locks, held
+) -> None:
+    release = hold_recipient_locks(held)
+    result = parse(cancelled(ADMIN, "ACCEPTED", courier_id=BOB))
+
+    thread, outcome = store_in_thread(session_factory, result)
+    try:
+        assert wait_for_advisory_waiters(engine, 1) == 1
+        assert thread.is_alive()
+        assert counts(engine) == (0, 0)
+    finally:
+        release()
+        thread.join(timeout=WAIT_SECONDS)
+
+    assert outcome == {"stored": True}
+    assert notification_rows(engine) == {
+        (ALICE, "requester", "order.cancelled"),
+        (BOB, "courier", "order.cancelled"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("requester", "courier"), [(ALICE, BOB), (BOB, ALICE)], ids=["alice-bob", "bob-alice"]
+)
+def test_locks_are_requested_once_each_in_sorted_order(
+    engine, session_factory, lock_requests, requester, courier
+) -> None:
+    result = parse(
+        cancelled(ADMIN, "ACCEPTED", requester_id=requester, courier_id=courier)
+    )
+
+    assert store_event(session_factory, result) is True
+    assert lock_requests == sorted([ALICE, BOB])
+
+
+def test_swapped_recipients_stored_concurrently_do_not_deadlock(
+    engine, session_factory, hold_recipient_locks
+) -> None:
+    """Both stores start waiting while a third session holds both locks.
+
+    When it commits, both locks are free at once. Taken in each event's own
+    order (requester first), each store would get one lock and wait for the
+    other, a deadlock. In a fixed order they wait on the same first lock.
+    """
+
+    release = hold_recipient_locks(ALICE, BOB)
+    first = parse(cancelled(ADMIN, "ACCEPTED", requester_id=ALICE, courier_id=BOB))
+    second = parse(cancelled(ADMIN, "ACCEPTED", requester_id=BOB, courier_id=ALICE))
+
+    stores = [store_in_thread(session_factory, result) for result in (first, second)]
+    try:
+        assert wait_for_advisory_waiters(engine, 2) == 2
+    finally:
+        release()
+        for thread, _outcome in stores:
+            thread.join(timeout=WAIT_SECONDS)
+
+    assert [outcome for _thread, outcome in stores] == [{"stored": True}] * 2
+    assert counts(engine) == (2, 4)
+
+
+def test_recipient_lock_timeout_is_classified_as_transient(
+    engine, short_lock_session_factory, hold_recipient_locks
+) -> None:
+    hold_recipient_locks(ALICE)
+
+    with pytest.raises(OperationalError) as raised:
+        store_event(short_lock_session_factory, parse(order_record("order.expired")))
+
+    assert isinstance(raised.value.orig, LockNotAvailable)
+    assert worker._is_transient(raised.value)
+    assert counts(engine) == (0, 0)
+
+
+def test_recipient_lock_timeout_retries_then_goes_to_the_dlq(
+    engine, short_lock_session_factory, hold_recipient_locks, listener, caplog
+) -> None:
+    hold_recipient_locks(ALICE)
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+    backoffs = []
+
+    with caplog.at_level(logging.WARNING):
+        deliver(
+            short_lock_session_factory,
+            consumer,
+            order_record("order.expired", offset=2),
+            publisher=publisher,
+            delays=(0.5,),
+            sleep=lambda delay: backoffs.append((delay, counts(engine))),
+        )
+
+    assert backoffs == [(0.5, (0, 0))]
+    assert counts(engine) == (0, 0)
+    assert publisher.published == [(2, "TRANSIENT_RETRIES_EXHAUSTED", 2)]
+    assert consumer.committed == [2]
+    assert drain(listener) == []
+    assert "notification_event_retrying attempt=1" in caplog.text
+    assert "sqlstate=55P03" in caplog.text
+
+
+def test_recipient_lock_released_within_the_retry_window_stores_the_event(
+    engine, short_lock_session_factory, hold_recipient_locks
+) -> None:
+    release = hold_recipient_locks(ALICE)
+    consumer = FakeConsumer([], threading.Event())
+    publisher = FakePublisher()
+
+    deliver(
+        short_lock_session_factory,
+        consumer,
+        order_record("order.expired", offset=2),
+        publisher=publisher,
+        delays=(0.5,),
+        sleep=lambda _delay: release(),
+    )
+
+    assert counts(engine) == (1, 1)
+    assert publisher.published == []
+    assert consumer.committed == [2]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        pytest.param(order_record("order.expired", occurred_at=BEFORE), id="before-cutoff"),
+        pytest.param(cancelled(ALICE, "OPEN"), id="no-notification"),
+    ],
+)
+def test_events_without_drafts_request_no_recipient_lock(
+    engine, short_lock_session_factory, hold_recipient_locks, lock_requests, message
+) -> None:
+    hold_recipient_locks(ALICE)
+    lock_requests.clear()
+    result = parse(message)
+    assert isinstance(result, BeforeCutoff) or result.drafts == []
+
+    assert store_event(short_lock_session_factory, result) is True
+    assert lock_requests == []
+    assert counts(engine) == (1, 0)
+
+
+def test_duplicate_requests_no_recipient_lock(
+    engine, session_factory, short_lock_session_factory, hold_recipient_locks, lock_requests
+) -> None:
+    result = parse(order_record("order.expired"))
+    assert store_event(session_factory, result) is True
+    hold_recipient_locks(ALICE)
+    lock_requests.clear()
+
+    assert store_event(short_lock_session_factory, result) is False
+    assert lock_requests == []
+    assert counts(engine) == (1, 1)
+
+
+def test_recipient_in_two_drafts_is_locked_once(
+    engine, session_factory, lock_requests
+) -> None:
+    drafts = [
+        NotificationDraft(UUID(ALICE), role, "order.expired", {}, "t", "b")
+        for role in ("requester", "courier")
+    ]
+    result = Event(
+        event_id=uuid4(),
+        event_type="order.expired",
+        occurred_at=datetime.now(timezone.utc),
+        order_id=uuid4(),
+        correlation_id=uuid4(),
+        drafts=drafts,
+    )
+
+    # The insert then fails on the one-row-per-recipient constraint.
+    with pytest.raises(IntegrityError, match="uq_notifications_event_recipient"):
+        store_event(session_factory, result)
+    assert lock_requests == [ALICE]
+
+
+def test_recipients_with_the_same_lock_key_do_not_block_each_other(
+    engine, short_lock_session_factory, lock_requests
+) -> None:
+    with engine.connect() as connection:
+        hashes = {
+            connection.scalar(text("SELECT hashtext(:r)"), {"r": recipient})
+            for recipient in COLLIDING_RECIPIENTS
+        }
+    assert len(hashes) == 1
+    drafts = [
+        NotificationDraft(UUID(recipient), role, "order.cancelled", {}, "t", "b")
+        for recipient, role in zip(COLLIDING_RECIPIENTS, ("requester", "courier"))
+    ]
+    result = Event(
+        event_id=uuid4(),
+        event_type="order.cancelled",
+        occurred_at=datetime.now(timezone.utc),
+        order_id=uuid4(),
+        correlation_id=uuid4(),
+        drafts=drafts,
+    )
+
+    assert store_event(short_lock_session_factory, result) is True
+    assert lock_requests == sorted(COLLIDING_RECIPIENTS)
+    assert counts(engine) == (1, 2)
+
+
+def test_failed_transaction_releases_recipient_locks(
+    engine, session_factory, lock_requests
+) -> None:
+    # Unstorable text in params fails the notifications insert, after the locks.
+    result = parse(cancelled(ADMIN, "SECRET\u0000REASON", courier_id=BOB))
+
+    with pytest.raises(DataError):
+        store_event(session_factory, result)
+    assert lock_requests == sorted([ALICE, BOB])
+
+    with engine.connect() as connection, connection.begin():
+        acquired = [
+            connection.scalar(TRY_LOCK_SQL, lock_params(recipient))
+            for recipient in (ALICE, BOB)
+        ]
+    assert acquired == [True, True]
+    assert counts(engine) == (0, 0)
+
+
+def test_stop_while_waiting_on_a_recipient_lock_leaves_the_offset_uncommitted(
+    engine, session_factory, hold_recipient_locks
+) -> None:
+    release = hold_recipient_locks(ALICE)
+    stop = threading.Event()
+    consumer = FakeConsumer([], stop)
+    message = order_record("order.expired", offset=4)
+
+    thread = threading.Thread(
+        target=deliver, args=(session_factory, consumer, message), kwargs={"stop": stop}
+    )
+    thread.start()
+    try:
+        assert wait_for_advisory_waiters(engine, 1) == 1
+        stop.set()
+    finally:
+        release()
+        thread.join(timeout=WAIT_SECONDS)
+
+    assert not thread.is_alive()
+    assert counts(engine) == (1, 1)
+    assert consumer.commit_modes == []

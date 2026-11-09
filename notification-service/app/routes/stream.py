@@ -3,6 +3,10 @@
 # Scope: Writing implementation code — GET /notifications/stream: authenticate before the stream opens, resume from Last-Event-ID, send id/data events from the history DTO, heartbeats, and a maximum lifetime (ai-20261108-002).
 # Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
 # Details: notification-service/ai/usage-log.md; ai-20261108-002
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-10
+# Scope: Refactoring and documentation improvements — say in the docstring that the worker's per-recipient advisory lock keeps commit order, so several workers are safe (ai-20261110-001).
+# Author review: Keith confirmed on 2026-11-10: verification and testing with the full pytest suite (.venv/bin/python -m pytest -rs), 940 passed (ai-20261110-001).
+# Details: notification-service/ai/usage-log.md; ai-20261110-001
 
 """Live notification stream (Server-Sent Events).
 
@@ -12,9 +16,10 @@ point after that wakes it. When woken, it sends
 the caller's rows with ``id > last_sent_id`` in id order and advances
 ``last_sent_id``, so each row is sent once however many wake-ups arrive.
 
-Ids are assigned when rows are inserted, so this relies on rows with lower ids
-committing first. The single worker stores one event per transaction, so they
-do.
+Ids are assigned when rows are inserted, so this relies on each recipient's
+rows with lower ids committing first. The worker takes a per-recipient advisory
+lock before inserting a recipient's rows and holds it until commit, so each
+recipient's rows commit in id order and several workers are safe.
 """
 
 import asyncio

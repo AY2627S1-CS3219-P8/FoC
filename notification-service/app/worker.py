@@ -23,6 +23,10 @@
 # Scope: Debugging assistance — log the record's failure code when the offset commit fails (ai-20261107-001).
 # Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261107-001).
 # Details: notification-service/ai/usage-log.md; ai-20261107-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-10
+# Scope: Writing implementation code — take a per-recipient transaction-scoped advisory lock, in sorted order, between the processed_events flush and the notifications insert, so each recipient's rows commit in id order (ai-20261110-001).
+# Author review: Keith confirmed on 2026-11-10: verification and testing with the full pytest suite (.venv/bin/python -m pytest -rs), 940 passed (ai-20261110-001).
+# Details: notification-service/ai/usage-log.md; ai-20261110-001
 
 """Consume ``order.events`` and write notifications.
 
@@ -81,6 +85,9 @@ POLL_TIMEOUT_SECONDS = 1.0
 NOTIFY_CHANNEL = "notifications"
 # PostgreSQL's default name for the primary key in the initial migration.
 PROCESSED_EVENTS_PKEY = "processed_events_pkey"
+# First key of the two-key pg_advisory_xact_lock taken per recipient, so these
+# locks cannot collide with any other advisory-lock use.
+RECIPIENT_LOCK_NAMESPACE = 0x4E4F5446  # "NOTF"
 PUBLISH_TIMEOUT_SECONDS = 10
 # Above the broker's default limit, so that any uncompressed record order.events
 # accepts still fits with the diagnostic headers. event-broker/create-topics.sh
@@ -196,6 +203,24 @@ def store_event(
                 )
             )
             db.flush()
+            # Keep each recipient's rows committing in id order, which the SSE
+            # stream relies on: ids are assigned on insert, so only one
+            # transaction at a time may hold uncommitted rows for a recipient,
+            # and it locks before inserting. A fixed order prevents deadlocks
+            # between events that share recipients. PostgreSQL releases the
+            # locks on commit or rollback.
+            recipient_ids = sorted({str(draft.recipient_id) for draft in drafts})
+            for recipient_id in recipient_ids:
+                db.execute(
+                    text(
+                        "SELECT pg_advisory_xact_lock("
+                        ":namespace, hashtext(:recipient_id))"
+                    ),
+                    {
+                        "namespace": RECIPIENT_LOCK_NAMESPACE,
+                        "recipient_id": recipient_id,
+                    },
+                )
             db.add_all(
                 Notification(
                     recipient_id=draft.recipient_id,

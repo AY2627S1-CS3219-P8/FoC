@@ -1505,3 +1505,150 @@ Disclosure: Prompt 2 and this response are added to `ai-20261109-001`, and the R
 ### Usage summary
 
 Claude Code wrote the Notification Service README to the user's specification and checked every command against the user's running Compose stack. It reported an Order Service CA-trust bug and, at the user's choice, documented a temporary git-ignored override instead of fixing it. At the user's follow-up request, it labelled every command with the terminal and directory to run it from.
+
+## ai-20261110-001
+
+- Recorded at: 2026-11-10T03:12:09+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-10 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5); shell, file read/write/edit, Docker, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation from the user's specification. No clarifying questions were asked.
+- Outcome: `app/worker.py`: new module constant `RECIPIENT_LOCK_NAMESPACE = 0x4E4F5446` ("NOTF"; the value was the agent's choice), and `store_event` now runs `SELECT pg_advisory_xact_lock(:namespace, hashtext(:recipient_id))` with bound parameters for each distinct recipient, sorted by string form, between the `processed_events` flush and the notifications insert, with a comment explaining that this keeps each recipient's rows committing in id order for the SSE stream. No lock is taken when there are no drafts; locks are never released explicitly. The failure classification, timeouts, stream query, and `compose.yaml` are unchanged. `app/routes/stream.py`: the module docstring now credits the per-recipient lock instead of the single worker. `README.md` (this service): the stream section's "Limitation" paragraph was replaced with a "Commit order" paragraph giving the same explanation. `tests/test_worker_postgres.py`: 17 new tests (13 functions, some parametrized) in a "Per-recipient lock" section, plus imports. They cover: a store waiting on a recipient lock held by another session, then storing and notifying after that session commits; another recipient's lock not blocking; a two-recipient admin cancellation waiting on either lock; locks requested once each in sorted order; two swapped-recipient events stored concurrently without deadlock (a third session holds both locks until both stores are waiting, so locking in each event's own order would deadlock); a lock timeout raising `OperationalError` wrapping `LockNotAvailable`, classified as transient; the retry path sending the record to the DLQ as `TRANSIENT_RETRIES_EXHAUSTED`, and storing it when the lock is released during backoff; no lock requested for a before-cutoff event or an event with no drafts; no lock requested for a duplicate; a recipient in two drafts locked once; two recipient ids with the same `hashtext` (hard-coded pair found by the agent, checked by the test) not blocking each other; a failed transaction (`DataError`) releasing its locks; and a stop request while waiting leaving the offset uncommitted. The concurrency tests synchronise by polling `pg_stat_activity` for advisory-lock waiters with a 10-second deadline, and use a 500 ms `lock_timeout` where no wait is expected. Disclosure records were added. Nothing was committed by the agent.
+- Verification: Agent checks, using the `notification-test-db` (PostgreSQL 16) and `notification-test-kafka` (Kafka 4.1.2) containers that were already running. `TEST_DATABASE_URL=... TEST_KAFKA_BOOTSTRAP_SERVERS=... .venv/bin/python -m pytest -rs` in `notification-service/`: 940 passed, 0 skipped, 1 existing Starlette deprecation warning. The new tests passed in five further consecutive runs. Mutations applied to `app/worker.py` (restored afterwards) and the tests that failed: locking in each event's own order failed the sorted-order test and the swapped-recipient concurrency test; no lock failed 12 of the new tests; locking before the `processed_events` flush failed the duplicate test. The disclosure records were added after the test run and contain no code. Not done: a run with several workers in Compose (out of scope).
+- Author review: Keith stated on 2026-11-10, verbatim: "I forgot to add Keith's verification and testing using .venv/bin/python -m pytest -rs, in which 940 test cases passed." The test environment, the skipped count, and what the verification covered (for example, a code read) were not stated; 940 passed matches the agent's run with PostgreSQL 16 and Kafka 4.1.2, where nothing was skipped. The statement came after the final working tree, so it covers all the changes in this entry. This replaces the earlier note that review was pending and no human review or test rerun was claimed.
+- Review confirmation recorded at: 2026-11-10T04:08:25+08:00
+- Header exceptions: None.
+- Missing evidence: Original per-message timestamps unavailable. Prompt 1 is the user's message verbatim. Key response 1 is the full verbatim final response. Intermediate progress messages are not reproduced. No redactions.
+
+### Prompt 1
+
+```text
+You are adding a per-recipient lock to the Notification Service worker in the
+FoC repository. Use the following specification as your single source of
+truth. Do not make assumptions about any requirement not listed here. If
+something needed is unspecified, stop and ask.
+
+Feature: Per-recipient ordering of notification commits
+
+Overview:
+GET /notifications/stream sends a recipient's notifications with
+id > last_sent_id, in id order, and then advances last_sent_id. Ids come from
+the notifications.id sequence when a row is inserted, not when it commits. If
+two workers store events for the same recipient at the same time, a higher id
+can commit before a lower one. The stream then sends the higher id, advances
+past the lower one, and never sends it live. order.events is keyed by
+order_id, so this happens across two different orders for the same user.
+Today there is only one worker, so it cannot happen yet. This change makes it
+safe to run several workers.
+
+The fix is to serialize writes per recipient. Only one transaction at a time
+may hold uncommitted notification rows for a given recipient, and it takes the
+lock before its rows get their ids.
+
+Change store_event in app/worker.py. Today it does this in one transaction:
+insert processed_events, flush; insert one notifications row per draft, flush;
+run NOTIFY once for each distinct recipient. Keep that order, and add one step
+between the processed_events flush and the notifications insert:
+- Collect the distinct recipient_ids from the drafts. If there are none, take
+  no lock.
+- Sort them in a fixed order (by their string form), and for each one run
+  SELECT pg_advisory_xact_lock(:namespace, hashtext(:recipient_id))
+  with bound parameters. namespace is a new module-level int constant (e.g.
+  RECIPIENT_LOCK_NAMESPACE) that keeps these locks apart from any other
+  advisory-lock use.
+- The lock is transaction-scoped. PostgreSQL releases it on commit or
+  rollback; do not release it explicitly.
+Add a comment at the lock explaining that it keeps each recipient's rows
+committing in id order, which the SSE stream relies on.
+
+Taking the lock after the processed_events flush means a duplicate delivery
+still fails on the processed_events primary key before any recipient lock is
+requested.
+
+Timeouts and retries:
+- The worker's database session already sets lock_timeout=5s. A lock wait
+  that times out raises LockNotAvailable, which SQLAlchemy wraps in
+  OperationalError. The existing failure classification treats
+  OperationalError as transient, so the record is retried with the configured
+  backoff and goes to the DLQ as TRANSIENT_RETRIES_EXHAUSTED when the delays
+  run out. Do not change the classification; prove this behaviour with a test.
+
+Documentation:
+- app/routes/stream.py: the module docstring says commit order relies on the
+  single worker. Say instead that the worker's per-recipient advisory lock
+  keeps each recipient's rows committing in id order, so several workers are
+  safe.
+- notification-service/README.md: replace the "Limitation" paragraph under the
+  stream section with the same explanation.
+
+Follow the existing tests in tests/test_worker_postgres.py and
+tests/worker_support.py for conventions only.
+
+Acceptance criteria:
+- While a separate session holds recipient U's lock (taken with the same
+  namespace and hash), store_event for an event notifying U does not return.
+  After that session commits, it returns True, and U's rows exist.
+- While U's lock is held, store_event for an event notifying only V returns
+  promptly.
+- An event with two recipients (an admin order.cancelled with a courier
+  assigned) locks both and stores both rows. Two such events, with requester
+  and courier swapped, stored concurrently from two threads, both complete
+  without a deadlock error.
+- With U's lock held elsewhere and a short lock_timeout, store_event raises an
+  error that the worker classifies as transient.
+- Events with no drafts (BeforeCutoff, or a type that creates no
+  notification) never wait on any recipient lock.
+- A duplicate event_id still returns False, and does not wait on a recipient
+  lock held by another session.
+- Each recipient still gets exactly one NOTIFY per event, sent only after the
+  transaction commits.
+- Concurrency tests are deterministic: they synchronise with events, barriers
+  or timeouts, never by sleeping and hoping.
+- The full suite passes against real PostgreSQL and Kafka:
+  TEST_DATABASE_URL=... TEST_KAFKA_BOOTSTRAP_SERVERS=...
+  .venv/bin/python -m pytest -rs
+
+Out of scope:
+- Changing the stream's query or adding gap tracking to the stream.
+- Re-keying order.events, adding topics, or running more than one worker in
+  compose.yaml.
+- Changing lock_timeout, statement_timeout, or the failure classification.
+- The history and read-status API.
+
+Edge cases:
+- Two recipients whose ids hash to the same lock key: the second lock request
+  in the same transaction is re-entrant, so the event does not block itself.
+- A transaction that fails after taking the lock (e.g. a DataError on insert)
+  rolls back and releases the lock, so other workers are not blocked.
+- The worker gets SIGTERM while waiting on a lock: the existing shutdown
+  behaviour applies, and the record is left uncommitted.
+- One event lists the same recipient in two drafts: lock that recipient once.
+```
+
+### Key response 1
+
+I've added the per-recipient lock. Nothing is committed.
+
+**What changed**
+- **`app/worker.py`:** between the `processed_events` flush and the notifications insert, `store_event` now runs `pg_advisory_xact_lock(RECIPIENT_LOCK_NAMESPACE, hashtext(:recipient_id))` with bound parameters for each distinct recipient, sorted by string form. An event with no drafts takes no lock, and the locks are never released explicitly. A comment at the lock says why. I chose the value of `RECIPIENT_LOCK_NAMESPACE = 0x4E4F5446` ("NOTF"), since the spec gave none.
+- **Docs:** the `app/routes/stream.py` docstring and the README's stream section now say that the per-recipient lock keeps each recipient's rows committing in id order, so several workers are safe. The README's "Limitation" paragraph is now "Commit order".
+- **Tests:** 17 new tests in `tests/test_worker_postgres.py` cover every acceptance criterion and edge case. They wait for a real advisory-lock waiter in `pg_stat_activity` (10-second deadline) and never sleep. Tests that expect no wait use a 500 ms `lock_timeout`, so a wrong wait fails fast instead of hanging. In the deadlock test, a third session holds both locks until both stores are waiting. Locking in each event's own order would then deadlock every time, not just sometimes. The hash-collision test uses two UUIDs I found with the same `hashtext`, and it checks that first.
+
+**Verification**
+- Full suite against the `notification-test-db` and `notification-test-kafka` containers, which were already running: **940 passed, 0 skipped**, plus the existing Starlette warning. The new tests passed five more times in a row.
+- Mutation checks on the worker, restored afterwards. Unsorted locking failed the sorted-order and deadlock tests. No lock failed 12 tests. Locking before the `processed_events` flush failed the duplicate test.
+- The NOTIFY criterion is covered by the existing after-commit test plus a new check that nothing is notified while the store is blocked.
+
+**Disclosure:** `ai-20261110-001` covers the header blocks in the four changed files, the usage log, and both AI Use Summaries. Author review is marked pending. I left the test containers running.
+
+### Scope
+
+- `notification-service/app/worker.py`: Writing implementation code — the recipient lock and `RECIPIENT_LOCK_NAMESPACE`; Disclosure record — header block.
+- `notification-service/app/routes/stream.py`: Refactoring and documentation improvements — module docstring; Disclosure record — header block.
+- `notification-service/tests/test_worker_postgres.py`: Writing implementation code — the "Per-recipient lock" tests and imports; Disclosure record — header block.
+- `notification-service/README.md`: Refactoring and documentation improvements — the stream section's commit-order paragraph; Disclosure record — header block and AI Use Summary subsection.
+- `notification-service/ai/usage-log.md`: Disclosure record only — this entry.
+- `README.md`: Disclosure record only — update the root AI Use Summary.
+
+### Usage summary
+
+Claude Code added a per-recipient, transaction-scoped advisory lock to the Notification Service worker, taken in sorted order before notification rows are inserted, so that each recipient's rows commit in id order and several workers are safe for the live stream. It updated the stream docstring and README, and added deterministic PostgreSQL tests that it checked with mutations.

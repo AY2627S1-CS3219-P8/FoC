@@ -737,5 +737,18 @@ and [usage log](notification-service/ai/usage-log.md).
   exact prompts, the clarifying answer, and the final responses are recorded;
   original timestamps unavailable; no redactions; no header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service per-recipient commit order](notification-service/ai/usage-log.md#ai-20261110-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code and
+  Refactoring and documentation improvements for a per-recipient advisory lock in
+  the Notification Service worker, so that each recipient's rows commit in id
+  order and several workers are safe for the live stream, with tests, the stream
+  module docstring, and the service README, following the user's specification.
+  Agent checks: the full suite with PostgreSQL 16 and Kafka 4.1.2 had 940 passed
+  and 0 skipped; the tests caught all three mutations applied. Keith confirmed on
+  2026-11-10 verifying and testing the change with
+  `.venv/bin/python -m pytest -rs`, with 940 passed. The exact prompt and the
+  final response are recorded; original timestamps unavailable; no redactions; no
+  header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

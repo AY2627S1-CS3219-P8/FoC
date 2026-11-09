@@ -32,6 +32,10 @@ Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-09
 Scope: Refactoring and documentation improvements — restructure this README and write the purpose, contract assumption, planning documents, "Running it" (Compose services and configuration), end-to-end walkthrough (including the temporary Order Service CA workaround), API reference, DLQ investigation runbook, and Frontend Service handover sections, and the single full-suite test command; then, after Prompt 2, label every command block with the terminal and directory to run it from, move the walkthrough's live stream into a second terminal, and reorder "Running tests" into numbered steps (ai-20261109-001).
 Author review: Keith confirmed on 2026-11-09: performed all end-to-end checks and tests included in this README, with 923 tests passed, and confirmed the validity of the whole document (ai-20261109-001).
 Details: notification-service/ai/usage-log.md; ai-20261109-001
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-10
+Scope: Refactoring and documentation improvements — replace the stream section's "Limitation" paragraph with the per-recipient lock explanation (ai-20261110-001). The AI Use Summary subsection is a disclosure record.
+Author review: Keith confirmed on 2026-11-10: verification and testing with the full pytest suite (.venv/bin/python -m pytest -rs), 940 passed (ai-20261110-001).
+Details: notification-service/ai/usage-log.md; ai-20261110-001
 -->
 
 # Notification Service
@@ -583,10 +587,11 @@ How it works:
 - If a stream's query fails after the headers are sent, the error is logged and
   the stream ends; the client reconnects with `Last-Event-ID`.
 
-Limitation: `id > last_sent_id` relies on rows committing in id order. That holds
-because one worker stores one event per transaction. Several workers committing
-at the same time could commit a lower id after a higher one has been sent, and
-that row would then only appear in the history.
+Commit order: `id > last_sent_id` relies on each recipient's rows committing in
+id order. The worker takes a per-recipient advisory lock
+(`pg_advisory_xact_lock`) before inserting a recipient's rows and holds it until
+the transaction ends, so each recipient's rows commit in id order and several
+workers are safe.
 
 Shutdown: an open stream only closes at its maximum lifetime, so the image runs
 uvicorn with `--timeout-graceful-shutdown 5`. On SIGTERM, uvicorn waits up to 5
@@ -1258,4 +1263,31 @@ validity of the whole document. The test run had 923 passed. Other results were
 not stated.
 
 See the [usage record](ai/usage-log.md#ai-20261109-001). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.
+
+### Per-recipient commit order (ai-20261110-001)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code** and
+**Refactoring and documentation improvements**: a per-recipient,
+transaction-scoped advisory lock in the worker's `store_event`
+(`app/worker.py`), taken in sorted order between the `processed_events` flush
+and the notifications insert, so that each recipient's rows commit in id order
+and several workers are safe for the live stream; tests in
+`tests/test_worker_postgres.py`; the `app/routes/stream.py` docstring; and the
+stream section's commit-order paragraph in this README. The work followed the
+user's specification. The lock namespace value (`0x4E4F5446`) was the agent's
+choice.
+
+Observed verification (agent only): with throwaway PostgreSQL 16 and Kafka 4.1.2,
+`.venv/bin/python -m pytest -rs` gave 940 passed and 0 skipped. The new tests
+passed five more times in a row. The tests caught all three mutations applied:
+locking in each event's own order, no lock, and locking before the
+`processed_events` flush.
+
+Author review (confirmed by Keith on 2026-11-10): Keith verified and tested the
+change with `.venv/bin/python -m pytest -rs`, and 940 tests passed. The test
+environment, the skipped count, and what the verification covered were not
+stated.
+
+See the [usage record](ai/usage-log.md#ai-20261110-001). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.
