@@ -7,6 +7,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.messaging import HTTP_TIMEOUT_SECONDS
+from foc_observability import context_headers
 
 
 class InvalidSessionError(Exception):
@@ -55,7 +56,11 @@ class UserServiceClient:
     def resolve_identity(self, token: str) -> Identity:
         try:
             response = self._client.get(
-                self._identity_url, headers={"Authorization": f"Bearer {token}"}
+                self._identity_url,
+                headers={
+                    **context_headers(),
+                    "Authorization": f"Bearer {token}",
+                },
             )
         except httpx.RequestError:
             raise AuthenticationUnavailableError from None
@@ -103,7 +108,7 @@ class SupplierServiceClient:
 
         url = self._base.copy_with(path=f"/suppliers/{supplier_id}")
         try:
-            response = self._client.get(url)
+            response = self._client.get(url, headers=context_headers())
         except httpx.RequestError:
             raise SupplierUnavailableError from None
         if response.status_code == 200:

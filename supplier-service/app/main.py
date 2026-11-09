@@ -20,7 +20,7 @@ from app.auth import ProtectedRouteError
 from app.clients.user_service import UserServiceClient
 from app.db import create_db_engine, create_session_factory
 from app.config import Settings
-from foc_observability import configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging
 from app.routes.admin_suppliers import router as admin_supplier_router
 from app.routes.health import router as health_router
 from app.routes.reference_data import router as reference_router
@@ -55,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="FoC Supplier Service",
         lifespan=lifespan,
     )
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(ProtectedRouteError)
     async def protected_route_error_handler(

@@ -24,7 +24,11 @@ from sqlalchemy.orm import Session
 from app.config import Settings, required_env
 from app.db import make_engine, make_session_factory
 from app.events import MalformedMessage, dump_event, parse_incoming_event
-from foc_observability import configure_logging
+from foc_observability import (
+    context_from_event_body,
+    configure_logging,
+    log_context,
+)
 from app.messaging import (
     CREDIT_TOPIC,
     EVENT_STREAMS,
@@ -269,6 +273,24 @@ def process_delivery(
 ) -> DeliveryResult:
     """Process once, retry only infrastructure failures, or quarantine safely."""
 
+    with log_context(**context_from_event_body(body)):
+        return _process_delivery(
+            session_factory,
+            body,
+            initial_allocation=initial_allocation,
+            retry_backoff_seconds=retry_backoff_seconds,
+            sleep=sleep,
+        )
+
+
+def _process_delivery(
+    session_factory: Callable[[], Session],
+    body: bytes,
+    *,
+    initial_allocation: int,
+    retry_backoff_seconds: tuple[float, ...],
+    sleep: Callable[[float], None],
+) -> DeliveryResult:
     for attempt in range(len(retry_backoff_seconds) + 1):
         attempts = attempt + 1
         db = None
@@ -450,6 +472,36 @@ def _handle_message(
     initial_allocation: int,
     retry_backoff_seconds: tuple[float, ...],
 ) -> None:
+    body = message.value() or b""
+    with log_context(
+        topic=message.topic(),
+        partition=message.partition(),
+        offset=message.offset(),
+        **context_from_event_body(body),
+    ):
+        _handle_message_in_context(
+            session_factory,
+            publisher,
+            consumer,
+            message,
+            stream=stream,
+            initial_allocation=initial_allocation,
+            retry_backoff_seconds=retry_backoff_seconds,
+            body=body,
+        )
+
+
+def _handle_message_in_context(
+    session_factory: Callable[[], Session],
+    publisher: KafkaPublisher,
+    consumer: Consumer,
+    message: Message,
+    *,
+    stream: EventStream,
+    initial_allocation: int,
+    retry_backoff_seconds: tuple[float, ...],
+    body: bytes,
+) -> None:
     """Apply/skip/quarantine one record, then synchronously commit its offset."""
 
     error = message.error()
@@ -478,7 +530,7 @@ def _handle_message(
     else:
         outcome = process_delivery(
             session_factory,
-            message.value() or b"",
+            body,
             initial_allocation=initial_allocation,
             retry_backoff_seconds=retry_backoff_seconds,
         )

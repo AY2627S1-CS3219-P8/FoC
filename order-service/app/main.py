@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.clients import SupplierServiceClient, UserServiceClient
 from app.config import required_env
 from app.db import database_url, get_db, make_engine, make_session_factory
-from foc_observability import configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging
 from app.routes.orders import router as orders_router
 
 
@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="FoC Order Service", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 
 
 @app.exception_handler(OperationalError)

@@ -17,7 +17,11 @@ from sqlalchemy.orm import Session
 from app.config import required_env
 from app.db import database_url, make_engine, make_session_factory
 from app.events import dump_event
-from foc_observability import configure_logging
+from foc_observability import (
+    context_from_event_body,
+    configure_logging,
+    log_context,
+)
 from app.messaging import (
     CONSUMER_GROUP,
     CREDIT_DLQ_TOPIC,
@@ -143,6 +147,16 @@ def process_delivery(
 ) -> str:
     """Apply one message. Returns 'ack' or 'nack' after bounded backoff."""
 
+    with log_context(**context_from_event_body(body)):
+        return _process_delivery(session_factory, body, sleep=sleep)
+
+
+def _process_delivery(
+    session_factory: Callable[[], Session],
+    body: bytes,
+    *,
+    sleep: Callable[[float], None],
+) -> str:
     for attempt in range(MAX_ATTEMPTS):
         db = session_factory()
         try:
@@ -173,13 +187,32 @@ def _handle_message(
     consumer: Consumer,
     message: Message,
 ) -> None:
+    body = message.value() or b""
+    with log_context(
+        topic=message.topic(),
+        partition=message.partition(),
+        offset=message.offset(),
+        **context_from_event_body(body),
+    ):
+        _handle_message_in_context(
+            session_factory, publisher, consumer, message, body
+        )
+
+
+def _handle_message_in_context(
+    session_factory: Callable[[], Session],
+    publisher: KafkaPublisher,
+    consumer: Consumer,
+    message: Message,
+    body: bytes,
+) -> None:
     error = message.error()
     if error is not None:
         if error.fatal():
             raise KafkaException(error)
         logger.error("kafka_poll_error", extra={"reason": str(error)})
         return
-    if process_delivery(session_factory, message.value() or b"") == "nack":
+    if process_delivery(session_factory, body) == "nack":
         try:
             publisher.dead_letter(message.key(), message.value(), message.headers())
         except (KafkaException, RuntimeError):

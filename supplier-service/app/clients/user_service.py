@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.config import Settings
+from foc_observability import context_headers
 
 
 class InvalidSessionError(Exception):
@@ -62,7 +63,11 @@ class UserServiceClient:
         """Forward the credential unchanged and validate a fresh profile response."""
         try:
             response = self._client.get(
-                self._identity_url, headers={"Authorization": f"Bearer {token}"}
+                self._identity_url,
+                headers={
+                    **context_headers(),
+                    "Authorization": f"Bearer {token}",
+                },
             )
         except httpx.RequestError:
             raise AuthenticationUnavailableError(

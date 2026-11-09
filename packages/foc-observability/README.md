@@ -9,6 +9,7 @@ This package provides the shared logging contract for FoC Python services.
 - Use stable, whitespace-free event names.
 - Put application values in `fields`, not directly in `LogRecord.extra`.
 - Carry request and message identifiers with `log_context`.
+- Add `RequestContextMiddleware` to FastAPI applications.
 - Never log credentials, bearer tokens, passwords, database URLs, or raw
   request/response bodies.
 
@@ -29,6 +30,16 @@ with log_context(request_id=str(request_id), user_id=str(user_id)):
         order_id=str(order_id),
     )
 ```
+
+For an ASGI/FastAPI application, add the middleware once during app creation:
+
+```python
+app.add_middleware(RequestContextMiddleware)
+```
+
+Outbound HTTP clients should use `context_headers()`. Kafka consumers can use
+`context_from_event_body()` together with the topic, partition, and offset in
+`log_context`.
 
 Configure the process once at its entry point:
 

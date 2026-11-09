@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.auth import SESSION_CLEANUP_INTERVAL, cleanup_sessions
 from app.db import SessionLocal, get_db
 from app.routes.users import router as users_router
-from foc_observability import configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="FoC User Service", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 
 
 @app.get("/health")

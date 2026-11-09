@@ -15,7 +15,7 @@ from sqlalchemy import text
 from app.clients import UserServiceClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
-from foc_observability import configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging
 from app.routes.credits import router as credits_router
 from app.services.credits import (
     CreditAccountNotFound,
@@ -53,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.engine.dispose()
 
     app = FastAPI(title="FoC Credit Service", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(CreditAccountNotFound)
     async def credit_account_not_found_handler(
