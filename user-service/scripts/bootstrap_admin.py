@@ -15,7 +15,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(service_root))
     sys.path.insert(0, str(repository_root / "packages/foc-observability/src"))
 
-from foc_observability import configure_logging
+from foc_observability import configure_logging, log_event
 from app.db import SessionLocal
 from app.schemas import UserCreate
 from app.services.bootstrap import BootstrapError, bootstrap_admin
@@ -81,19 +81,32 @@ def main() -> int:
     try:
         payload = payload_from_environment()
         if payload is None:
-            logger.info("Administrator bootstrap is disabled; no credentials configured")
+            log_event(
+                logger,
+                logging.INFO,
+                "administrator_bootstrap_disabled",
+            )
             return 0
 
         with SessionLocal() as db:
             created = bootstrap_admin(payload, db)
     except (BootstrapConfigurationError, BootstrapError) as exc:
-        logger.error("Administrator bootstrap failed: %s", exc)
+        log_event(
+            logger,
+            logging.ERROR,
+            "administrator_bootstrap_failed",
+            reason=str(exc),
+        )
         return 1
 
     if created:
-        logger.info("Administrator bootstrap completed")
+        log_event(logger, logging.INFO, "administrator_bootstrap_completed")
     else:
-        logger.info("Administrator bootstrap already completed; no changes made")
+        log_event(
+            logger,
+            logging.INFO,
+            "administrator_bootstrap_already_completed",
+        )
     return 0
 
 

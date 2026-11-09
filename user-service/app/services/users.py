@@ -22,6 +22,7 @@ from app.auth import (
 )
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User, UserSession
 from app.schemas import LoginResponse, UserCreate, UserLogin, UserUpdate
+from foc_observability import log_event
 
 
 password_hasher = PasswordHasher()
@@ -331,12 +332,12 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    logger.info(
+    log_event(
+        logger,
+        logging.INFO,
         "account_suspended",
-        extra={
-            "actor_user_id": str(actor.id),
-            "target_user_id": str(target.id),
-        },
+        actor_user_id=str(actor.id),
+        target_user_id=str(target.id),
     )
     return target
 
@@ -400,12 +401,12 @@ def unsuspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    logger.info(
+    log_event(
+        logger,
+        logging.INFO,
         "account_unsuspended",
-        extra={
-            "actor_user_id": str(actor.id),
-            "target_user_id": str(target.id),
-        },
+        actor_user_id=str(actor.id),
+        target_user_id=str(target.id),
     )
     return target
 
@@ -459,12 +460,12 @@ def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    logger.info(
+    log_event(
+        logger,
+        logging.INFO,
         "admin_rights_revoked",
-        extra={
-            "actor_user_id": str(actor.id),
-            "target_user_id": str(target.id),
-        },
+        actor_user_id=str(actor.id),
+        target_user_id=str(target.id),
     )
     return target
 

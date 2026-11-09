@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.auth import SESSION_CLEANUP_INTERVAL, cleanup_sessions
 from app.db import SessionLocal, get_db
 from app.routes.users import router as users_router
-from foc_observability import RequestContextMiddleware, configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging, log_event
 
 
 logger = logging.getLogger(__name__)
@@ -27,10 +27,20 @@ def run_session_cleanup() -> None:
             deleted = cleanup_sessions(db)
             db.commit()
             if deleted:
-                logger.info("Removed %d expired or revoked sessions", deleted)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "expired_or_revoked_sessions_cleaned",
+                    deleted_count=deleted,
+                )
         except SQLAlchemyError:
             db.rollback()
-            logger.exception("Periodic session cleanup failed")
+            log_event(
+                logger,
+                logging.ERROR,
+                "periodic_session_cleanup_failed",
+                exc_info=True,
+            )
 
 
 async def session_cleanup_loop() -> None:

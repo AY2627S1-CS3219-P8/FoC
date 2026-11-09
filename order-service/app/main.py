@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.clients import SupplierServiceClient, UserServiceClient
 from app.config import required_env
 from app.db import database_url, get_db, make_engine, make_session_factory
-from foc_observability import RequestContextMiddleware, configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging, log_event
 from app.routes.orders import router as orders_router
 
 
@@ -43,7 +43,12 @@ app.add_middleware(RequestContextMiddleware)
 
 @app.exception_handler(OperationalError)
 async def database_unavailable(request: Request, exc: OperationalError) -> JSONResponse:
-    logger.error("database_unavailable", extra={"path": request.url.path})
+    log_event(
+        logger,
+        logging.ERROR,
+        "database_unavailable",
+        path=request.url.path,
+    )
     return JSONResponse(
         status_code=503, content={"detail": "Database temporarily unavailable"}
     )

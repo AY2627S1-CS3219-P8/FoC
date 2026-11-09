@@ -15,7 +15,7 @@ from sqlalchemy import text
 from app.clients import UserServiceClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
-from foc_observability import RequestContextMiddleware, configure_logging
+from foc_observability import RequestContextMiddleware, configure_logging, log_event
 from app.routes.credits import router as credits_router
 from app.services.credits import (
     CreditAccountNotFound,
@@ -92,7 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             # Never expose database URLs, credentials, or driver diagnostics.
             pass
-        logger.warning("Credit Service readiness check failed")
+        log_event(logger, logging.WARNING, "readiness_check_failed")
         return JSONResponse(status_code=503, content={"status": "not_ready"})
 
     app.include_router(credits_router)

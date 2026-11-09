@@ -28,6 +28,7 @@ from foc_observability import (
     context_from_event_body,
     configure_logging,
     log_context,
+    log_event,
 )
 from app.messaging import (
     CREDIT_TOPIC,
@@ -230,7 +231,12 @@ def _rollback(db: Session | None) -> None:
     try:
         db.rollback()
     except Exception:
-        logger.exception("credit_event_rollback_failed")
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_event_rollback_failed",
+            exc_info=True,
+        )
 
 
 def _is_transient_infrastructure_failure(error: Exception) -> bool:
@@ -248,17 +254,17 @@ def _is_transient_infrastructure_failure(error: Exception) -> bool:
 
 
 def _log_failure(result: DeliveryResult, error: Exception) -> None:
-    logger.error(
-        "credit_event_quarantined failure_code=%s attempts=%s "
-        "exception_type=%s event_type=%s event_id=%s correlation_id=%s "
-        "order_id=%s",
-        result.failure_code,
-        result.attempts,
-        result.exception_type,
-        result.event_type,
-        result.event_id,
-        result.correlation_id,
-        result.order_id,
+    log_event(
+        logger,
+        logging.ERROR,
+        "credit_event_quarantined",
+        failure_code=result.failure_code,
+        attempts=result.attempts,
+        exception_type=result.exception_type,
+        event_type=result.event_type,
+        event_id=result.event_id,
+        correlation_id=result.correlation_id,
+        order_id=result.order_id,
         exc_info=(type(error), error, error.__traceback__),
     )
 
@@ -309,16 +315,16 @@ def _process_delivery(
             transient = _is_transient_infrastructure_failure(error)
             if transient and attempt < len(retry_backoff_seconds):
                 delay = retry_backoff_seconds[attempt]
-                logger.warning(
-                    "credit_event_transient_retry attempt=%s "
-                    "retry_delay_seconds=%s exception_type=%s event_type=%s "
-                    "event_id=%s correlation_id=%s",
-                    attempts,
-                    delay,
-                    type(error).__name__,
-                    getattr(event, "event_type", None),
-                    getattr(event, "event_id", None),
-                    getattr(event, "correlation_id", None),
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "credit_event_transient_retry",
+                    attempt=attempts,
+                    retry_delay_seconds=delay,
+                    exception_type=type(error).__name__,
+                    event_type=getattr(event, "event_type", None),
+                    event_id=getattr(event, "event_id", None),
+                    correlation_id=getattr(event, "correlation_id", None),
                     exc_info=(type(error), error, error.__traceback__),
                 )
                 sleep(delay)
@@ -508,18 +514,23 @@ def _handle_message_in_context(
     if error is not None:
         if error.fatal():
             raise KafkaException(error)
-        logger.error("kafka_poll_error", extra={"reason": str(error)})
+        log_event(
+            logger,
+            logging.ERROR,
+            "kafka_poll_error",
+            reason=str(error),
+        )
         return
 
     decision = inspect_transport_record(stream, message)
     if decision.action == "IGNORE":
-        logger.debug(
+        log_event(
+            logger,
+            logging.DEBUG,
             "credit_event_ignored",
-            extra={
-                "topic": message.topic(),
-                "partition": message.partition(),
-                "offset": message.offset(),
-            },
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
         )
         consumer.commit(message=message, asynchronous=False)
         return
@@ -536,14 +547,15 @@ def _handle_message_in_context(
         )
 
     if outcome.disposition == "QUARANTINE":
-        logger.error(
-            "credit_event_sent_to_dlq failure_code=%s attempts=%s "
-            "topic=%s partition=%s offset=%s",
-            outcome.failure_code,
-            outcome.attempts,
-            message.topic(),
-            message.partition(),
-            message.offset(),
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_event_sent_to_dlq",
+            failure_code=outcome.failure_code,
+            attempts=outcome.attempts,
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
         )
         publisher.dead_letter(
             message, dlq_topic=stream.dlq_topic, result=outcome
@@ -558,7 +570,12 @@ def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> None
         relay_once(db, publisher)
     except Exception:
         db.rollback()
-        logger.exception("credit_outbox_relay_failed")
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_outbox_relay_failed",
+            exc_info=True,
+        )
     finally:
         db.close()
 
@@ -596,11 +613,13 @@ def main() -> None:
         }
     )
     consumer.subscribe([stream.topic])
-    logger.info(
-        "credit_worker_started event_stream=%s topic=%s consumer_group=%s",
-        stream_name,
-        stream.topic,
-        stream.group_id,
+    log_event(
+        logger,
+        logging.INFO,
+        "credit_worker_started",
+        event_stream=stream_name,
+        topic=stream.topic,
+        consumer_group=stream.group_id,
     )
     try:
         while True:

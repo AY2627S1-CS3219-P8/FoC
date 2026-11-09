@@ -16,6 +16,7 @@ from app.events import IncomingEvent, enqueue_event, isoformat_utc, parse_incomi
 from app.messaging import ORDER_TTL, RELAY_BATCH_SIZE
 from app.models import Order, ProcessedEvent, utc_now
 from app.schemas import DeliveryLocation, OrderCreate
+from foc_observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -463,11 +464,13 @@ def _can_view(order: Order, actor: Identity) -> bool:
 
 
 def _illegal(order: Order, action: str) -> None:
-    logger.warning(
-        "illegal_order_transition order_id=%s status=%s action=%s",
-        order.id,
-        order.status,
-        action,
+    log_event(
+        logger,
+        logging.WARNING,
+        "illegal_order_transition",
+        order_id=str(order.id),
+        status=order.status,
+        action=action,
     )
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,

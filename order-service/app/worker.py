@@ -21,6 +21,7 @@ from foc_observability import (
     context_from_event_body,
     configure_logging,
     log_context,
+    log_event,
 )
 from app.messaging import (
     CONSUMER_GROUP,
@@ -164,10 +165,18 @@ def _process_delivery(
         except Exception:
             db.rollback()
             if attempt >= MAX_ATTEMPTS - 1:
-                logger.exception("message_dead_lettered")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "message_dead_lettered",
+                    exc_info=True,
+                )
                 return "nack"
-            logger.warning(
-                "message_processing_failed", extra={"attempt": attempt + 1}
+            log_event(
+                logger,
+                logging.WARNING,
+                "message_processing_failed",
+                attempt=attempt + 1,
             )
             sleep(RETRY_BACKOFF_SECONDS[attempt])
         else:
@@ -210,13 +219,23 @@ def _handle_message_in_context(
     if error is not None:
         if error.fatal():
             raise KafkaException(error)
-        logger.error("kafka_poll_error", extra={"reason": str(error)})
+        log_event(
+            logger,
+            logging.ERROR,
+            "kafka_poll_error",
+            reason=str(error),
+        )
         return
     if process_delivery(session_factory, body) == "nack":
         try:
             publisher.dead_letter(message.key(), message.value(), message.headers())
         except (KafkaException, RuntimeError):
-            logger.exception("dead_letter_failed")
+            log_event(
+                logger,
+                logging.ERROR,
+                "dead_letter_failed",
+                exc_info=True,
+            )
             if not _park(session_factory, message):
                 # Rewind so the message is retried instead of skipped by a later commit.
                 consumer.seek(TopicPartition(message.topic(), message.partition(), message.offset()))
@@ -248,7 +267,7 @@ def _park(session_factory: Callable[[], Session], message: Message) -> bool:
         db.rollback()
     except SQLAlchemyError:
         db.rollback()
-        logger.exception("park_failed")
+        log_event(logger, logging.ERROR, "park_failed", exc_info=True)
         return False
     finally:
         db.close()
@@ -265,7 +284,13 @@ def _relay(
         relay(db, publisher)
     except Exception:
         db.rollback()
-        logger.exception("relay_failed", extra={"relay": relay.__name__})
+        log_event(
+            logger,
+            logging.ERROR,
+            "relay_failed",
+            relay=relay.__name__,
+            exc_info=True,
+        )
     finally:
         db.close()
 
@@ -279,7 +304,7 @@ def _sweep(session_factory: Callable[[], Session], next_sweep: float) -> float:
         expire_overdue_orders(db)
     except Exception:
         db.rollback()
-        logger.exception("expiry_sweep_failed")
+        log_event(logger, logging.ERROR, "expiry_sweep_failed", exc_info=True)
     finally:
         db.close()
     return now + EXPIRY_SWEEP_SECONDS
@@ -308,7 +333,7 @@ def main() -> None:
     )
     consumer.subscribe([CREDIT_TOPIC])
     next_sweep = time.monotonic()
-    logger.info("worker_started")
+    log_event(logger, logging.INFO, "worker_started")
     try:
         while True:
             message = consumer.poll(RELAY_POLL_SECONDS)
