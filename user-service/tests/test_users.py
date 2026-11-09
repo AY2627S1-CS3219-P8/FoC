@@ -1,5 +1,6 @@
 """Tests for user registration and login behavior."""
 
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -158,6 +159,37 @@ def test_login_user_verifies_password_and_persists_hashed_session_token():
     assert db.session.token_hash
     assert db.session.expires_at > db.session.last_activity_at
     assert db.session.absolute_expires_at > db.session.expires_at
+
+
+def test_registration_and_login_audit_events_contain_no_credentials(caplog):
+    """Authentication audit fields contain only safe identifiers and reasons."""
+
+    with caplog.at_level(logging.INFO, logger="app.services.users"):
+        registered = register_user(make_payload(), FakeSession())
+        registered.created_at = datetime.now(timezone.utc)
+        registered.updated_at = registered.created_at
+        login_user(
+            UserLogin(nus_student_number="A0123456X", password="Password1!"),
+            FakeLoginSession(existing=registered),
+        )
+        with pytest.raises(HTTPException):
+            login_user(
+                UserLogin(nus_student_number="A0123456X", password="WrongPassword1!"),
+                FakeLoginSession(existing=registered),
+            )
+
+    records = {
+        record.event: record
+        for record in caplog.records
+        if getattr(record, "event", None)
+        in {"user_registered", "login_succeeded", "login_failed"}
+    }
+    assert records["user_registered"].fields == {"user_id": str(registered.id)}
+    assert records["login_succeeded"].fields == {"user_id": str(registered.id)}
+    assert records["login_failed"].fields == {"reason": "invalid_credentials"}
+    assert "A0123456X" not in caplog.text
+    assert "Password1!" not in caplog.text
+    assert "WrongPassword1!" not in caplog.text
 
 
 @pytest.mark.parametrize("status", ["deactivated", "suspended"])

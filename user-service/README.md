@@ -129,6 +129,15 @@ silently create a new account.
 - Record structured audit logs for significant authentication and
   account-management events.
 
+Audit events include `user_registered`, `registration_failed`,
+`login_succeeded`, `login_failed`, `logout_succeeded`, `logout_failed`,
+`profile_updated`, `password_changed`, `account_deactivated`,
+`account_reactivation_failed`, and `account_reactivated`. Successful events
+use user UUIDs; failed events use fixed reason codes such as
+`invalid_credentials`, `identity_conflict`, or `database_unavailable`. These
+events never include student numbers, email addresses, passwords, password
+hashes, session tokens, or upstream exception text.
+
 ## Non-functional targets
 
 The project requirements specify the following targets for the User Service:

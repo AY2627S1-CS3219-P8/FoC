@@ -1,6 +1,7 @@
 """Bearer-session authentication dependencies and lifecycle helpers."""
 
 import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import User, UserSession
+from foc_observability import log_event
 
 
 SESSION_INACTIVITY = timedelta(minutes=30)
@@ -28,6 +30,7 @@ AUTHENTICATION_ERROR = "Invalid authentication credentials"
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{20,256}$")
 
 bearer_scheme = HTTPBearer(auto_error=False)
+logger = logging.getLogger(__name__)
 
 
 def hash_session_token(token: str) -> str:
@@ -199,7 +202,20 @@ def revoke_session(context: AuthContext, db: Session) -> None:
         db.commit()
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "logout_failed",
+            user_id=str(context.user_id),
+            reason="database_unavailable",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication temporarily unavailable",
         ) from exc
+    log_event(
+        logger,
+        logging.INFO,
+        "logout_succeeded",
+        user_id=str(context.user_id),
+    )
