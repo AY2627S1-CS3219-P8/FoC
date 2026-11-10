@@ -25,10 +25,7 @@ concurrency:
 
 jobs:
   publish:
-    if: >-
-      github.ref == 'refs/heads/feat/cloud-deployment' &&
-      (github.event_name == 'workflow_dispatch' ||
-       contains(github.event.head_commit.message, '[publish-ecr]'))
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     name: Build and push ${{ matrix.name }}
     runs-on: ubuntu-latest
     environment: foc-publish
