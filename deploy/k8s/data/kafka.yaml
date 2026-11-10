@@ -84,7 +84,7 @@ spec:
             - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
               value: "false"
             - name: KAFKA_LOG_DIRS
-              value: /var/lib/kafka/data
+              value: /var/lib/kafka/data/kafka-logs
           readinessProbe:
             exec:
               command:
