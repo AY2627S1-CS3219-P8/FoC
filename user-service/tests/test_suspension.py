@@ -365,6 +365,120 @@ def test_admin_can_revoke_another_admin_rights(client, database):
     ).json()["role"] == "user"
 
 
+def test_admin_can_grant_admin_rights_to_another_active_user(client, database):
+    """Granting rights promotes the target and preserves its session."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Student",
+    )
+    database.commit()
+
+    admin_token = login(client, admin.nus_student_number)
+    target_token = login(client, target.nus_student_number)
+    response = client.post(
+        f"/admin/users/{target.id}/grant-admin",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["role"] == "admin"
+    database.refresh(target)
+    assert target.role == "admin"
+    assert client.get(
+        "/users/me", headers={"Authorization": f"Bearer {target_token}"}
+    ).json()["role"] == "admin"
+
+
+def test_regular_user_cannot_grant_admin_rights(client, database):
+    """Only an active administrator may promote another user."""
+
+    actor = create_user(database)
+    target = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="target@example.com",
+        display_name="Target Student",
+    )
+    database.commit()
+
+    response = client.post(
+        f"/admin/users/{target.id}/grant-admin",
+        headers={"Authorization": f"Bearer {login(client, actor.nus_student_number)}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Admin privileges required"}
+    database.refresh(target)
+    assert target.role == "user"
+
+
+def test_admin_cannot_grant_admin_rights_to_self(client, database):
+    """Self-promotion is rejected even for an existing administrator."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    database.commit()
+
+    response = client.post(
+        f"/admin/users/{admin.id}/grant-admin",
+        headers={"Authorization": f"Bearer {login(client, admin.nus_student_number)}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Administrators cannot grant themselves administrator rights"
+    }
+
+
+def test_grant_admin_requires_an_active_non_admin_target(client, database):
+    """Promotion rejects missing, already-admin, and inactive targets."""
+
+    admin = create_user(database)
+    admin.role = "admin"
+    already_admin = create_user(
+        database,
+        nus_student_number="A0123457X",
+        email="already-admin@example.com",
+        display_name="Already Admin",
+    )
+    already_admin.role = "admin"
+    inactive = create_user(
+        database,
+        nus_student_number="A0123458X",
+        email="inactive@example.com",
+        display_name="Inactive Student",
+    )
+    inactive.status = "suspended"
+    database.commit()
+    admin_token = login(client, admin.nus_student_number)
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    already_response = client.post(
+        f"/admin/users/{already_admin.id}/grant-admin", headers=headers
+    )
+    inactive_response = client.post(
+        f"/admin/users/{inactive.id}/grant-admin", headers=headers
+    )
+    missing_response = client.post(
+        "/admin/users/00000000-0000-0000-0000-000000000000/grant-admin",
+        headers=headers,
+    )
+
+    assert already_response.status_code == 409
+    assert already_response.json() == {"detail": "User is already an administrator"}
+    assert inactive_response.status_code == 409
+    assert inactive_response.json() == {
+        "detail": "Only active users can be made administrators"
+    }
+    assert missing_response.status_code == 404
+    assert missing_response.json() == {"detail": "User not found"}
+
+
 def test_admin_cannot_revoke_own_admin_rights(client, database):
     """Self-revocation is rejected so the caller remains an administrator."""
 
