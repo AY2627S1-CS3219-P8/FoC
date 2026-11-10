@@ -40,14 +40,34 @@ transforms:
 
       .compose_service = .label."com.docker.compose.service"
       del(.label)
+      if !is_string(.level) {
+        .level = "UNKNOWN"
+      }
+      if !is_string(.component) {
+        .component = "unknown"
+      }
+      if !is_string(.environment) {
+        .environment = "unknown"
+      }
       .collector = "vector"
       .source_type = "docker"
 
 sinks:
-  backend_console:
-    type: console
+  backend_loki:
+    type: loki
     inputs:
       - normalize_backend_logs
-    target: stdout
+    endpoint: http://loki:3100
+    path: /loki/api/v1/push
     encoding:
       codec: json
+    labels:
+      source: foc-backend
+      service: "{{ compose_service }}"
+      component: "{{ component }}"
+      environment: "{{ environment }}"
+      level: "{{ level }}"
+    buffer:
+      type: disk
+      max_size: 1073741824
+      when_full: block

@@ -56,12 +56,12 @@ map is removed after extracting the service name so unrelated labels and host
 paths are not forwarded. Malformed records are kept with
 `structured_log_parse_error: true` rather than being silently dropped.
 
-For this step, Vector writes the normalized stream to its own stdout as a
-verification sink. This proves collection and normalization without coupling
-the Compose stack to a particular central storage product. A durable Loki or
-managed logging sink is the next integration point; until then, Vector's
-container output should be treated as verification output rather than long-term
-log retention.
+Vector sends the normalized stream to Loki. The sink uses a disk buffer under
+the persistent `vector-data` volume and blocks when that buffer is full, so a
+temporary Loki outage does not immediately discard collected records. The
+collector uses only low-cardinality Loki labels: `source`, `service`,
+`component`, `environment`, and `level`. Request, message, and domain
+identifiers remain in the JSON log body.
 
 Start the collector with `docker compose up vector` and inspect the normalized
 records with `docker compose logs -f vector`. The collector requires access to
@@ -70,6 +70,30 @@ credentials in deployments outside local development. Linux uses
 `/var/run/docker.sock` by default. Docker Desktop users should set
 `VECTOR_DOCKER_SOCKET` in `.env` to the host socket exposed by their Docker
 context, for example `/Users/<user>/.docker/run/docker.sock`.
+
+## Loki and Grafana
+
+The root Compose file also runs Loki and Grafana. Loki stores the backend log
+history in the persistent `loki-data` volume using its local filesystem
+backend. Grafana is provisioned with the `FoC Loki` data source and connects to
+Loki through the Compose service name, `http://loki:3100`; it does not use
+`localhost` because Grafana runs in its own container.
+
+Set `GRAFANA_ADMIN_PASSWORD` in `.env` before starting the stack. Start the
+logging stack with `docker compose up vector loki grafana`, then open Grafana at
+`http://127.0.0.1:3001`. Loki readiness is available at
+`http://127.0.0.1:3100/ready`.
+
+Useful initial Grafana Explore queries are:
+
+```logql
+{service="order-service"}
+{component="worker", environment="development"} | json | event="worker_heartbeat"
+```
+
+This Compose Loki setup is for local development and evaluation. Production
+should use authenticated transport, an authentication layer in front of Loki,
+and durable object storage or a managed Loki-compatible service.
 
 ## Log envelope
 

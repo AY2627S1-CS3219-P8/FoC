@@ -9,6 +9,31 @@ include:
   - event-broker/compose.yaml
 
 services:
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    restart: unless-stopped
+
   vector:
     image: timberio/vector:0.61.0-debian
     command: ["--config", "/etc/vector/vector.yaml"]
@@ -16,6 +41,8 @@ services:
       - ${VECTOR_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
       - ./observability/vector.yaml:/etc/vector/vector.yaml:ro
       - vector-data:/var/lib/vector
+    depends_on:
+      - loki
     restart: unless-stopped
 
   user-db:
@@ -483,3 +510,5 @@ volumes:
   credit-db-data:
   order-db-data:
   vector-data:
+  loki-data:
+  grafana-data:
