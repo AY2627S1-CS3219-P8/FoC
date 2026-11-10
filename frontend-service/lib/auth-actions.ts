@@ -84,22 +84,6 @@ export async function signup(user: UserCreate): Promise<ActionResult> {
   }
 }
 
-/** Reactivates a deactivated account with its login credentials. */
-export async function reactivate(
-  credentials: Credentials,
-): Promise<ActionResult> {
-  try {
-    await userService.reactivate(credentials);
-    await startSession(credentials);
-    return { ok: true };
-  } catch (error) {
-    return failure(error, {
-      401: 'Incorrect student number or password, or the account is suspended.',
-      422: INVALID_LOGIN,
-    });
-  }
-}
-
 export async function logout() {
   const token = await getSessionToken();
   if (token) {

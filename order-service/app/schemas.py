@@ -85,3 +85,22 @@ class OrderPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class OrderActivityBucket(BaseModel):
+    """Lifecycle counts for one hour, starting at ``start``."""
+
+    start: datetime
+    end: datetime
+    created: int
+    accepted: int
+    completed: int
+
+
+class OrderActivity(BaseModel):
+    """Hourly order activity for administrators. The last bucket is the past hour."""
+
+    window_start: datetime
+    window_end: datetime
+    bucket_minutes: int
+    buckets: list[OrderActivityBucket]

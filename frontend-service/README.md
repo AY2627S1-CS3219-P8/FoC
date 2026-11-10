@@ -212,7 +212,7 @@ never sees the token and User Service needs no CORS configuration.
   browser reaches User Service. It and `lib/session.ts` import
   `server-only`, so importing either from a client component fails the build.
 - **Server Actions** (`lib/auth-actions.ts`): `login`, `signup`,
-  `reactivate`, `logout`, `updateProfile` and `deactivateAccount`. They return
+  `logout`, `updateProfile` and `deactivateAccount`. They return
   `{ ok, error, fieldErrors }` instead of throwing, so forms can show User
   Service validation messages next to the matching field.
 - **Session** (`lib/session.ts`): sets and clears the cookie. The cookie is
@@ -232,15 +232,14 @@ never sees the token and User Service needs no CORS configuration.
 
 | Page                | User Service endpoints                                                 |
 | ------------------- | ---------------------------------------------------------------------- |
-| `/` login           | `POST /login`; `POST /users/me/reactivate` from "Reactivate it"        |
+| `/` login           | `POST /login`                                                          |
 | `/signup`           | `POST /users`, then `POST /login`                                      |
 | `/profile`          | `GET /users/me`, `PATCH /users/me`, `DELETE /users/me`, `POST /logout` |
 | every `(main)` page | `GET /users/me`                                                        |
 
 Login uses the **NUS student number** (for example `A1234567B`) and
-password. User Service returns the same 401 for a wrong password and a
-deactivated account, so the login form offers "Reactivate it" after User
-Service rejects the credentials. A password change revokes every session, so `updateProfile` logs in
+password. The frontend offers no way to reactivate a deactivated account;
+only an administrator can restore it. A password change revokes every session, so `updateProfile` logs in
 again with the new password to keep the current device signed in.
 
 Not integrated yet: the admin endpoints (`/admin/users/{id}/suspend`,

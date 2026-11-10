@@ -41,6 +41,34 @@ export const STATUS_LABELS: Record<OrderStatus, string> = {
   REJECTED: 'Rejected',
 };
 
+/** Badge colours per status, shared by every order view. */
+export const STATUS_STYLES: Record<OrderStatus, string> = {
+  PENDING_CREDIT: 'bg-slate-100 text-slate-600',
+  OPEN: 'bg-amber-50 text-amber-700',
+  ACCEPTED: 'bg-courier-soft text-courier',
+  PICKED_UP: 'bg-sky-50 text-sky-700',
+  COMPLETED: 'bg-emerald-50 text-emerald-700',
+  CANCELLED: 'bg-red-50 text-red-600',
+  EXPIRED: 'bg-slate-100 text-slate-500',
+  REJECTED: 'bg-red-50 text-red-600',
+};
+
+/**
+ * Statuses that never change again, so nobody can cancel them. Mirrors
+ * `TERMINAL_STATUSES` in `order-service/app/services/orders.py`; an admin can
+ * cancel any other order, including one that was picked up.
+ */
+export const CLOSED_STATUSES: readonly OrderStatus[] = [
+  'COMPLETED',
+  'CANCELLED',
+  'EXPIRED',
+  'REJECTED',
+];
+
+export function isClosed(order: Pick<Order, 'status'>) {
+  return CLOSED_STATUSES.includes(order.status);
+}
+
 const REJECTION_REASONS: Record<string, string> = {
   INSUFFICIENT_CREDIT: 'You did not have enough available credit.',
   ACCOUNT_NOT_FOUND: 'Your credit account could not be found.',

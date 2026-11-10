@@ -155,6 +155,15 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
 
+class UserPage(BaseModel):
+    """One page of accounts returned to an administrator, newest first."""
+
+    items: list[UserResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class BasicProfileResponse(BaseModel):
     """Minimal profile representation visible to another authenticated user."""
 

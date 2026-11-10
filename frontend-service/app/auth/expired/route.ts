@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { SESSION_COOKIE_NAME } from '@/lib/auth';
+import { SESSION_COOKIE_NAME, VIEW_COOKIE_NAME } from '@/lib/auth';
 import { UserServiceError, userService } from '@/lib/user-service';
 
 /**
@@ -31,5 +31,6 @@ export async function GET(request: NextRequest) {
 
   const response = redirectTo('/?notice=expired');
   response.cookies.delete(SESSION_COOKIE_NAME);
+  response.cookies.delete(VIEW_COOKIE_NAME);
   return response;
 }

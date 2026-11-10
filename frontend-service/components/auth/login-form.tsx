@@ -8,13 +8,13 @@ import { IdCard, Lock } from 'lucide-react';
 import { AuthLayout, Notice } from '@/components/auth/auth-layout';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
-import { type ActionResult, login, reactivate } from '@/lib/auth-actions';
+import { type ActionResult, login } from '@/lib/auth-actions';
 import { safeRedirectPath } from '@/lib/auth';
 
 const NOTICES: Record<string, string> = {
   expired: 'Your session has ended. Log in again to continue.',
   deactivated:
-    'Your account has been deactivated. Log in below to reactivate it.',
+    'Your account has been deactivated. Contact an administrator to restore it.',
 };
 
 export function LoginForm() {
@@ -26,18 +26,13 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Login can't tell a wrong password from a deactivated account, so offer
-  // reactivation after User Service rejects the credentials.
-  const [canReactivate, setCanReactivate] = useState(
-    noticeKey === 'deactivated',
-  );
 
-  async function submit(action: typeof login) {
+  async function submit() {
     setError(null);
     setIsSubmitting(true);
     let result: ActionResult;
     try {
-      result = await action({
+      result = await login({
         nus_student_number: studentNumber.trim(),
         password,
       });
@@ -48,7 +43,6 @@ export function LoginForm() {
 
     if (!result.ok) {
       setError(result.error);
-      if (result.status === 401) setCanReactivate(true);
       return;
     }
     router.push(safeRedirectPath(searchParams.get('from')));
@@ -66,7 +60,7 @@ export function LoginForm() {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          submit(login);
+          submit();
         }}
         className='mt-8 space-y-4'
       >
@@ -108,20 +102,6 @@ export function LoginForm() {
         >
           {isSubmitting ? 'Logging in…' : 'Log In'}
         </Button>
-
-        {canReactivate && (
-          <p className='text-center text-sm text-slate-500'>
-            Deactivated your account?{' '}
-            <button
-              type='button'
-              disabled={isSubmitting}
-              onClick={() => submit(reactivate)}
-              className='text-brand-strong font-semibold hover:underline disabled:opacity-50'
-            >
-              Reactivate it
-            </button>
-          </p>
-        )}
       </form>
 
       <p className='mt-6 text-center text-sm text-slate-500'>

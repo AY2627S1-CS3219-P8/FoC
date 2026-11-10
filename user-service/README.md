@@ -95,7 +95,9 @@ privileges must be explicitly authorized, persisted, and revocable.
 An active administrator can promote another active user with
 `POST /admin/users/{user_id}/grant-admin`. The target cannot be the caller,
 already have administrator rights, or be inactive. Administrator rights can be
-removed with `POST /admin/users/{user_id}/revoke-admin`.
+removed with `POST /admin/users/{user_id}/revoke-admin`. Administrators find
+and review accounts with the read routes in
+[Administrator account review](#administrator-account-review).
 
 Account status changes must be enforced during authentication and protected
 operations:
@@ -113,6 +115,9 @@ silently create a new account.
   student number and display name.
 - An authenticated user may view another user's basic profile information,
   limited to the profile name.
+- An active administrator may view any account's full profile, in any status,
+  through the `/admin/users` routes. Password hashes and session data are
+  never returned.
 - Sensitive information must be omitted or masked in full-value displays.
 - Users may update permitted mutable fields only.
 - NUS student numbers, account timestamps, roles, statuses, and another
@@ -221,6 +226,41 @@ Services that only need to authorize access should treat only `active` as
 allowed. The exact status is useful when a consuming service needs different
 messaging, workflow, or audit behavior for self-deactivation versus
 administrator suspension.
+
+### Administrator account review
+
+An active administrator can list, search and read accounts in any status, so
+a suspended or deactivated account can still be found, reviewed and
+reinstated. `GET /users/{user_id}` cannot do this: it returns only the display
+name, and only for active accounts.
+
+```bash
+curl --cacert /run/tls/ca.crt   'https://user-service:8080/admin/users?q=alice&status=suspended&limit=20&offset=0'   -H 'Authorization: Bearer <admin-access-token>'
+
+curl --cacert /run/tls/ca.crt https://user-service:8080/admin/users/<user-id>   -H 'Authorization: Bearer <admin-access-token>'
+```
+
+`GET /admin/users` accepts these optional query parameters:
+
+| Parameter | Values | Meaning |
+| --- | --- | --- |
+| `q` | up to 254 characters | Case-insensitive substring of the student number, email or display name. `%` and `_` match literally. |
+| `status` | `active`, `deactivated`, `suspended` | Only accounts in this status. |
+| `limit` | 1–100, default 20 | Page size. |
+| `offset` | 0 or more, default 0 | Accounts to skip. |
+
+It answers `{"items": [...], "total": <matching accounts>, "limit", "offset"}`,
+newest accounts first, with the account ID breaking ties so pages don't
+overlap. `GET /admin/users/{user_id}` answers one account, or `404` when it
+does not exist. Each account has the same fields as `GET /users/me`.
+
+Both routes return `401` without a valid session and `403` unless the caller
+is an active administrator. The role is re-read from the database on every
+request, so a session issued before admin rights were revoked loses access
+immediately. Out-of-range parameters return `422`.
+
+Account state is then changed with `POST /admin/users/{user_id}/suspend`,
+`/unsuspend`, `/grant-admin` and `/revoke-admin`.
 
 ## Local development
 

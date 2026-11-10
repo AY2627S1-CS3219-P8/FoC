@@ -29,27 +29,17 @@ import {
   loadMyOrders,
   pickUpOrder,
 } from '@/lib/order-actions';
-import type { OrderRole, OrderStatus } from '@/lib/order-service';
+import type { OrderRole } from '@/lib/order-service';
 import {
   type OrderView,
   PRE_PICKUP_STATUSES,
   STATUS_LABELS,
+  STATUS_STYLES,
   formatRejectionReason,
   orderPickupLocation,
   orderStoreName,
 } from '@/lib/orders';
 import { cn } from '@/lib/utils';
-
-const STATUS_STYLES: Record<OrderStatus, string> = {
-  PENDING_CREDIT: 'bg-slate-100 text-slate-600',
-  OPEN: 'bg-amber-50 text-amber-700',
-  ACCEPTED: 'bg-courier-soft text-courier',
-  PICKED_UP: 'bg-sky-50 text-sky-700',
-  COMPLETED: 'bg-emerald-50 text-emerald-700',
-  CANCELLED: 'bg-red-50 text-red-600',
-  EXPIRED: 'bg-slate-100 text-slate-500',
-  REJECTED: 'bg-red-50 text-red-600',
-};
 
 const ROLE_TABS: { role: OrderRole; label: string }[] = [
   { role: 'requester', label: 'As Requester' },

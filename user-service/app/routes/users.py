@@ -1,8 +1,9 @@
 """HTTP routes for user account and profile operations."""
 
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth import AuthContext, get_current_session, revoke_session
@@ -14,6 +15,7 @@ from app.schemas import (
     LoginResponse,
     UserCreate,
     UserLogin,
+    UserPage,
     UserResponse,
     UserStatusResponse,
     UserUpdate,
@@ -21,10 +23,12 @@ from app.schemas import (
 from app.service_auth import require_internal_service
 from app.services.users import (
     deactivate_user,
+    get_user_for_admin,
     get_user_status,
     get_user_profile,
     grant_admin_rights,
     is_user_admin,
+    list_users_for_admin,
     login_user,
     reactivate_user,
     register_user,
@@ -100,6 +104,41 @@ def get_current_user(auth: AuthContext = Depends(get_current_session)):
     """Return the authenticated user's profile."""
 
     return own_profile_response(auth.user)
+
+
+@router.get("/admin/users", response_model=UserPage)
+def list_users(
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+    q: Annotated[str | None, Query(max_length=254)] = None,
+    status_filter: Annotated[
+        Literal["active", "deactivated", "suspended"] | None, Query(alias="status")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    """List accounts in any status for an active administrator, newest first."""
+
+    items, total = list_users_for_admin(
+        auth.user_id, db, query=q, status=status_filter, limit=limit, offset=offset
+    )
+    return UserPage(
+        items=[own_profile_response(user) for user in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/admin/users/{user_id}", response_model=UserResponse)
+def get_user_as_admin(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Return any account's full profile, whatever its status, to an administrator."""
+
+    return own_profile_response(get_user_for_admin(auth.user_id, user_id, db))
 
 
 @router.post("/admin/users/{user_id}/suspend", response_model=UserResponse)
