@@ -3,6 +3,11 @@ name: FoC publish six images to ECR
 # Releases are initiated manually, after CI on the selected commit has passed.
 # workflow_dispatch becomes available in the UI only after this workflow is on the default branch.
 on:
+  push:
+    branches: [feat/cloud-deployment]
+    paths:
+      - 'deploy/k8s/eks/publish-trigger.txt'
+
   workflow_dispatch:
     inputs:
       release_tag:
@@ -20,7 +25,10 @@ concurrency:
 
 jobs:
   publish:
-    if: github.ref == 'refs/heads/feat/cloud-deployment'
+    if: >-
+      github.ref == 'refs/heads/feat/cloud-deployment' &&
+      (github.event_name == 'workflow_dispatch' ||
+       contains(github.event.head_commit.message, '[publish-ecr]'))
     name: Build and push ${{ matrix.name }}
     runs-on: ubuntu-latest
     environment: foc-publish
@@ -45,7 +53,7 @@ jobs:
     env:
       AWS_REGION: ap-southeast-1
       AWS_ACCOUNT_ID: '816435462502'
-      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'release-20261110-01' }}
     steps:
       - name: Checkout requested commit
         uses: actions/checkout@v4
@@ -79,5 +87,5 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/amd64
           push: true
-          tags: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/${{ matrix.name }}:${{ inputs.release_tag }}
+          tags: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/${{ matrix.name }}:${{ env.RELEASE_TAG }}
           labels: org.opencontainers.image.revision=${{ github.sha }}
