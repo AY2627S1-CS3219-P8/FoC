@@ -40,6 +40,9 @@ jobs:
       CREDIT_DB_PASSWORD: creditCiPassword123
       ORDER_DB_USER: foc_orders
       ORDER_DB_PASSWORD: focOrdersCiPassword123
+      NOTIFICATION_DB_USER: foc_notifications
+      NOTIFICATION_DB_PASSWORD: notificationCiPassword123
+      NOTIFICATIONS_START_AT: "2026-11-04T00:00:00+08:00"
 
     steps:
       - name: Check out repository
