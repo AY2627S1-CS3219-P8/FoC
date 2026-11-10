@@ -92,6 +92,11 @@ administrative operations.
 The service supports regular users and administrators. Administrative
 privileges must be explicitly authorized, persisted, and revocable.
 
+An active administrator can promote another active user with
+`POST /admin/users/{user_id}/grant-admin`. The target cannot be the caller,
+already have administrator rights, or be inactive. Administrator rights can be
+removed with `POST /admin/users/{user_id}/revoke-admin`.
+
 Account status changes must be enforced during authentication and protected
 operations:
 
