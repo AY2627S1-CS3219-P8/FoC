@@ -69,7 +69,9 @@ check_alert_rules() {
     foc-credit-worker-heartbeat \
     foc-backend-delivery-failure \
     foc-backend-readiness-failure \
-    foc-backend-relay-failure; do
+    foc-backend-relay-failure \
+    foc-backend-api-server-error \
+    foc-collector-delivery-failure; do
     jq -e --arg expected_uid "$expected_uid" \
       'any(.[]?; .uid == $expected_uid and .provenance == "file")' \
       <<<"$alert_rules" >/dev/null

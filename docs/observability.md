@@ -58,8 +58,11 @@ paths are not forwarded. Malformed records are kept with
 
 Vector sends the normalized stream to Loki. The sink uses a disk buffer under
 the persistent `vector-data` volume and blocks when that buffer is full, so a
-temporary Loki outage does not immediately discard collected records. The
-collector uses only low-cardinality Loki labels: `source`, `service`,
+temporary Loki outage does not immediately discard collected records. Vector's
+internal warning and error logs are sent through a separate `foc-collector`
+stream so delivery failures can be inspected without adding frontend,
+database, Kafka, or other infrastructure application logs to the backend
+stream. Both streams use only low-cardinality Loki labels: `source`, `service`,
 `component`, `environment`, and `level`. Request, message, and domain
 identifiers remain in the JSON log body.
 
@@ -93,7 +96,7 @@ Useful initial Grafana Explore queries are:
 
 ### Grafana dashboard and alert rules
 
-The Compose stack provisions a `FoC Backend Logs` dashboard in the `FoC` folder. It includes backend log volume by level, errors and criticals by service, recent backend logs, and worker or delivery signals. Dashboard changes belong in version control under `observability/grafana/provisioning/dashboards/`.
+The Compose stack provisions a `FoC Backend Logs` dashboard in the `FoC` folder. It includes log volume by level, API errors by service and route, processing duration, recent backend logs, worker or delivery signals, and collector delivery failures. Dashboard changes belong in version control under `observability/grafana/provisioning/dashboards/`.
 
 Grafana also provisions backend-only alert rules in the `FoC Alerts` folder from `observability/grafana/provisioning/alerting/foc-backend-alerts.yaml`:
 
@@ -101,6 +104,8 @@ Grafana also provisions backend-only alert rules in the `FoC Alerts` folder from
 - retry exhausted, dead-lettered, sent-to-DLQ, or parked-for-DLQ events
 - readiness check failures
 - relay failures
+- backend API 5xx responses
+- Vector collector delivery failures
 
 The rules use LogQL over Loki and are visible in Grafana under `Alerts & IRM`. They do not configure an external notification destination because that is deployment-specific. Configure a contact point and notification policy in the target environment before treating these alerts as paging signals. Provisioned alert rules are managed from the file rather than edited in the Grafana UI.
 
@@ -114,7 +119,7 @@ After the full Compose stack is running, run the repository smoke test from the 
 GRAFANA_ADMIN_PASSWORD='your-local-password' ./scripts/verify-observability.sh
 ```
 
-The test checks Loki readiness, Grafana health, dashboard provisioning, all five file-provisioned alert rules, the expected Loki labels, and at least one backend log delivered through Vector in the previous five minutes. It uses `GRAFANA_URL` and `LOKI_URL` when the services are exposed on non-default local addresses. Set `OBSERVABILITY_REQUIRE_BACKEND_LOGS=false` when testing only provisioning before any backend service has emitted a log.
+The test checks Loki readiness, Grafana health, dashboard provisioning, all seven file-provisioned alert rules, the expected Loki labels, and at least one backend log delivered through Vector in the previous five minutes. It uses `GRAFANA_URL` and `LOKI_URL` when the services are exposed on non-default local addresses. Set `OBSERVABILITY_REQUIRE_BACKEND_LOGS=false` when testing only provisioning before any backend service has emitted a log.
 
 This Compose Loki setup is for local development and evaluation. Production
 should use authenticated transport, an authentication layer in front of Loki,

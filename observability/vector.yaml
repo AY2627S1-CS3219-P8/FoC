@@ -6,6 +6,9 @@ sources:
     docker_host: /var/run/docker.sock
     auto_partial_merge: true
 
+  vector_internal:
+    type: internal_logs
+
 transforms:
   select_backend:
     type: filter
@@ -52,6 +55,20 @@ transforms:
       .collector = "vector"
       .source_type = "docker"
 
+  normalize_collector_logs:
+    type: remap
+    inputs:
+      - vector_internal
+    source: |
+      .service = "vector"
+      .component = "collector"
+      .environment = "unknown"
+      .collector = "vector"
+      .source_type = "vector_internal"
+      if !is_string(.level) {
+        .level = "UNKNOWN"
+      }
+
 sinks:
   backend_loki:
     type: loki
@@ -70,4 +87,22 @@ sinks:
     buffer:
       type: disk
       max_size: 1073741824
+      when_full: block
+
+  collector_loki:
+    type: loki
+    inputs:
+      - normalize_collector_logs
+    endpoint: http://loki:3100
+    path: /loki/api/v1/push
+    encoding:
+      codec: json
+    labels:
+      source: foc-collector
+      service: vector
+      component: collector
+      environment: unknown
+    buffer:
+      type: disk
+      max_size: 536870912
       when_full: block
