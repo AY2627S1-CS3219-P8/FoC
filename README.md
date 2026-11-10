@@ -142,6 +142,9 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
 Claude Code (claude-opus-5-5 and claude-sonnet-5-5) assisted Notification Service work; see the
 [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service)
 and [usage log](notification-service/ai/usage-log.md).
+Claude Code (claude-opus-5-5) also assisted Frontend Service work; see the
+[Frontend Service summary](frontend-service/README.md#ai-use-summary-frontend-service)
+and [usage log](frontend-service/ai/usage-log.md).
 
 - [Database and migration work](supplier-service/ai/usage-log.md#ai-20260929-001):
   Requirements work, Learning support, Boilerplate generation, Writing implementation
@@ -807,6 +810,17 @@ and [usage log](notification-service/ai/usage-log.md).
   `git diff --check` passed. No human test rerun or live Compose observability
   check is claimed. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+
+- [Frontend Service notification integration](frontend-service/ai/usage-log.md#ai-20261111-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code,
+  Boilerplate generation, and Refactoring and documentation improvements for
+  the Frontend Service notification relay routes, unread badge, live stream
+  provider, `/notifications` page, unit tests, `NOTIFICATION_SERVICE_URL` in
+  `compose.yaml`, and README updates in Frontend Service and Notification
+  Service. Agent checks: lint, type check, 111 Vitest tests, a production
+  build, and a relay check against a fake SSE upstream passed; the real stack
+  was not exercised. Author review is pending. See the
+  [Frontend Service summary](frontend-service/README.md#ai-use-summary-frontend-service).
 
 Disclosure-only updates do not establish submission readiness.
 

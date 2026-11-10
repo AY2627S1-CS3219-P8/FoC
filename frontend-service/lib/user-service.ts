@@ -10,6 +10,8 @@
 
 import 'server-only';
 
+import { type Page, withQuery } from '@/lib/service-request';
+
 const BASE_URL = process.env.USER_SERVICE_URL ?? 'https://localhost:8080';
 const TIMEOUT_MS = 5000;
 
@@ -38,6 +40,14 @@ export type LoginResponse = {
 export type Credentials = {
   nus_student_number: string;
   password: string;
+};
+
+/** Filters for the administrator account list; all are optional. */
+export type UserListQuery = {
+  q?: string;
+  status?: UserStatus;
+  limit?: number;
+  offset?: number;
 };
 
 export type UserCreate = Credentials & {
@@ -160,10 +170,41 @@ export const userService = {
   deactivateCurrentUser: (token: string) =>
     request<User>('/users/me', { method: 'DELETE', token }),
 
-  reactivate: ({ nus_student_number, password }: Credentials) =>
-    request<User>('/users/me/reactivate', {
+  /** Accounts in any status, newest first. Administrators only. */
+  listUsers: (
+    token: string,
+    { q, status, limit, offset }: UserListQuery = {},
+  ) =>
+    request<Page<User>>(
+      withQuery('/admin/users', { q, status, limit, offset }),
+      {
+        token,
+      },
+    ),
+
+  /** Any account's full profile, whatever its status. Administrators only. */
+  getUser: (token: string, userId: string) =>
+    request<User>(`/admin/users/${encodeURIComponent(userId)}`, { token }),
+
+  /** Blocks the account and ends all of its sessions. */
+  suspendUser: (token: string, userId: string) =>
+    request<User>(`/admin/users/${encodeURIComponent(userId)}/suspend`, {
       method: 'POST',
-      body: { nus_student_number, password },
+      token,
+    }),
+
+  /** Restores a suspended account; it must log in again. */
+  unsuspendUser: (token: string, userId: string) =>
+    request<User>(`/admin/users/${encodeURIComponent(userId)}/unsuspend`, {
+      method: 'POST',
+      token,
+    }),
+
+  /** Makes another active user an administrator. */
+  grantAdmin: (token: string, userId: string) =>
+    request<User>(`/admin/users/${encodeURIComponent(userId)}/grant-admin`, {
+      method: 'POST',
+      token,
     }),
 
   /** Another user's public profile; User Service exposes the name only. */

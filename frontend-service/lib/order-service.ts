@@ -72,6 +72,33 @@ export type Order = {
 
 type PageParams = { limit?: number; offset?: number };
 
+/** Lifecycle counts for one rolling hour. */
+export type OrderActivityBucket = {
+  start: string;
+  end: string;
+  created: number;
+  accepted: number;
+  completed: number;
+};
+
+/** Hourly activity, oldest bucket first; the last bucket is the past hour. */
+export type OrderActivity = {
+  window_start: string;
+  window_end: string;
+  bucket_minutes: number;
+  buckets: OrderActivityBucket[];
+};
+
+/** `/admin/orders` with each status as its own repeated parameter. */
+function adminOrdersPath(statuses: readonly OrderStatus[], page: PageParams) {
+  const query = new URLSearchParams();
+  for (const status of statuses) query.append('status', status);
+  if (page.limit !== undefined) query.set('limit', String(page.limit));
+  if (page.offset !== undefined) query.set('offset', String(page.offset));
+  const text = query.toString();
+  return text ? `/admin/orders?${text}` : '/admin/orders';
+}
+
 function delivery({ label, latitude, longitude, details }: DeliveryLocation) {
   return { label, latitude, longitude, details };
 }
@@ -106,12 +133,16 @@ export const orderService = {
   listOpenOrders: (token: string | undefined, page: PageParams = {}) =>
     request<Page<Order>>(withQuery('/orders/open', page), { token }),
 
-  /** The caller's own orders in one role, newest first. */
+  /** The caller's own orders in one role, newest first; all when no status. */
   listMyOrders: (
     token: string | undefined,
     role: OrderRole,
+    status: OrderStatus | undefined,
     page: PageParams = {},
-  ) => request<Page<Order>>(withQuery('/orders', { role, ...page }), { token }),
+  ) =>
+    request<Page<Order>>(withQuery('/orders', { role, status, ...page }), {
+      token,
+    }),
 
   getOrder: (token: string | undefined, id: string) =>
     request<Order>(orderPath(id), { token }),
@@ -140,7 +171,20 @@ export const orderService = {
   completeOrder: (token: string | undefined, id: string) =>
     request<Order>(`${orderPath(id)}/complete`, { method: 'POST', token }),
 
-  /** Requester before pickup. */
+  /** Requester before pickup, or an admin until the order closes. */
   cancelOrder: (token: string | undefined, id: string) =>
     request<Order>(`${orderPath(id)}/cancel`, { method: 'POST', token }),
+
+  /** Every order in the given statuses (all when empty). Admins only. */
+  listAllOrders: (
+    token: string | undefined,
+    statuses: readonly OrderStatus[],
+    page: PageParams = {},
+  ) => request<Page<Order>>(adminOrdersPath(statuses, page), { token }),
+
+  /** Hourly creations, acceptances and completions. Admins only. */
+  getOrderActivity: (token: string | undefined, hours = 24) =>
+    request<OrderActivity>(withQuery('/admin/orders/activity', { hours }), {
+      token,
+    }),
 };

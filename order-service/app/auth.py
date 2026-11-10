@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from app.clients import AuthenticationUnavailableError, Identity, InvalidSessionError
 
@@ -33,3 +33,17 @@ def get_current_identity(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication temporarily unavailable",
         ) from None
+
+
+def get_current_admin(
+    identity: Annotated[Identity, Depends(get_current_identity)],
+) -> Identity:
+    """Allow only administrators. The role is re-read from the User Service on
+    every request, so revoked rights or a suspension take effect immediately."""
+
+    if identity.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator access required",
+        )
+    return identity

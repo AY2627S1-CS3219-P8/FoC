@@ -1,9 +1,22 @@
 """Pydantic request and response schemas for orders."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+OrderStatus = Literal[
+    "PENDING_CREDIT",
+    "OPEN",
+    "REJECTED",
+    "ACCEPTED",
+    "PICKED_UP",
+    "COMPLETED",
+    "CANCELLED",
+    "EXPIRED",
+]
 
 
 MAX_CREDIT_AMOUNT = 1000
@@ -85,3 +98,22 @@ class OrderPage(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class OrderActivityBucket(BaseModel):
+    """Lifecycle counts for one hour, starting at ``start``."""
+
+    start: datetime
+    end: datetime
+    created: int
+    accepted: int
+    completed: int
+
+
+class OrderActivity(BaseModel):
+    """Hourly order activity for administrators. The last bucket is the past hour."""
+
+    window_start: datetime
+    window_end: datetime
+    bucket_minutes: int
+    buckets: list[OrderActivityBucket]

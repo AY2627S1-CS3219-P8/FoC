@@ -65,6 +65,43 @@ describe('request bodies', () => {
   });
 });
 
+describe('admin routes', () => {
+  it('lists users with only the filters given', async () => {
+    const fetchMock = mockFetch(200, { items: [], total: 0 });
+    await userService.listUsers('t', { q: 'alice', status: 'suspended' });
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(
+      /\/admin\/users\?q=alice&status=suspended$/,
+    );
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer t');
+  });
+
+  it('posts suspension and reinstatement to the escaped user path', async () => {
+    const fetchMock = mockFetch(200, {});
+    await userService.suspendUser('t', 'a/b');
+    await userService.unsuspendUser('t', 'abc');
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(
+      /\/admin\/users\/a%2Fb\/suspend$/,
+    );
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[1][0]).toMatch(
+      /\/admin\/users\/abc\/unsuspend$/,
+    );
+  });
+
+  it('posts promotion to the grant-admin path', async () => {
+    const fetchMock = mockFetch(200, {});
+    await userService.grantAdmin('t', 'abc');
+
+    expect(fetchMock.mock.calls[0][0]).toMatch(
+      /\/admin\/users\/abc\/grant-admin$/,
+    );
+    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+  });
+});
+
 describe('errors', () => {
   it('maps FastAPI validation errors to field errors', async () => {
     mockFetch(422, {

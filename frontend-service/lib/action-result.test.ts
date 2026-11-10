@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { toResult } from '@/lib/action-result';
 import { ServiceError } from '@/lib/service-request';
+import { UserServiceError } from '@/lib/user-service';
 
 describe('toResult', () => {
   it('wraps a value as a success', async () => {
@@ -34,6 +35,18 @@ describe('toResult', () => {
       status: 409,
       message: 'Taken',
       code: 'TAKEN',
+    });
+  });
+
+  it('turns a User Service error into a failure', async () => {
+    const result = await toResult(async () => {
+      throw new UserServiceError(403, 'Admin privileges required');
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      message: 'Admin privileges required',
+      code: undefined,
     });
   });
 
