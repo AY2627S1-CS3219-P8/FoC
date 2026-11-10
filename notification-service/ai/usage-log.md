@@ -1676,3 +1676,23 @@ Claude Code added a per-recipient, transaction-scoped advisory lock to the Notif
 ### Usage summary
 
 Codex integrated Notification Service with the repository's shared structured logging contract, added operational events for API, worker, migration, listener, authentication, read-status, and SSE behavior, connected the three Notification processes to Vector and Grafana heartbeat alerting, and verified the available automated tests and configuration syntax.
+
+## ai-20261111-001
+
+- Recorded at: 2026-11-11T03:10:00+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-11 (Asia/Singapore).
+- Source: Claude Code (model: claude-opus-5-5).
+- Mode and scenario: Documentation update made while building the Frontend Service notification relay. The full exchange, with exact prompts and key responses, is recorded in the [Frontend Service usage log](../../frontend-service/ai/usage-log.md#ai-20261111-001).
+- Outcome: Retained.
+- Verification: Documentation only; no Notification Service code or tests changed.
+- Author review: Not confirmed (pending).
+- Missing evidence: See the canonical entry.
+- Header exceptions: None.
+
+### Scope
+
+- `notification-service/README.md`: Refactoring and documentation improvements — the introduction and the "Notification relay" handover section now say the Frontend Service relay is built and link to it, and the configuration note says Compose sets `NOTIFICATION_SERVICE_URL` on `frontend-service`; Disclosure record — header block and AI Use Summary subsection.
+
+### Usage summary
+
+Claude Code updated the Notification Service README so it no longer says the frontend relay is missing, as part of the Frontend Service integration recorded in the canonical entry.

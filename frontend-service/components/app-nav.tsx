@@ -1,5 +1,11 @@
 'use client';
 
+// AI Assistance Disclosure:
+// Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-11
+// Scope: Writing implementation code — add the "Alerts" link to the side navigation in the user view (ai-20261111-001).
+// Author review: Not confirmed (pending).
+// Details: frontend-service/ai/usage-log.md; ai-20261111-001
+
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -14,6 +20,7 @@ import {
 } from 'lucide-react';
 
 import { useCreditBalance } from '@/components/credit-balance-provider';
+import { NotificationNavLink } from '@/components/notifications/notification-bell';
 import type { CreditBalanceResult } from '@/lib/credit-actions';
 import { cn } from '@/lib/utils';
 
@@ -185,6 +192,11 @@ export function SideNav({ view }: { view: AppView }) {
               </li>
             );
           })}
+          {view === 'user' && (
+            <li>
+              <NotificationNavLink />
+            </li>
+          )}
         </ul>
       </nav>
 

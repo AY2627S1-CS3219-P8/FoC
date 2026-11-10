@@ -24,6 +24,10 @@
 # Scope: Boilerplate generation — pass SSE_HEARTBEAT_SECONDS and SSE_MAX_LIFETIME_SECONDS to notification-service, defaulting to 20 and 600 (ai-20261108-002).
 # Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
 # Details: notification-service/ai/usage-log.md; ai-20261108-002
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-11
+# Scope: Boilerplate generation — give frontend-service NOTIFICATION_SERVICE_URL for the notification relay (ai-20261111-001).
+# Author review: Not confirmed (pending).
+# Details: frontend-service/ai/usage-log.md; ai-20261111-001
 
 include:
   - event-broker/compose.yaml
@@ -174,6 +178,8 @@ services:
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
       ORDER_SERVICE_URL: http://order-service:8080
       CREDIT_SERVICE_URL: http://credit-service:8080
+      # Not in depends_on: notifications show as unavailable until it is up.
+      NOTIFICATION_SERVICE_URL: http://notification-service:8080
       # Must match Credit Service so the request form caps a new user's offer.
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
     volumes:
