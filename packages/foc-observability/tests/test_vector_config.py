@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -9,3 +10,15 @@ def test_vector_internal_logs_promote_metadata_level():
 
     assert "is_object(.metadata) && is_string(.metadata.level)" in config
     assert ".level = .metadata.level" in config
+
+
+def test_supplier_compose_processes_inherit_app_environment():
+    config = (REPOSITORY_ROOT / "compose.yaml").read_text()
+
+    for service in ("supplier-service", "supplier-migrate", "supplier-seed"):
+        section = re.search(
+            rf"(?ms)^  {re.escape(service)}:\n.*?(?=^  [\w-]+:|\Z)",
+            config,
+        )
+        assert section is not None
+        assert "APP_ENV: ${APP_ENV:-development}" in section.group()
