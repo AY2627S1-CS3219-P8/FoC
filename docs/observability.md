@@ -187,7 +187,7 @@ These are collector rules, not application-side timers:
 | Any `*_retry_exhausted`, `*_dead_lettered`, or `*_parked_for_dlq` event | Page or create a high-priority incident; inspect the event IDs, source offsets, and exception category. |
 | DLQ events or parked records continue increasing for 5 minutes | Page: quarantine backlog is growing faster than it is being investigated or relayed. |
 | Any `*_relay_failed` event, especially repeated failures | Warn on the first event; page when repeated for 5 minutes because the transactional outbox may be accumulating. |
-| `readiness_check_failed` for 3 consecutive checks or 2 minutes | Page: the API is unavailable or its database/migration state is unhealthy. |
+| At least three `readiness_check_failed` events within two minutes | Page: the API is unavailable or its database/migration state is unhealthy. |
 | `duration_ms` exceeds the service's normal processing SLO | Warn and investigate database, broker, or downstream latency. |
 
 Alert rules should group by `service`, `worker`, `topic`, and `consumer_group`

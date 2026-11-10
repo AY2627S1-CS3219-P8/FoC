@@ -208,7 +208,7 @@ groups:
           severity: critical
 
       - uid: foc-backend-readiness-failure
-        title: Backend readiness check failed
+        title: Repeated backend readiness check failures
         condition: C
         data:
           - refId: A
@@ -244,7 +244,7 @@ groups:
               conditions:
                 - evaluator:
                     params:
-                      - 0
+                      - 2
                     type: gt
                   operator:
                     type: and
@@ -267,8 +267,8 @@ groups:
         execErrState: Error
         for: 0s
         annotations:
-          summary: Backend readiness check failed
-          description: At least one readiness_check_failed event occurred in the last two minutes.
+          summary: Repeated backend readiness check failures
+          description: At least three readiness_check_failed events occurred in the last two minutes.
         labels:
           source: foc-backend
           team: backend
