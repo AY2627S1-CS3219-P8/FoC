@@ -33,20 +33,35 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        include:
-          - name: user-service
-            context: ./user-service
-          - name: supplier-service
-            context: ./supplier-service
-          - name: supplier-db
-            context: ./supplier-service/database
-          - name: order-service
-            context: ./order-service
-          - name: credit-service
-            context: ./credit-service
-          - name: frontend-service
-            context: ./frontend-service
+      
+
+matrix:
+  include:
+    - name: user-service
+      context: .
+      dockerfile: ./user-service/Dockerfile
+
+    - name: supplier-service
+      context: .
+      dockerfile: ./supplier-service/Dockerfile
+
+    - name: supplier-db
+      context: ./supplier-service/database
+      dockerfile: ./supplier-service/database/Dockerfile
+
+    - name: order-service
+      context: .
+      dockerfile: ./order-service/Dockerfile
+
+    - name: credit-service
+      context: .
+      dockerfile: ./credit-service/Dockerfile
+
+    - name: frontend-service
+      context: ./frontend-service
+      dockerfile: ./frontend-service/Dockerfile
+
+
     env:
       AWS_REGION: ap-southeast-1
       AWS_ACCOUNT_ID: '816435462502'
@@ -82,6 +97,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           tags: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/${{ matrix.name }}:${{ env.RELEASE_TAG }}
