@@ -61,6 +61,15 @@ Request, message, and domain identifiers such as `request_id`,
 available. Application fields must not override envelope fields. Sensitive
 values remain subject to the shared redaction rules.
 
+Migration jobs emit `migration_started`, `migration_completed`, or
+`migration_failed` with `component: "migration"` and a `mode` field. The
+Supplier seed job emits `seed_preview_completed`, `seed_preview_rejected`,
+`seed_import_completed`, `seed_import_rejected`, or
+`seed_import_outcome_unknown` with `component: "seed"`. Its existing report
+fields remain top-level structured fields in the emitted record so command
+consumers can continue to inspect the JSON result without a second output
+format.
+
 ## Worker signals
 
 Both Kafka workers emit the following events with `worker`, `topic`, and

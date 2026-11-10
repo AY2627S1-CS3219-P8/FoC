@@ -72,15 +72,15 @@ _CREDENTIAL_URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _KEY_VALUE_SECRET_PATTERN = re.compile(
-    r'''(?P<key>["']?\b(password|passwd|pwd|token|access[_-]?token|'''
-    r'''refresh[_-]?token|session[_-]?token|secret|api[_-]?key|authorization|'''
-    r'''credential|credentials|cookie|set[_-]?cookie|body|raw[_-]?body|'''
-    r'''request[_-]?body|response[_-]?body|header|headers|database[_-]?url|'''
-    r'''dsn|connection[_-]?string)["']?)'''
-    r'''\s*(?P<separator>[:=])\s*(?P<value>'''
-    r'''"(?:\\.|[^"\\])*"|'''
-    r'''\'(?:\\.|[^\'\\])*\'|'''
-    r'''[^\s,;&]+)''',
+    r"""(?P<key>["']?\b(password|passwd|pwd|token|access[_-]?token|"""
+    r"""refresh[_-]?token|session[_-]?token|secret|api[_-]?key|authorization|"""
+    r"""credential|credentials|cookie|set[_-]?cookie|body|raw[_-]?body|"""
+    r"""request[_-]?body|response[_-]?body|header|headers|database[_-]?url|"""
+    r"""dsn|connection[_-]?string)["']?)"""
+    r"""\s*(?P<separator>[:=])\s*(?P<value>"""
+    r""""(?:\\.|[^"\\])*"|"""
+    r"""\'(?:\\.|[^\'\\])*\'|"""
+    r"""[^\s,;&]+)""",
     re.IGNORECASE,
 )
 
@@ -114,9 +114,7 @@ class JsonFormatter(logging.Formatter):
         self.service = _validate_metadata(service, "service")
         self.environment = _validate_metadata(environment, "environment")
         self.component = _validate_metadata(component, "component")
-        self.service_version = _validate_metadata(
-            service_version, "service_version"
-        )
+        self.service_version = _validate_metadata(service_version, "service_version")
 
     def format(self, record: logging.LogRecord) -> str:
         event = getattr(record, "event", record.getMessage())
@@ -124,9 +122,9 @@ class JsonFormatter(logging.Formatter):
             event = record.getMessage()
         payload: dict[str, Any] = {
             "schema_version": LOG_SCHEMA_VERSION,
-            "timestamp": datetime.fromtimestamp(
-                record.created, timezone.utc
-            ).isoformat().replace("+00:00", "Z"),
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "level": record.levelname,
             "service": self.service,
             "component": self.component,
@@ -145,9 +143,7 @@ class JsonFormatter(logging.Formatter):
         payload.update(_application_fields(context))
 
         if record.exc_info:
-            payload["exception"] = _redact_string(
-                self.formatException(record.exc_info)
-            )
+            payload["exception"] = _redact_string(self.formatException(record.exc_info))
 
         return json.dumps(payload, default=str, ensure_ascii=True)
 
@@ -161,12 +157,12 @@ def _is_sensitive_key(key: object) -> bool:
 
 
 def _validate_metadata(value: object, field_name: str) -> str:
-    if not isinstance(value, str) or not value or any(
-        character.isspace() for character in value
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(character.isspace() for character in value)
     ):
-        raise ValueError(
-            f"{field_name} must be a non-empty string without whitespace"
-        )
+        raise ValueError(f"{field_name} must be a non-empty string without whitespace")
     return value
 
 
@@ -174,9 +170,7 @@ def _redact_string(value: str) -> str:
     value = _BEARER_PATTERN.sub(r"\1" + _REDACTED, value)
     value = _CREDENTIAL_URL_PATTERN.sub(r"\1" + _REDACTED + "@", value)
     return _KEY_VALUE_SECRET_PATTERN.sub(
-        lambda match: (
-            f"{match.group('key')}{match.group('separator')}{_REDACTED}"
-        ),
+        lambda match: (f"{match.group('key')}{match.group('separator')}{_REDACTED}"),
         value,
     )
 
@@ -198,10 +192,7 @@ def _sanitize_value(key: object, value: Any) -> Any:
 
 
 def _sanitize_mapping(fields: dict[Any, Any]) -> dict[str, Any]:
-    return {
-        str(key): _sanitize_value(key, value)
-        for key, value in fields.items()
-    }
+    return {str(key): _sanitize_value(key, value) for key, value in fields.items()}
 
 
 def _application_fields(fields: dict[Any, Any]) -> dict[str, Any]:
@@ -244,9 +235,7 @@ def configure_logging(
 
     active_environment = environment or os.getenv("APP_ENV") or _DEFAULT_ENVIRONMENT
     active_service_version = (
-        service_version
-        or os.getenv("APP_VERSION")
-        or _DEFAULT_SERVICE_VERSION
+        service_version or os.getenv("APP_VERSION") or _DEFAULT_SERVICE_VERSION
     )
     formatter = JsonFormatter(
         service=active_service,
@@ -301,9 +290,7 @@ def _remove_owned_handlers(logger: logging.Logger) -> None:
             handler.close()
 
 
-def _replace_owned_handlers(
-    logger: logging.Logger, formatter: JsonFormatter
-) -> None:
+def _replace_owned_handlers(logger: logging.Logger, formatter: JsonFormatter) -> None:
     _remove_owned_handlers(logger)
     logger.addHandler(_new_handler(formatter))
 
@@ -319,9 +306,7 @@ def log_event(
     """Write a named event with collision-safe structured fields."""
 
     if not isinstance(event, str) or not _EVENT_NAME_PATTERN.fullmatch(event):
-        raise ValueError(
-            "event must be a non-empty lower_snake_case name"
-        )
+        raise ValueError("event must be a non-empty lower_snake_case name")
     safe_event = _redact_string(event)
     logger.log(
         level,
