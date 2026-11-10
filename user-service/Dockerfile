@@ -2,6 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Compose bind-mounts the development CA and server certificate below /run/tls.
+# Create the parent directory so file mounts are treated as files.
+RUN mkdir -p /run/tls
+
 COPY user-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY packages/foc-observability /tmp/foc-observability
