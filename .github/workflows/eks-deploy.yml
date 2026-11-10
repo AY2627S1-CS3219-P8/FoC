@@ -36,7 +36,7 @@ jobs:
       EKS_CLUSTER_NAME: foc-eks
       NAMESPACE: foc
       IMAGE_TAG: ${{ inputs.image_tag }}
-      FRONTEND_COOKIE_SECURE: 'false'
+      FRONTEND_COOKIE_SECURE: 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Require deployment role
