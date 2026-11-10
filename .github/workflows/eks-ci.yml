@@ -1,3 +1,4 @@
+
 name: FoC EKS CI
 
 on:
@@ -14,17 +15,20 @@ on:
       - 'order-service/**'
       - 'credit-service/**'
       - 'frontend-service/**'
+      - 'packages/foc-observability/**'
   pull_request:
     paths:
       - '.github/workflows/eks-*.yml'
       - 'deploy/k8s/**'
       - 'scripts/eks-deploy.sh'
       - 'scripts/test-eks-render.sh'
+      - 'docs/eks-cicd.md'
       - 'user-service/**'
       - 'supplier-service/**'
       - 'order-service/**'
       - 'credit-service/**'
       - 'frontend-service/**'
+      - 'packages/foc-observability/**'
 
 permissions:
   contents: read
@@ -73,7 +77,8 @@ jobs:
           cache: pip
           cache-dependency-path: ${{ matrix.requirements }}
       - name: Install dependencies
-        run: python -m pip install -r '${{ matrix.requirements }}'
+        working-directory: ${{ matrix.component }}
+        run: python -m pip install -r requirements-dev.txt
       - name: Run service tests
         working-directory: ${{ matrix.component }}
         env:
@@ -149,24 +154,30 @@ jobs:
       matrix:
         include:
           - name: user-service
-            context: ./user-service
+            context: .
+            dockerfile: ./user-service/Dockerfile
           - name: supplier-service
-            context: ./supplier-service
+            context: .
+            dockerfile: ./supplier-service/Dockerfile
           - name: supplier-db
             context: ./supplier-service/database
+            dockerfile: ./supplier-service/database/Dockerfile
           - name: order-service
-            context: ./order-service
+            context: .
+            dockerfile: ./order-service/Dockerfile
           - name: credit-service
-            context: ./credit-service
+            context: .
+            dockerfile: ./credit-service/Dockerfile
           - name: frontend-service
             context: ./frontend-service
+            dockerfile: ./frontend-service/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: false
           platforms: linux/amd64
           tags: foc-${{ matrix.name }}:ci
-# Trigger initial CI run
