@@ -39,6 +39,38 @@ change the existing stdout behavior: backend processes continue to write
 structured JSON to stdout, and the collector remains responsible for shipping
 those records to the central logging backend.
 
+## Vector collector
+
+The root Compose file runs Vector as the initial backend log collector. Vector
+reads Docker logs through the read-only Docker socket mount and passes only the
+12 backend services listed above through the `select_backend` transform, using
+the `com.docker.compose.service` label. It does not send frontend, database,
+Kafka, or excluded provisioning-job records to the collector sink. Filtering in
+the pipeline also lets a restarted collector discover backend containers that
+were already running before it started.
+
+The `normalize_backend_logs` transform parses each JSON application record from
+Docker's `message` field, preserves useful Docker metadata, and adds
+`compose_service`, `collector`, and `source_type` fields. The raw Docker label
+map is removed after extracting the service name so unrelated labels and host
+paths are not forwarded. Malformed records are kept with
+`structured_log_parse_error: true` rather than being silently dropped.
+
+For this step, Vector writes the normalized stream to its own stdout as a
+verification sink. This proves collection and normalization without coupling
+the Compose stack to a particular central storage product. A durable Loki or
+managed logging sink is the next integration point; until then, Vector's
+container output should be treated as verification output rather than long-term
+log retention.
+
+Start the collector with `docker compose up vector` and inspect the normalized
+records with `docker compose logs -f vector`. The collector requires access to
+the Docker socket, so the socket mount must be protected like Docker API
+credentials in deployments outside local development. Linux uses
+`/var/run/docker.sock` by default. Docker Desktop users should set
+`VECTOR_DOCKER_SOCKET` in `.env` to the host socket exposed by their Docker
+context, for example `/Users/<user>/.docker/run/docker.sock`.
+
 ## Log envelope
 
 Every structured backend application record uses log schema version `1` and

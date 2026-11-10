@@ -9,6 +9,15 @@ include:
   - event-broker/compose.yaml
 
 services:
+  vector:
+    image: timberio/vector:0.61.0-debian
+    command: ["--config", "/etc/vector/vector.yaml"]
+    volumes:
+      - ${VECTOR_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - ./observability/vector.yaml:/etc/vector/vector.yaml:ro
+      - vector-data:/var/lib/vector
+    restart: unless-stopped
+
   user-db:
     image: postgres:16-alpine
     container_name: user-db
@@ -473,3 +482,4 @@ volumes:
   user-db-data:
   credit-db-data:
   order-db-data:
+  vector-data:

@@ -1,0 +1,53 @@
+data_dir: /var/lib/vector
+
+sources:
+  backend_docker:
+    type: docker_logs
+    docker_host: /var/run/docker.sock
+    auto_partial_merge: true
+
+transforms:
+  select_backend:
+    type: filter
+    inputs:
+      - backend_docker
+    condition: |
+      .label."com.docker.compose.service" == "user-service" ||
+      .label."com.docker.compose.service" == "user-migrate" ||
+      .label."com.docker.compose.service" == "user-bootstrap" ||
+      .label."com.docker.compose.service" == "supplier-service" ||
+      .label."com.docker.compose.service" == "supplier-migrate" ||
+      .label."com.docker.compose.service" == "supplier-seed" ||
+      .label."com.docker.compose.service" == "credit-service" ||
+      .label."com.docker.compose.service" == "credit-migrate" ||
+      .label."com.docker.compose.service" == "credit-order-worker" ||
+      .label."com.docker.compose.service" == "order-service" ||
+      .label."com.docker.compose.service" == "order-migrate" ||
+      .label."com.docker.compose.service" == "order-worker"
+
+  normalize_backend_logs:
+    type: remap
+    inputs:
+      - select_backend
+    source: |
+      parsed, parse_error = parse_json(.message)
+      if parse_error == null && is_object(parsed) {
+        . = merge!(., parsed)
+        del(.message)
+      } else {
+        .structured_log_parse_error = true
+      }
+
+      .compose_service = .label."com.docker.compose.service"
+      del(.label)
+      .collector = "vector"
+      .source_type = "docker"
+
+sinks:
+  backend_console:
+    type: console
+    inputs:
+      - normalize_backend_logs
+    target: stdout
+    encoding:
+      codec: json
