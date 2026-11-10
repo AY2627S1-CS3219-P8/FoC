@@ -38,6 +38,6 @@ const SUPPLIER_IMAGE_BASE_URL =
 export function supplierImageSrc(supplier: Supplier) {
   return (
     supplier.image_key &&
-    `${SUPPLIER_IMAGE_BASE_URL}/${encodeURIComponent(supplier.image_key)}`
+    `${SUPPLIER_IMAGE_BASE_URL.replace(/\/+$/, '')}/${encodeURIComponent(supplier.image_key)}`
   );
 }

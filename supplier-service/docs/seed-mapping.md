@@ -18,7 +18,8 @@ existing identities and administrator changes.
 
 Read root `data/csv/supplier-seed-data.csv` with explicit CP1252 encoding and
 `csv.DictReader`, opening with `newline=""`. The inspected source has 21 rows,
-10 columns, six nonblank image references, and five Food/Coffee entries.
+11 columns (the original 10 plus optional ImageKey), six nonblank image references,
+and five Food/Coffee entries.
 Expected category assignments: Food 16, Coffee 5, Shopping 3, Printing 2;
 26 assignments in total across four controlled categories.
 
@@ -33,7 +34,8 @@ Expected category assignments: Food 16, Coffee 5, Shopping 3, Printing 2;
 | Longitude | location.longitude; parse finite number, validate longitude range |
 | StartingTime | opening_time; parse HHMMhrs as a local daily time |
 | ClosingTime | closing_time; parse HHMMhrs, then apply reviewed exceptions |
-| ImageURL | Match the six known references to image keys; blank becomes null |
+| ImageURL (optional) | Match the six known references to image keys; blank becomes null |
+| ImageKey (optional) | Portable image filename; if a legacy URL is also supplied, both must agree |
 
 Normalize absent optional text to null. Construct PostGIS points longitude
 first, latitude second. Retain source coordinates without rounding or guessed
@@ -103,10 +105,9 @@ null offset; only one absent is invalid. Existing rows all have populated hours.
 
 ## Image mapping and deployment
 
-Keep the source files in root data/images/. During asset integration, copy
-the six files into frontend-service/public/images/suppliers/ and bundle them
-in the frontend container. Its existing Dockerfile copies public into the
-runtime image. No shared volume or extra image-serving container is required.
+Keep image files in root `data/images/`. Local Compose serves them through Nginx
+with a read-only mount. See [image setup](../../data/images/README.md) for seed
+validation, local startup, rebuild requirements, and CloudFront configuration.
 
 | Supplier | Source filename / image_key |
 | --- | --- |
@@ -121,11 +122,20 @@ Map the known CSV GitHub blob references explicitly to these files; do not
 fetch arbitrary URLs or use GitHub HTML pages as image delivery URLs. The other
 15 suppliers have null image_key. Reject unknown nonblank references for review.
 
-Supplier Service stores and returns the filename key only. The frontend maps
-ANNA.jpeg to /images/suppliers/ANNA.jpeg on its own origin, locally
-http://localhost:3000/images/suppliers/ANNA.jpeg. Null displays a placeholder.
-Updating bundled images requires rebuilding the frontend container. Runtime
-uploads and external object storage are outside the initial implementation.
+Supplier Service stores and returns the filename key only. `ImageKey` accepts
+case-preserving ASCII filenames starting with a letter or digit, using letters,
+digits, `_`, `-`, and `.`, with jpeg/jpg, png, webp, gif, avif, svg, bmp, ico,
+tif/tiff extensions (any case). Paths, URLs, traversal sequences, control
+characters, and percent escapes are rejected. Surrounding spaces are trimmed;
+blank or whitespace-only image fields mean no image. Either image column may
+be omitted. With both populated, the exact legacy URL must map to the same key.
+Unknown URLs are errors: use ImageKey alone for new assets and put provenance
+in collector notes. Do not put storage-host URLs in supplier records.
+
+Existing UUIDs with matching coordinates are still skipped. A seed edit does
+not update their image_key; changing it requires a separately reviewed manual
+database update against the existing manifest UUID. Never delete or reseed
+suppliers to apply an image change.
 
 ## Permanent seed identities and explicit review
 

@@ -168,6 +168,8 @@ services:
   frontend-service:
     build:
       context: ./frontend-service
+      args:
+        NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL: ${NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL:-http://localhost:8090}
     environment:
       USER_SERVICE_URL: https://user-service:8080
       # Node trusts only public CAs; add the internal CA for User Service.
@@ -189,6 +191,14 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+
+  supplier-images:
+    image: nginx:stable-alpine
+    ports:
+      - "${SUPPLIER_IMAGE_PORT:-8090}:80"
+    volumes:
+      - ./data/images:/usr/share/nginx/html:ro
+      - ./data/nginx/supplier-images.conf:/etc/nginx/conf.d/default.conf:ro
 
   supplier-service:
     image: foc-supplier-service:local
@@ -310,6 +320,13 @@ services:
       - supplier-private
     healthcheck:
       disable: true
+
+  supplier-seed-nus:
+    extends:
+      service: supplier-seed
+    entrypoint: ["python", "-m", "app.commands.seed_suppliers", "--file", "/seed/nus/bundle/suppliers.csv", "--manifest", "/seed/nus/bundle/manifest.json", "--area-mapping", "/seed/nus/bundle/area_mapping.json"]
+    volumes:
+      - ./data/seeds/nus:/seed/nus:ro
 
   supplier-db:
     build:

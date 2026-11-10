@@ -823,3 +823,6 @@ and [usage log](frontend-service/ai/usage-log.md).
   [Frontend Service summary](frontend-service/README.md#ai-use-summary-frontend-service).
 
 Disclosure-only updates do not establish submission readiness.
+
+Supplier image setup, portable seed keys, local Nginx, and CloudFront build
+configuration are documented in [data/images/README.md](data/images/README.md).

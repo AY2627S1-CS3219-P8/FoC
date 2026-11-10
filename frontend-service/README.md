@@ -108,7 +108,7 @@ public reads: `GET /suppliers`, `GET /suppliers/{id}`, `GET /categories` and
   defaulting to the seed images the CSV references
   (`raw.githubusercontent.com/CS3219-AY2627S1/FoC-Template/main/data/images`);
   the frontend neither stores nor proxies image files. Suppliers without an
-  image show a category icon. `NEXT_PUBLIC_*` values are inlined at build time.
+  image or with a failed image load show the existing fallback icon. `NEXT_PUBLIC_*` values are inlined at build time.
 - **Unavailable service**: the frontend does not depend on Supplier Service to
   start (no Compose `depends_on`). If the service is down, unreachable, slow
   (5 s timeout) or returns an invalid response, supplier pages show an error
@@ -387,6 +387,9 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+See [supplier image setup](../data/images/README.md) for the Docker build argument,
+local Nginx, browser-reachable URLs, and CloudFront configuration.
 
 ## AI Use Summary (Frontend Service)
 

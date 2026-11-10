@@ -11,6 +11,8 @@ RUN yarn install --frozen-lockfile
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+ARG NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL=https://raw.githubusercontent.com/CS3219-AY2627S1/FoC-Template/main/data/images
+ENV NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL=$NEXT_PUBLIC_SUPPLIER_IMAGE_BASE_URL
 RUN mkdir -p public && yarn build
 
 FROM base AS runner
