@@ -91,6 +91,21 @@ Useful initial Grafana Explore queries are:
 {component="worker", environment="development"} | json | event="worker_heartbeat"
 ```
 
+### Grafana dashboard and alert rules
+
+The Compose stack provisions a `FoC Backend Logs` dashboard in the `FoC` folder. It includes backend log volume by level, errors and criticals by service, recent backend logs, and worker or delivery signals. Dashboard changes belong in version control under `observability/grafana/provisioning/dashboards/`.
+
+Grafana also provisions backend-only alert rules in the `FoC Alerts` folder from `observability/grafana/provisioning/alerting/foc-backend-alerts.yaml`:
+
+- `order-worker` and `credit-order-worker` heartbeat missing for two minutes
+- retry exhausted, dead-lettered, sent-to-DLQ, or parked-for-DLQ events
+- readiness check failures
+- relay failures
+
+The rules use LogQL over Loki and are visible in Grafana under `Alerts & IRM`. They do not configure an external notification destination because that is deployment-specific. Configure a contact point and notification policy in the target environment before treating these alerts as paging signals. Provisioned alert rules are managed from the file rather than edited in the Grafana UI.
+
+The current alert rules intentionally omit a duration-SLO alert because the service-specific threshold has not been agreed yet. Add that rule after the SLO and evaluation window are defined.
+
 This Compose Loki setup is for local development and evaluation. Production
 should use authenticated transport, an authentication layer in front of Loki,
 and durable object storage or a managed Loki-compatible service.
