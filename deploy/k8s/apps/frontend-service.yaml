@@ -44,6 +44,10 @@ spec:
               value: http://supplier-service:8080
             - name: NODE_EXTRA_CA_CERTS
               value: /run/tls/ca.crt
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:8080
+            - name: CREDIT_SERVICE_URL
+              value: http://credit-service:8080
             # Local kind and the initial EKS port-forward workflow use HTTP.
             # Set this to "true" when the public endpoint terminates HTTPS.
             - name: COOKIE_SECURE
