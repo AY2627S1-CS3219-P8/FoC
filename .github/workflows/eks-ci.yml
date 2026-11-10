@@ -14,6 +14,7 @@ on:
       - 'order-service/**'
       - 'credit-service/**'
       - 'frontend-service/**'
+      - 'packages/foc-observability/**'
   pull_request:
     paths:
       - '.github/workflows/eks-*.yml'
@@ -25,6 +26,7 @@ on:
       - 'order-service/**'
       - 'credit-service/**'
       - 'frontend-service/**'
+      - 'packages/foc-observability/**'
 
 permissions:
   contents: read
