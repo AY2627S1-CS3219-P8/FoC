@@ -154,13 +154,23 @@ def list_open_orders(
 
 
 def list_my_orders(
-    db: Session, actor: Identity, *, role: str, limit: int, offset: int
+    db: Session,
+    actor: Identity,
+    *,
+    role: str,
+    statuses: list[str] | None = None,
+    limit: int,
+    offset: int,
 ) -> tuple[list[Order], int]:
+    """The caller's orders in one role, optionally limited to some statuses."""
+
     if role == "requester":
-        filters = (Order.requester_id == actor.id,)
+        filters = [Order.requester_id == actor.id]
     else:
-        filters = (Order.courier_id == actor.id,)
-    return _page(db, filters, limit=limit, offset=offset)
+        filters = [Order.courier_id == actor.id]
+    if statuses:
+        filters.append(Order.status.in_(statuses))
+    return _page(db, tuple(filters), limit=limit, offset=offset)
 
 
 def list_all_orders(

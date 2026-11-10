@@ -133,12 +133,16 @@ export const orderService = {
   listOpenOrders: (token: string | undefined, page: PageParams = {}) =>
     request<Page<Order>>(withQuery('/orders/open', page), { token }),
 
-  /** The caller's own orders in one role, newest first. */
+  /** The caller's own orders in one role, newest first; all when no status. */
   listMyOrders: (
     token: string | undefined,
     role: OrderRole,
+    status: OrderStatus | undefined,
     page: PageParams = {},
-  ) => request<Page<Order>>(withQuery('/orders', { role, ...page }), { token }),
+  ) =>
+    request<Page<Order>>(withQuery('/orders', { role, status, ...page }), {
+      token,
+    }),
 
   getOrder: (token: string | undefined, id: string) =>
     request<Order>(orderPath(id), { token }),

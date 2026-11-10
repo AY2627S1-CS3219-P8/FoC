@@ -1,9 +1,22 @@
 """Pydantic request and response schemas for orders."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+OrderStatus = Literal[
+    "PENDING_CREDIT",
+    "OPEN",
+    "REJECTED",
+    "ACCEPTED",
+    "PICKED_UP",
+    "COMPLETED",
+    "CANCELLED",
+    "EXPIRED",
+]
 
 
 MAX_CREDIT_AMOUNT = 1000

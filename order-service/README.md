@@ -32,7 +32,7 @@ Every route except `/health` and `/ready` requires `Authorization: Bearer <sessi
 | --- | --- | --- | --- |
 | `POST` | `/orders` | requester | `201`, or `200` when the same `Idempotency-Key` and body are retried |
 | `GET` | `/orders/open?limit&offset` | any active user | open errands except the caller's, newest first |
-| `GET` | `/orders?role=requester\|courier&limit&offset` | caller | that caller's own orders |
+| `GET` | `/orders?role=requester\|courier&status&limit&offset` | caller | that caller's own orders; `status` is optional and repeatable, as on `/admin/orders` |
 | `GET` | `/orders/{id}` | requester, assigned courier, or admin | one order; anyone else gets `404` |
 | `PATCH` | `/orders/{id}/delivery` | requester, before pickup | replaces the destination |
 | `POST` | `/orders/{id}/accept` | anyone except the requester | first committed accept wins; the others get `409` |

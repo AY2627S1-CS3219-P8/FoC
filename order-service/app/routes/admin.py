@@ -1,6 +1,6 @@
 """Administrator-only order reads: every order, and hourly activity."""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -8,23 +8,11 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_admin
 from app.clients import Identity
 from app.db import get_db
-from app.schemas import OrderActivity, OrderPage, OrderResponse
+from app.schemas import OrderActivity, OrderPage, OrderResponse, OrderStatus
 from app.services import orders as order_service
 
 
 router = APIRouter(prefix="/admin/orders")
-
-OrderStatus = Literal[
-    "PENDING_CREDIT",
-    "OPEN",
-    "REJECTED",
-    "ACCEPTED",
-    "PICKED_UP",
-    "COMPLETED",
-    "CANCELLED",
-    "EXPIRED",
-]
-
 
 @router.get("", response_model=OrderPage)
 def list_all_route(
