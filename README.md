@@ -139,6 +139,9 @@ kubectl -n foc wait --for=condition=complete job/supplier-seed --timeout=180s
 Codex (GPT-6) assisted Supplier Service work. The
 [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service)
 and [usage log](supplier-service/ai/usage-log.md) record the affected files and evidence.
+Claude Code (claude-opus-5-5 and claude-sonnet-5-5) assisted Notification Service work; see the
+[Notification Service summary](notification-service/README.md#ai-use-summary-notification-service)
+and [usage log](notification-service/ai/usage-log.md).
 
 - [Database and migration work](supplier-service/ai/usage-log.md#ai-20260929-001):
   Requirements work, Learning support, Boilerplate generation, Writing implementation
@@ -627,5 +630,172 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
   are recorded; original timestamps unavailable, with no redactions or header
   exceptions. See the
   [Supplier Service summary](supplier-service/README.md#ai-use-summary-supplier-service).
+
+- [Notification Service skeleton](notification-service/ai/usage-log.md#ai-20261103-001):
+  Claude Code (claude-opus-5-5) provided Boilerplate generation, Writing
+  implementation code, and Debugging assistance for the new service package,
+  its tests, and Notification-related root `compose.yaml` and `.env.example`
+  changes. A readiness hang against a frozen database was fixed before
+  retention. Agent checks: 19 tests passed, `docker compose config` succeeded
+  with existing services unchanged, and live startup, readiness, and
+  configuration-failure checks passed. Keith reviewed all affected
+  changes; no human test rerun is claimed. Exact prompts and key responses are recorded; original
+  timestamps unavailable, no redactions; header exception for
+  `notification-service/alembic/versions/.gitkeep`. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service database schema](notification-service/ai/usage-log.md#ai-20261104-001):
+  Claude Code (claude-sonnet-5-5, then claude-opus-5-5) provided Writing
+  implementation code, Boilerplate generation, Debugging assistance, and
+  Refactoring and documentation improvements. The work covered the
+  `processed_events` and `notifications` Alembic revision, the models, the
+  PostgreSQL schema tests, a UTC session time zone for the app and Alembic, and
+  the service README's "Running tests" section. All six of Keith's review
+  points were adopted. Agent checks: 53 tests passed against disposable
+  PostgreSQL (19 passed and 34 skipped without it); the migration round trip
+  and `alembic check` succeeded; mutation checks passed. Keith confirmed that
+  all tests and manual verification were completed and approved, and confirmed
+  a test rerun, with commands and results unspecified. Exact prompts
+  and verbatim key-response excerpts are recorded; original timestamps
+  unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service event validation and translation](notification-service/ai/usage-log.md#ai-20261104-002):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Debugging
+  assistance, and Refactoring and documentation improvements for
+  `notification-service/app/events.py` and its unit tests, following the user's
+  specification and answers to three clarifying questions. All changes were
+  retained, including a requested rename of `parse_record` to `process_record`.
+  Agent checks: the full suite without a database had 435 passed, 34 skipped,
+  and 1 warning; the tests caught all 21 mutations applied. Keith confirmed
+  review and confirmed running `.venv/bin/python -m pytest tests/test_events.py`,
+  with 416 passed. Exact prompts and verbatim
+  key-response excerpts are recorded; original timestamps unavailable; no
+  redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service Kafka consumer](notification-service/ai/usage-log.md#ai-20261104-003):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, Debugging assistance, and Refactoring and documentation improvements
+  for the `order.events` consumer, the `start_at` cutoff, worker settings,
+  Notification-related root `compose.yaml` and `.env.example` settings, tests, and
+  the service README, following the user's specification. All changes were
+  retained. Agent checks: the full suite with PostgreSQL 16 had 551 passed and 1
+  warning; without a database, 494 passed, 57 skipped, and 1 warning; a live
+  Compose run used a verification-only workaround for Order Service TLS trust.
+  Keith confirmed verification, with 551 tests passed on the Pytest suite. 
+  Exact prompts and verbatim key-response excerpts are recorded; original timestamps unavailable; 
+  no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service consumer retries and DLQ](notification-service/ai/usage-log.md#ai-20261105-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, and Refactoring and documentation improvements for failure
+  classification, retries, the dead-letter queue, Notification-related root
+  `compose.yaml` and `.env.example` settings, tests, and the service README,
+  following the user's specification. Agent checks: the full suite with PostgreSQL
+  16 had 625 passed and 1 warning; without a database, 550 passed, 75 skipped, and
+  1 warning; a live isolated Compose run covered the failure scenarios. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. The
+  exact prompt and key response excerpts are recorded; original timestamps unavailable; no redactions; no header exceptions.
+  See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service oversized DLQ records](notification-service/ai/usage-log.md#ai-20261106-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, Debugging assistance, and Refactoring and documentation improvements
+  for the DLQ size limits, Kafka error code logging, `event-broker/create-topics.sh`,
+  real-broker tests, and documentation, after reproducing the user-reported restart
+  cycle. Agent checks: the full suite with PostgreSQL 16 and Kafka 4.1.2 had 634
+  passed and 1 warning; with neither, 554 passed, 80 skipped, and 1 warning; a live
+  isolated Compose run covered the failure before and after the change. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. Exact
+  prompts and key response excerpts are recorded; original timestamps unavailable; no
+  redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service database hang timeouts](notification-service/ai/usage-log.md#ai-20261106-002):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Debugging
+  assistance, and Refactoring and documentation improvements for a worker-only engine
+  option with network, lock, and statement timeouts, its tests, and the service
+  README, following the user's specification. Agent checks: the full suite with
+  PostgreSQL 16 and Kafka 4.1.2 had 642 passed and 1 warning; with neither, 557 passed,
+  85 skipped, and 1 warning; a live isolated Compose run covered the hang before the
+  change and the failure scenarios after it. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. The exact prompt and key response
+  excerpts are recorded; original timestamps
+  unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service failure code on offset commit failures](notification-service/ai/usage-log.md#ai-20261107-001):
+  Claude Code (claude-opus-5-5) provided Debugging assistance and Writing
+  implementation code, verifying and applying the fix the user identified, with tests.
+  Agent checks: the full suite with PostgreSQL 16 and Kafka 4.1.2 had 645 passed and 1
+  warning; with neither, 560 passed, 85 skipped, and 1 warning. Keith confirmed on 2026-11-08 (for ai-20261105-001 to ai-20261107-001 as one
+  increment) running the full suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed;
+  manually reading and verifying the code; and manual checks in an isolated Compose
+  run. Exact prompts
+  and key response excerpts are recorded;
+  original timestamps unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service history and read-status API](notification-service/ai/usage-log.md#ai-20261108-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, and Refactoring and documentation improvements for the User Service
+  bearer-token authentication, the history, unread-count, mark-read, and read-all
+  endpoints, the DTO and per-type `params` schemas, the notification-service
+  settings in root `compose.yaml`, tests, and the service README, following the
+  user's specification. Agent checks: the full suite with PostgreSQL 16 had 790
+  passed and 5 skipped; without a database, 668 passed and 127 skipped; EXPLAIN
+  showed both indexes used and no sequential scan. Keith confirmed on 2026-11-08
+  running the full suite with PostgreSQL 16, 790 passed and 5 real-broker tests
+  skipped; reading and verifying the code; and manual checks against the full
+  Compose stack with the real User Service. The exact prompt and the final response
+  are recorded; original timestamps unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service live stream](notification-service/ai/usage-log.md#ai-20261108-002):
+  Claude Code (claude-opus-5-5) provided Writing implementation code, Boilerplate
+  generation, and Refactoring and documentation improvements for the per-process
+  `LISTEN` connection, the `GET /notifications/stream` Server-Sent Events endpoint,
+  the `SSE_HEARTBEAT_SECONDS` and `SSE_MAX_LIFETIME_SECONDS` settings (including
+  root `compose.yaml` and `.env.example`), uvicorn's `--timeout-graceful-shutdown 5`
+  in the Dockerfile, tests, and the service README, following
+  the user's specification and answers. Agent checks: the full suite with
+  PostgreSQL 16 had 918 passed and 5 skipped; without a database, 753 passed and
+  170 skipped; the tests caught all 14 mutations applied; with a stream open, the API
+  stopped 5 seconds after SIGTERM. Keith confirmed on 2026-11-09 running
+  `.venv/bin/python -m pytest -rs` with 918 passed and 5 skipped, and manual SSE
+  checks against the local Compose stack. The exact prompts, the clarifying answers, and the final
+  responses are recorded; original timestamps unavailable; no
+  redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service documentation and walkthrough](notification-service/ai/usage-log.md#ai-20261109-001):
+  Claude Code (claude-opus-5-5) provided Refactoring and documentation
+  improvements for the Notification Service README: purpose, contract assumption,
+  Compose and configuration reference, an end-to-end walkthrough, API reference,
+  DLQ investigation runbook, Frontend Service handover, and a single full-suite
+  test command, following the user's specification. It reported an Order Service
+  CA-trust bug and, at the user's choice, documented a temporary git-ignored
+  Compose override instead of fixing it. A follow-up labelled every command with
+  the terminal and directory to run it from. Agent checks: the walkthrough, the
+  handover statuses, and the runbook were run against the local Compose stack;
+  the full suite with PostgreSQL 16 and Kafka 4.1.2 had 923 passed and 0
+  skipped. The follow-up's edits were only syntax-checked by the agent. Keith
+  confirmed on 2026-11-09 performing all end-to-end checks and tests included in
+  the README, with 923 tests passed, and the validity of the whole document. The
+  exact prompts, the clarifying answer, and the final responses are recorded;
+  original timestamps unavailable; no redactions; no header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service per-recipient commit order](notification-service/ai/usage-log.md#ai-20261110-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code and
+  Refactoring and documentation improvements for a per-recipient advisory lock in
+  the Notification Service worker, so that each recipient's rows commit in id
+  order and several workers are safe for the live stream, with tests, the stream
+  module docstring, and the service README, following the user's specification.
+  Agent checks: the full suite with PostgreSQL 16 and Kafka 4.1.2 had 940 passed
+  and 0 skipped; the tests caught all three mutations applied. Keith confirmed on
+  2026-11-10 verifying and testing the change with
+  `.venv/bin/python -m pytest -rs`, with 940 passed. The exact prompt and the
+  final response are recorded; original timestamps unavailable; no redactions; no
+  header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

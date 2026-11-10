@@ -360,6 +360,49 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
 
+  /admin/users/{user_id}/grant-admin:
+    post:
+      summary: Grant administrator rights
+      description: An active administrator promotes another active user to administrator. The caller cannot grant themselves administrator rights, and the target's existing sessions remain valid.
+      operationId: grantAdminRights
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: Administrator rights granted.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator or is attempting to grant themselves administrator rights.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "409":
+          description: The target user is already an administrator or is not active.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database or administrator-state locking is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /admin/users/{user_id}/revoke-admin:
     post:
       summary: Revoke administrator rights
