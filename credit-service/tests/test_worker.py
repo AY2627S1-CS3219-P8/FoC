@@ -1,6 +1,7 @@
 """Credit Kafka delivery, quarantine, retry, and idempotency tests."""
 
 import json
+import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -309,7 +310,9 @@ def test_expected_reservation_rejection_is_committed_and_acknowledged(
     engine.dispose()
 
 
-def test_transient_failure_uses_configured_retry_schedule(monkeypatch) -> None:
+def test_transient_failure_uses_configured_retry_schedule(
+    monkeypatch, caplog
+) -> None:
     sessions = []
     sleeps = []
 
@@ -324,13 +327,14 @@ def test_transient_failure_uses_configured_retry_schedule(monkeypatch) -> None:
         )
 
     monkeypatch.setattr("app.worker.apply_incoming_event", fail_processing)
-    outcome = process_delivery(
-        session_factory,
-        order_created_body(uuid4()),
-        initial_allocation=100,
-        retry_backoff_seconds=(0.25, 0.75),
-        sleep=sleeps.append,
-    )
+    with caplog.at_level(logging.ERROR, logger="app.worker"):
+        outcome = process_delivery(
+            session_factory,
+            order_created_body(uuid4()),
+            initial_allocation=100,
+            retry_backoff_seconds=(0.25, 0.75),
+            sleep=sleeps.append,
+        )
 
     assert outcome.disposition == "QUARANTINE"
     assert outcome.failure_code == "TRANSIENT_RETRIES_EXHAUSTED"
@@ -339,6 +343,17 @@ def test_transient_failure_uses_configured_retry_schedule(monkeypatch) -> None:
     assert len(sessions) == 3
     assert all(session.rollback_count == 1 for session in sessions)
     assert all(session.closed for session in sessions)
+    exhausted = next(
+        record for record in caplog.records
+        if record.event == "credit_event_retry_exhausted"
+    )
+    assert exhausted.fields["attempts"] == 3
+    completed = next(
+        record for record in caplog.records
+        if record.event == "credit_event_processing_completed"
+    )
+    assert completed.fields["duration_ms"] >= 0
+    assert completed.fields["outcome"] == "QUARANTINE"
 
 
 def test_transient_failure_can_recover_on_a_later_attempt(monkeypatch) -> None:
@@ -514,7 +529,7 @@ def test_failed_dlq_confirmation_does_not_commit_source_offset() -> None:
     assert consumer.commits == []
 
 
-def test_confirmed_dlq_publish_precedes_source_offset_commit() -> None:
+def test_confirmed_dlq_publish_precedes_source_offset_commit(caplog) -> None:
     message = FakeMessage(
         b"not-json",
         topic=ORDER_TOPIC,
@@ -524,20 +539,26 @@ def test_confirmed_dlq_publish_precedes_source_offset_commit() -> None:
     producer = FakeProducer()
     consumer = FakeConsumer()
 
-    _handle_message(
-        FakeSession,
-        KafkaPublisher(producer),
-        consumer,
-        message,
-        stream=EVENT_STREAMS["order"],
-        initial_allocation=100,
-        retry_backoff_seconds=(),
-    )
+    with caplog.at_level(logging.ERROR, logger="app.worker"):
+        _handle_message(
+            FakeSession,
+            KafkaPublisher(producer),
+            consumer,
+            message,
+            stream=EVENT_STREAMS["order"],
+            initial_allocation=100,
+            retry_backoff_seconds=(),
+        )
 
     assert producer.records[0]["topic"] == ORDER_EVENTS_DLQ
     assert producer.records[0]["key"] == b"original-key"
     assert producer.records[0]["value"] == b"not-json"
     assert consumer.commits == [{"message": message, "asynchronous": False}]
+    sent = next(
+        record for record in caplog.records
+        if record.event == "credit_event_sent_to_dlq"
+    )
+    assert sent.fields["dlq_topic"] == ORDER_EVENTS_DLQ
 
 
 def test_unconfirmed_credit_publish_keeps_outbox_pending() -> None:

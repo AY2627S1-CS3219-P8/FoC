@@ -12,9 +12,11 @@ from sqlalchemy.orm import Session
 from app.auth import SESSION_CLEANUP_INTERVAL, cleanup_sessions
 from app.db import SessionLocal, get_db
 from app.routes.users import router as users_router
+from foc_observability import RequestContextMiddleware, configure_logging, log_event
 
 
 logger = logging.getLogger(__name__)
+configure_logging("user-service", component="api")
 
 
 def run_session_cleanup() -> None:
@@ -25,10 +27,20 @@ def run_session_cleanup() -> None:
             deleted = cleanup_sessions(db)
             db.commit()
             if deleted:
-                logger.info("Removed %d expired or revoked sessions", deleted)
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "expired_or_revoked_sessions_cleaned",
+                    deleted_count=deleted,
+                )
         except SQLAlchemyError:
             db.rollback()
-            logger.exception("Periodic session cleanup failed")
+            log_event(
+                logger,
+                logging.ERROR,
+                "periodic_session_cleanup_failed",
+                exc_info=True,
+            )
 
 
 async def session_cleanup_loop() -> None:
@@ -53,6 +65,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="FoC User Service", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 
 
 @app.get("/health")
@@ -69,6 +82,7 @@ def readiness_check(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
     except SQLAlchemyError as exc:
+        log_event(logger, logging.WARNING, "readiness_check_failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
 
     return {"status": "ready"}

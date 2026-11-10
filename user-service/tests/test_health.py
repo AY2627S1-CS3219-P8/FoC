@@ -1,5 +1,7 @@
 """Tests for the User Service health endpoint."""
 
+import logging
+
 from sqlalchemy.exc import OperationalError
 from fastapi.testclient import TestClient
 
@@ -59,18 +61,23 @@ def test_readiness_check_requires_a_working_database():
     assert database.queries == ["SELECT 1"]
 
 
-def test_readiness_check_returns_503_when_database_is_unavailable():
-    """Readiness returns 503 when the database query fails."""
+def test_readiness_check_returns_503_when_database_is_unavailable(caplog):
+    """Readiness returns 503 and emits an operational failure event."""
 
     database = FakeDatabase(
         error=OperationalError("SELECT 1", {}, Exception("database unavailable"))
     )
     app.dependency_overrides[get_db] = override_database(database)
 
-    try:
-        response = client.get("/ready")
-    finally:
-        app.dependency_overrides.clear()
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        try:
+            response = client.get("/ready")
+        finally:
+            app.dependency_overrides.clear()
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Database unavailable"}
+    assert any(
+        getattr(record, "event", None) == "readiness_check_failed"
+        for record in caplog.records
+    )

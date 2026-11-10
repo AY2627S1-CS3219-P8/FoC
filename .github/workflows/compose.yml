@@ -8,7 +8,10 @@ on:
       - "event-broker/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
+      - "observability/**"
+      - "scripts/verify-observability.sh"
       - "supplier-service/**"
+      - "packages/foc-observability/**"
       - "data/csv/supplier-seed-data.csv"
   pull_request:
     paths:
@@ -16,7 +19,10 @@ on:
       - "event-broker/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
+      - "observability/**"
+      - "scripts/verify-observability.sh"
       - "supplier-service/**"
+      - "packages/foc-observability/**"
       - "data/csv/supplier-seed-data.csv"
 
 permissions:
@@ -40,6 +46,7 @@ jobs:
       CREDIT_DB_PASSWORD: creditCiPassword123
       ORDER_DB_USER: foc_orders
       ORDER_DB_PASSWORD: focOrdersCiPassword123
+      GRAFANA_ADMIN_PASSWORD: focCiGrafanaPassword123
       NOTIFICATION_DB_USER: foc_notifications
       NOTIFICATION_DB_PASSWORD: notificationCiPassword123
       NOTIFICATIONS_START_AT: "2026-11-04T00:00:00+08:00"
@@ -53,9 +60,12 @@ jobs:
 
       - name: Start Supplier from an empty database
         run: |
-          docker compose up -d --build --wait --wait-timeout 180 supplier-service
+          docker compose up -d --build --wait --wait-timeout 180 supplier-service loki grafana vector
           curl --fail --max-time 5 http://127.0.0.1:8081/ready
           curl --fail --max-time 5 http://127.0.0.1:8081/suppliers
+
+      - name: Verify centralized backend logging
+        run: ./scripts/verify-observability.sh
 
       - name: Verify seed tool dependencies
         run: docker compose --profile tools run --rm supplier-seed --dry-run
@@ -68,7 +78,7 @@ jobs:
 
       - name: Show startup logs on failure
         if: failure()
-        run: docker compose logs --no-color --tail=100 supplier-db supplier-bootstrap supplier-migrate supplier-grants supplier-service
+        run: docker compose logs --no-color --tail=100 loki grafana vector supplier-db supplier-bootstrap supplier-migrate supplier-grants supplier-service
 
       - name: Remove CI containers and volumes
         if: always()

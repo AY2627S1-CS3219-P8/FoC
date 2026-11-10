@@ -1499,7 +1499,10 @@ including candidates within the batch. Deleted matches do not block a new UUID.
 Categories must already exist from migrations. See the
 [confirmed identity policy](docs/seed-mapping.md#confirmed-database-classification-policy).
 
-The JSON report includes:
+The command writes one structured JSON record to stdout. The standard logging
+envelope identifies it as the `supplier-seed` service with `component: "seed"`
+and an event describing the outcome. The existing report fields remain
+top-level fields in that record. It includes:
 
 - `source_count`, `validated_supplier_count`, `category_counts`, and
   `total_category_assignments`: source/diagnostic totals, not committed row counts.

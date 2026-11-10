@@ -17,6 +17,7 @@ from app.clients import (
     InvalidSessionError,
     UserServiceClient,
 )
+from foc_observability import log_context
 
 
 def _client(handler) -> UserServiceClient:
@@ -50,11 +51,40 @@ def test_resolves_identity_over_https() -> None:
             200, json={"id": str(user_id), "role": "user", "status": "active"}
         )
 
-    identity = _resolve(handler)
+    with log_context(
+        request_id="11111111-1111-4111-8111-111111111111",
+        correlation_id="22222222-2222-4222-8222-222222222222",
+    ):
+        identity = _resolve(handler)
 
     assert identity.id == user_id
     assert identity.role == "user"
     assert identity.status == "active"
+
+
+def test_request_context_is_forwarded_without_exposing_credentials() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Request-ID"] == (
+            "11111111-1111-4111-8111-111111111111"
+        )
+        assert request.headers["X-Correlation-ID"] == (
+            "22222222-2222-4222-8222-222222222222"
+        )
+        assert request.headers["Authorization"] == "Bearer opaque-token"
+        return httpx.Response(
+            200,
+            json={
+                "id": str(uuid4()),
+                "role": "user",
+                "status": "active",
+            },
+        )
+
+    with log_context(
+        request_id="11111111-1111-4111-8111-111111111111",
+        correlation_id="22222222-2222-4222-8222-222222222222",
+    ):
+        _resolve(handler)
 
 
 def test_base_url_path_and_credentials_are_ignored() -> None:

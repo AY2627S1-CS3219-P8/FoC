@@ -29,6 +29,42 @@ include:
   - event-broker/compose.yaml
 
 services:
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - loki
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    restart: unless-stopped
+
+  vector:
+    image: timberio/vector:0.61.0-debian
+    command: ["--config", "/etc/vector/vector.yaml"]
+    volumes:
+      - ${VECTOR_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock:ro
+      - ./observability/vector.yaml:/etc/vector/vector.yaml:ro
+      - vector-data:/var/lib/vector
+    depends_on:
+      - loki
+    restart: unless-stopped
+
   user-db:
     image: postgres:16-alpine
     container_name: user-db
@@ -45,7 +81,9 @@ services:
       retries: 5
 
   user-service:
-    build: ./user-service
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
     command:
       - uvicorn
       - app.main:app
@@ -61,6 +99,9 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       USER_SERVICE_INTERNAL_TOKEN: ${USER_SERVICE_INTERNAL_TOKEN:?Set USER_SERVICE_INTERNAL_TOKEN in .env}
+      APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ${USER_SERVICE_TLS_CERT_FILE:-./certs/user-service.crt}:/run/tls/user-service.crt:ro
       - ${USER_SERVICE_TLS_KEY_FILE:-./certs/user-service.key}:/run/tls/user-service.key:ro
@@ -83,18 +124,25 @@ services:
       - "127.0.0.1:8080:8080"
 
   user-migrate:
-    build: ./user-service
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       user-db:
         condition: service_healthy
     restart: "no"
 
   user-bootstrap:
-    build: ./user-service
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
     command: ["python", "-m", "scripts.bootstrap_admin"]
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
@@ -103,6 +151,9 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       user-db:
         condition: service_healthy
@@ -136,12 +187,14 @@ services:
   supplier-service:
     image: foc-supplier-service:local
     build:
-      context: ./supplier-service
+      context: .
+      dockerfile: supplier-service/Dockerfile
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
-      APP_ENV: development
+      APP_ENV: ${APP_ENV:-development}
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       supplier-db:
@@ -181,12 +234,14 @@ services:
   supplier-migrate:
     image: foc-supplier-service:local
     build:
-      context: ./supplier-service
+      context: .
+      dockerfile: supplier-service/Dockerfile
     command: ["python", "-m", "alembic", "upgrade", "head"]
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_migrator:${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
-      APP_ENV: development
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -224,15 +279,17 @@ services:
     profiles: [tools]
     image: foc-supplier-service:local
     build:
-      context: ./supplier-service
+      context: .
+      dockerfile: supplier-service/Dockerfile
     entrypoint: ["python", "-m", "app.commands.seed_suppliers", "--file", "/seed/supplier-seed-data.csv"]
     command: []
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_runtime:${SUPPLIER_RUNTIME_PASSWORD:?Set runtime database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
-      APP_ENV: development
+      APP_ENV: ${APP_ENV:-development}
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./data/csv/supplier-seed-data.csv:/seed/supplier-seed-data.csv:ro
@@ -286,12 +343,17 @@ services:
 
   credit-migrate:
     image: foc-credit-service:local
-    build: ./credit-service
+    build:
+      context: .
+      dockerfile: credit-service/Dockerfile
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     environment:
       DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
       PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       credit-db:
         condition: service_healthy
@@ -302,13 +364,17 @@ services:
 
   credit-service:
     image: foc-credit-service:local
-    build: ./credit-service
+    build:
+      context: .
+      dockerfile: credit-service/Dockerfile
     container_name: credit-service
     environment:
       DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
       PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
       USER_SERVICE_URL: https://user-service:8080
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
+      APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -327,7 +393,9 @@ services:
 
   credit-order-worker:
     image: foc-credit-service:local
-    build: ./credit-service
+    build:
+      context: .
+      dockerfile: credit-service/Dockerfile
     container_name: credit-order-worker
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
@@ -336,6 +404,8 @@ services:
       PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
       USER_SERVICE_URL: https://user-service:8080
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
+      APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       CREDIT_EVENT_STREAM: order
@@ -376,12 +446,17 @@ services:
 
   order-migrate:
     image: foc-order-service:local
-    build: ./order-service
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     environment:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       order-db:
         condition: service_healthy
@@ -392,7 +467,9 @@ services:
 
   order-service:
     image: foc-order-service:local
-    build: ./order-service
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
     container_name: order-service
     environment:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
@@ -400,6 +477,8 @@ services:
       USER_SERVICE_URL: https://user-service:8080
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
+      APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       order-db:
@@ -416,7 +495,9 @@ services:
 
   order-worker:
     image: foc-order-service:local
-    build: ./order-service
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
     container_name: order-worker
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
@@ -424,6 +505,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -459,12 +542,17 @@ services:
 
   notification-migrate:
     image: foc-notification-service:local
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     environment:
       DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
       PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       notification-db:
         condition: service_healthy
@@ -475,7 +563,9 @@ services:
 
   notification-service:
     image: foc-notification-service:local
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     container_name: notification-service
     environment:
       DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
@@ -484,6 +574,8 @@ services:
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
       SSE_HEARTBEAT_SECONDS: ${SSE_HEARTBEAT_SECONDS:-20}
       SSE_MAX_LIFETIME_SECONDS: ${SSE_MAX_LIFETIME_SECONDS:-600}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       notification-db:
@@ -500,7 +592,9 @@ services:
 
   notification-worker:
     image: foc-notification-service:local
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     container_name: notification-worker
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
@@ -511,6 +605,8 @@ services:
       NOTIFICATIONS_START_AT: ${NOTIFICATIONS_START_AT:?Set NOTIFICATIONS_START_AT in .env}
       # "-", not ":-": an empty value is valid and means no retries.
       NOTIFICATION_RETRY_BACKOFF_SECONDS: ${NOTIFICATION_RETRY_BACKOFF_SECONDS-0.5,1,2,4}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -542,4 +638,7 @@ volumes:
   user-db-data:
   credit-db-data:
   order-db-data:
+  vector-data:
+  loki-data:
+  grafana-data:
   notification-db-data:

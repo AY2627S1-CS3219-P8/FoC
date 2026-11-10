@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.messaging import HTTP_TIMEOUT_SECONDS
+from foc_observability import context_headers
 
 
 class InvalidSessionError(Exception):
@@ -64,7 +65,10 @@ class UserServiceClient:
         try:
             response = self._client.get(
                 self._identity_url,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    **context_headers(),
+                    "Authorization": f"Bearer {token}",
+                },
             )
         except httpx.RequestError:
             raise AuthenticationUnavailableError from None

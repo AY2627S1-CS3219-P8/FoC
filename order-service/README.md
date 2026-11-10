@@ -20,6 +20,8 @@ curl -sS http://127.0.0.1:8082/ready
 
 The worker log line `worker_started` means it is publishing and consuming. Topics are created by `kafka-topics` before the worker starts. See `event-broker/README.md` for the commands that read a topic. A credit message that still fails after retries is copied to `order-service.credit-events.dlq`.
 
+Worker lifecycle, heartbeat, retry, relay, DLQ, and readiness alert guidance is in [`docs/observability.md`](../docs/observability.md).
+
 Creating an order through this stack still needs Supplier Service's `GET /suppliers/{id}` and a Credit Service. Neither is available from `main` yet, so this smoke check stops at readiness, the worker log, and the topics.
 
 ## API
