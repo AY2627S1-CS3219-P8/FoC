@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -72,6 +73,9 @@ class _JsonStreamHandler(logging.StreamHandler):
     """Marker type used to replace only handlers owned by this package."""
 
     foc_observability_handler = True
+
+    def __init__(self) -> None:
+        super().__init__(sys.stdout)
 
 
 class JsonFormatter(logging.Formatter):

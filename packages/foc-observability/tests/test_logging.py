@@ -208,6 +208,21 @@ def test_configure_logging_suppresses_opaque_uvicorn_access_logs():
     assert logging.getLogger("uvicorn.access").disabled is True
 
 
+def test_configure_logging_writes_owned_handlers_to_stdout():
+    configure_logging("test-service", environment="test")
+
+    for logger_name in ("", "uvicorn", "uvicorn.error"):
+        logger = logging.getLogger(logger_name)
+        handlers = [
+            handler
+            for handler in logger.handlers
+            if getattr(handler, "foc_observability_handler", False)
+        ]
+
+        assert handlers
+        assert all(handler.stream is sys.stdout for handler in handlers)
+
+
 def test_request_middleware_binds_context_and_returns_headers():
     request_id = "11111111-1111-4111-8111-111111111111"
     correlation_id = "22222222-2222-4222-8222-222222222222"
