@@ -37,7 +37,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubRepository}:environment:foc-publish'
+                token.actions.githubusercontent.com:sub: 'repo:AY2627S1-CS3219-P8@324816053/FoC@1356845993:environment:foc-publish'
       Policies:
         - PolicyName: FoCEcrPush
           PolicyDocument:
@@ -75,7 +75,7 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubRepository}:environment:foc-deploy'
+                token.actions.githubusercontent.com:sub: 'repo:AY2627S1-CS3219-P8@324816053/FoC@1356845993:environment:foc-deploy'
       Policies:
         - PolicyName: FoCReadDeploymentPrerequisites
           PolicyDocument:
