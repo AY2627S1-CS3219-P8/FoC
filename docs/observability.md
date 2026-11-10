@@ -5,6 +5,40 @@ in the `event` field; identifiers and measurements are top-level fields. Worker
 logs are the operational source of truth for Kafka processing, while `/ready`
 failures are the operational source of truth for API database readiness.
 
+## Centralized logging scope
+
+The centralized logger covers backend application processes only. The initial
+collector must include these Compose services:
+
+| Service | Process type |
+| --- | --- |
+| `user-service` | API |
+| `user-migrate` | Migration job |
+| `user-bootstrap` | Bootstrap job |
+| `supplier-service` | API |
+| `supplier-migrate` | Migration job |
+| `supplier-seed` | Seed job |
+| `credit-service` | API |
+| `credit-migrate` | Migration job |
+| `credit-order-worker` | Kafka worker |
+| `order-service` | API |
+| `order-migrate` | Migration job |
+| `order-worker` | Kafka worker |
+
+The initial collector must exclude `frontend-service`, all PostgreSQL services,
+`kafka`, `kafka-topics`, `supplier-bootstrap`, and `supplier-grants`. Those
+streams may be integrated later as separate infrastructure logging sources.
+
+The collector should select services using the Docker Compose service label,
+`com.docker.compose.service`, rather than container names. Several backend
+services do not define an explicit `container_name`, and container names are
+not a stable application identity across deployment environments.
+
+This scope applies to centralized application-log collection. It does not
+change the existing stdout behavior: backend processes continue to write
+structured JSON to stdout, and the collector remains responsible for shipping
+those records to the central logging backend.
+
 ## Worker signals
 
 Both Kafka workers emit the following events with `worker`, `topic`, and
