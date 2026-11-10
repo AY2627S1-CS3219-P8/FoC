@@ -248,6 +248,13 @@ services:
     healthcheck:
       disable: true
 
+  supplier-seed-nus:
+    extends:
+      service: supplier-seed
+    entrypoint: ["python", "-m", "app.commands.seed_suppliers", "--file", "/seed/nus/bundle/suppliers.csv", "--manifest", "/seed/nus/bundle/manifest.json", "--area-mapping", "/seed/nus/bundle/area_mapping.json"]
+    volumes:
+      - ./data/seeds/nus:/seed/nus:ro
+
   supplier-db:
     build:
       context: ./supplier-service/database

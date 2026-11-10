@@ -119,9 +119,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Import reviewed supplier seeds, or preview database decisions.")
     parser.add_argument("--file", required=True, help="Path to the CP1252 supplier source CSV.")
     parser.add_argument("--dry-run", action="store_true", help="Preview using a read-only database transaction; do not import.")
+    parser.add_argument("--manifest", type=Path, default=SEED_ROOT / "manifest.json",
+                        help="Reviewed permanent seed identities (defaults to packaged manifest).")
+    parser.add_argument("--area-mapping", type=Path, default=SEED_ROOT / "area_mapping.json",
+                        help="Reviewed campus area mapping (defaults to packaged mapping).")
     args = parser.parse_args(argv)
     # Only the typed parser's complete accepted batch can reach persistence.
-    batch = parse_seed_source(args.file, SEED_ROOT / "manifest.json", SEED_ROOT / "area_mapping.json")
+    batch = parse_seed_source(args.file, args.manifest, args.area_mapping)
     report = _source_report(batch)
     report.update(dry_run=args.dry_run, preview=args.dry_run, committed=False,
                   rolled_back=False, commit_outcome="not_attempted", proposed_insert_count=0, inserted_count=0,

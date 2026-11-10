@@ -2295,3 +2295,12 @@ suites and live authentication were not rerun; prior counts remain historical.
 Keith confirmed review of the README work and correction; no human test rerun is
 claimed. Both exact prompts and verbatim relevant responses are recorded; original
 timestamps are unavailable. No redactions or header exceptions apply.
+
+## Collecting an additional NUS supplier dataset
+
+The optional [Python collector and review workflow](tools/nus_collector/README.md)
+collects official Kent Ridge and UTown dining/retail listings, supports saved HTML
+when direct requests are blocked, and produces a review CSV and HTML report.
+Explicitly approved records export to a separate seed bundle with permanent
+identities. Validate locally, then use `supplier-seed-nus --dry-run` for database
+preview before importing. The original dataset and import defaults remain intact.
