@@ -106,6 +106,16 @@ The rules use LogQL over Loki and are visible in Grafana under `Alerts & IRM`. T
 
 The current alert rules intentionally omit a duration-SLO alert because the service-specific threshold has not been agreed yet. Add that rule after the SLO and evaluation window are defined.
 
+### Verification
+
+After the full Compose stack is running, run the repository smoke test from the project root:
+
+```bash
+GRAFANA_ADMIN_PASSWORD='your-local-password' ./scripts/verify-observability.sh
+```
+
+The test checks Loki readiness, Grafana health, dashboard provisioning, all five file-provisioned alert rules, the expected Loki labels, and at least one backend log delivered through Vector in the previous five minutes. It uses `GRAFANA_URL` and `LOKI_URL` when the services are exposed on non-default local addresses. Set `OBSERVABILITY_REQUIRE_BACKEND_LOGS=false` when testing only provisioning before any backend service has emitted a log.
+
 This Compose Loki setup is for local development and evaluation. Production
 should use authenticated transport, an authentication layer in front of Loki,
 and durable object storage or a managed Loki-compatible service.
