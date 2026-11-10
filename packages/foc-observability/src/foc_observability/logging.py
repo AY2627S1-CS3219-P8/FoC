@@ -52,9 +52,15 @@ _CREDENTIAL_URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _KEY_VALUE_SECRET_PATTERN = re.compile(
-    r"\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|"
-    r"credential|credentials|database[_-]?url|dsn|connection[_-]?string)"
-    r"\s*[:=]\s*[^\s,;&]+",
+    r'''(?P<key>["']?\b(password|passwd|pwd|token|access[_-]?token|'''
+    r'''refresh[_-]?token|session[_-]?token|secret|api[_-]?key|authorization|'''
+    r'''credential|credentials|cookie|set[_-]?cookie|body|raw[_-]?body|'''
+    r'''request[_-]?body|response[_-]?body|header|headers|database[_-]?url|'''
+    r'''dsn|connection[_-]?string)["']?)'''
+    r'''\s*(?P<separator>[:=])\s*(?P<value>'''
+    r'''"(?:\\.|[^"\\])*"|'''
+    r'''\'(?:\\.|[^\'\\])*\'|'''
+    r'''[^\s,;&]+)''',
     re.IGNORECASE,
 )
 
@@ -126,7 +132,10 @@ def _redact_string(value: str) -> str:
     value = _BEARER_PATTERN.sub(r"\1" + _REDACTED, value)
     value = _CREDENTIAL_URL_PATTERN.sub(r"\1" + _REDACTED + "@", value)
     return _KEY_VALUE_SECRET_PATTERN.sub(
-        lambda match: f"{match.group(1)}={_REDACTED}", value
+        lambda match: (
+            f"{match.group('key')}{match.group('separator')}{_REDACTED}"
+        ),
+        value,
     )
 
 

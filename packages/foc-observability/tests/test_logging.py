@@ -116,6 +116,23 @@ def test_formatter_redacts_sensitive_exception_text():
     assert "[REDACTED]" in json.loads(output)["exception"]
 
 
+def test_formatter_redacts_json_shaped_sensitive_exception_text():
+    record = _record("upstream request failed")
+    try:
+        raise RuntimeError(
+            'upstream response: {"password":"json-password",'
+            '"access_token":"json-token"}'
+        )
+    except RuntimeError:
+        record.exc_info = sys.exc_info()
+
+    output = JsonFormatter(service="test-service", environment="test").format(record)
+
+    assert "json-password" not in output
+    assert "json-token" not in output
+    assert "[REDACTED]" in json.loads(output)["exception"]
+
+
 def test_context_is_restored_after_nested_scope():
     with log_context(request_id="outer"):
         with log_context(correlation_id="inner"):
