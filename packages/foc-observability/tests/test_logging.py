@@ -66,6 +66,33 @@ def test_formatter_ignores_unstructured_legacy_extra_fields():
     assert "path" not in payload
 
 
+def test_formatter_preserves_canonical_fields_from_application_collisions():
+    record = _record()
+    record.event = "canonical_event"
+    record.fields = {
+        "timestamp": "spoofed-timestamp",
+        "level": "CRITICAL",
+        "service": "spoofed-service",
+        "environment": "spoofed-environment",
+        "logger": "spoofed-logger",
+        "event": "spoofed-event",
+        "exception": "spoofed-exception",
+        "request_id": "request-1",
+    }
+
+    payload = json.loads(
+        JsonFormatter(service="real-service", environment="test").format(record)
+    )
+
+    assert payload["level"] == "INFO"
+    assert payload["service"] == "real-service"
+    assert payload["environment"] == "test"
+    assert payload["logger"] == "app.example"
+    assert payload["event"] == "canonical_event"
+    assert payload["request_id"] == "request-1"
+    assert "spoofed-exception" not in payload
+
+
 def test_formatter_redacts_sensitive_fields_and_nested_values():
     record = _record()
     record.event = "request_failed"

@@ -15,6 +15,9 @@ from .context import get_context
 _DEFAULT_LEVEL = "INFO"
 _DEFAULT_ENVIRONMENT = "development"
 _REDACTED = "[REDACTED]"
+_RESERVED_LOG_FIELDS = frozenset(
+    {"timestamp", "level", "service", "environment", "logger", "event", "exception"}
+)
 _SENSITIVE_KEY_MARKERS = frozenset(
     {
         "access_token",
@@ -109,8 +112,8 @@ class JsonFormatter(logging.Formatter):
         if fields:
             if not isinstance(fields, dict):
                 raise TypeError("logging extra['fields'] must be a dictionary")
-            payload.update(_sanitize_mapping(fields))
-        payload.update(_sanitize_mapping(context))
+            payload.update(_application_fields(fields))
+        payload.update(_application_fields(context))
 
         if record.exc_info:
             payload["exception"] = _redact_string(
@@ -157,6 +160,16 @@ def _sanitize_mapping(fields: dict[Any, Any]) -> dict[str, Any]:
     return {
         str(key): _sanitize_value(key, value)
         for key, value in fields.items()
+    }
+
+
+def _application_fields(fields: dict[Any, Any]) -> dict[str, Any]:
+    """Return sanitized fields without allowing envelope metadata collisions."""
+
+    return {
+        key: value
+        for key, value in _sanitize_mapping(fields).items()
+        if key not in _RESERVED_LOG_FIELDS
     }
 
 
