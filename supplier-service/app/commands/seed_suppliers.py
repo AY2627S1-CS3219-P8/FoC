@@ -197,13 +197,23 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Preview using a read-only database transaction; do not import.",
     )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=SEED_ROOT / "manifest.json",
+        help="Reviewed permanent seed identities (defaults to packaged manifest).",
+    )
+    parser.add_argument(
+        "--area-mapping",
+        type=Path,
+        default=SEED_ROOT / "area_mapping.json",
+        help="Reviewed campus area mapping (defaults to packaged mapping).",
+    )
     configure_logging("supplier-seed", component="seed")
     logging.getLogger("alembic").setLevel(logging.WARNING)
     args = parser.parse_args(argv)
     # Only the typed parser's complete accepted batch can reach persistence.
-    batch = parse_seed_source(
-        args.file, SEED_ROOT / "manifest.json", SEED_ROOT / "area_mapping.json"
-    )
+    batch = parse_seed_source(args.file, args.manifest, args.area_mapping)
     report = _source_report(batch)
     report.update(
         dry_run=args.dry_run,

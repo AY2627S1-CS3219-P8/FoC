@@ -33,7 +33,7 @@ def sample(tmp_path):
     def parse(rows=None):
         path = tmp_path / "source.csv"
         with path.open("w", encoding="cp1252", newline="") as stream:
-            writer = csv.DictWriter(stream, fieldnames=SOURCE_HEADERS)
+            writer = csv.DictWriter(stream, fieldnames=(*SOURCE_HEADERS, "ImageKey") if "ImageKey" in row else SOURCE_HEADERS)
             writer.writeheader()
             writer.writerows([row] if rows is None else rows)
         return parse_seed_source(path, manifest, areas)
@@ -234,12 +234,73 @@ def test_real_reviewed_dataset():
     }
     assert {record.values.image_key for record in result.records if record.values.image_key} == {
         "ANNA.jpeg", "NUS_COOP.jpeg", "PRINTER_COM2.jpeg", "COOL_SPOT.jpeg", "INSTACHEF.jpeg", "ROBOT_CAFE.jpeg",
+        "HOT_HIDEOUT.jpg",
     }
-    assert sum(record.values.image_key is None for record in result.records) == 15
+    assert sum(record.values.image_key is None for record in result.records) == 14
     assert {name: record.values.image_key for name, record in by_name.items() if record.values.image_key} == {
         "Anna's x Soup Union": "ANNA.jpeg", "NUS Co-op": "NUS_COOP.jpeg",
         "Printer @ Com 2": "PRINTER_COM2.jpeg", "Cool Spot": "COOL_SPOT.jpeg",
         "InstaChef": "INSTACHEF.jpeg", "Cafe+ Robot Cafe": "ROBOT_CAFE.jpeg",
+        "A Hot Hideout": "HOT_HIDEOUT.jpg",
     }
     assert by_name["Printer @ Com 2"].values.building == "COM2"
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("key", ["anna.webp", "ANNA.jpeg", "photo.PNG", "my-photo.avif"])
+def test_explicit_image_key(sample, key):
+    row, _, _, parse = sample
+    row["ImageKey"] = " " + key + " "
+    result = parse()
+    assert result.valid, result.issues
+    assert result.records[0].values.image_key == key
+
+
+@pytest.mark.parametrize("key", ["https://example.com/a.png", "/a.png", "../a.png", "a/b.png",
+                                 "a\\b.png", "a..b.png", "a.png\n", "a\x00.png", "a.txt", "a%2fb.png"])
+def test_invalid_image_keys(sample, key):
+    row, _, _, parse = sample
+    row["ImageKey"] = key
+    result = parse()
+    assert "INVALID_IMAGE_KEY" in codes(result)
+    assert not result.records
+
+
+@pytest.mark.parametrize("url,key", IMAGE_KEYS.items())
+def test_legacy_image_and_matching_explicit_key(sample, url, key):
+    row, _, _, parse = sample
+    row["ImageURL"] = url
+    assert parse().records[0].values.image_key == key
+    row["ImageKey"] = key
+    assert parse().records[0].values.image_key == key
+    row["ImageKey"] = "different.webp"
+    result = parse()
+    assert "CONFLICTING_IMAGE_REFERENCE" in codes(result)
+    assert not result.records
+
+
+def test_unknown_legacy_url_with_key_still_rejected(sample):
+    row, _, _, parse = sample
+    row.update(ImageKey="anna.webp", ImageURL="https://example.com/anna.webp")
+    assert "UNKNOWN_IMAGE" in codes(parse())
+
+
+def test_blank_image_key(sample):
+    row, _, _, parse = sample
+    row["ImageKey"] = " \t "
+    assert parse().records[0].values.image_key is None
+
+
+@pytest.mark.parametrize("image_fields", [{}, {"ImageKey": "anna.webp"}])
+def test_seed_without_image_url_column(sample, tmp_path, image_fields):
+    row, manifest, areas, _ = sample
+    row.pop("ImageURL")
+    row.update(image_fields)
+    path = tmp_path / "key-only.csv"
+    with path.open("w", encoding="cp1252", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+    batch = parse_seed_source(path, manifest, areas)
+    assert batch.valid, batch.issues
+    assert batch.records[0].values.image_key == image_fields.get("ImageKey")
