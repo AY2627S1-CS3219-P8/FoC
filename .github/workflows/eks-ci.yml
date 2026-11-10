@@ -169,3 +169,4 @@ jobs:
           push: false
           platforms: linux/amd64
           tags: foc-${{ matrix.name }}:ci
+# Trigger initial CI run
