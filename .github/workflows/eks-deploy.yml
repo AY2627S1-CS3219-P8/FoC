@@ -3,6 +3,11 @@ name: FoC deploy existing ECR release to EKS
 # Deliberate, gated deployment; no automatic changes to the running cluster on push.
 # workflow_dispatch must be present on the default branch to appear as a manual Action.
 on:
+  push:
+    branches: [feat/cloud-deployment]
+    paths:
+      - 'deploy/k8s/eks/cd-test-trigger.txt'
+
   workflow_dispatch:
     inputs:
       image_tag:
@@ -26,7 +31,10 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/feat/cloud-deployment'
+    if: >-
+      github.ref == 'refs/heads/feat/cloud-deployment' &&
+      (github.event_name == 'workflow_dispatch' ||
+       contains(github.event.head_commit.message, '[test-cd]'))
     runs-on: ubuntu-latest
     environment: foc-deploy
     timeout-minutes: 90
@@ -35,7 +43,7 @@ jobs:
       AWS_REGION: ap-southeast-1
       EKS_CLUSTER_NAME: foc-eks
       NAMESPACE: foc
-      IMAGE_TAG: ${{ inputs.image_tag }}
+      IMAGE_TAG: ${{ inputs.image_tag || '9a6415d' }}
       FRONTEND_COOKIE_SECURE: 'true'
     steps:
       - uses: actions/checkout@v4
@@ -70,7 +78,7 @@ jobs:
         run: bash scripts/eks-deploy.sh --validate
       - name: Deploy release to existing cluster
         env:
-          RERUN_JOBS: ${{ inputs.rerun_jobs }}
+          RERUN_JOBS: ${{ inputs.rerun_jobs || 'false' }}
         run: |
           args=()
           if [[ "$RERUN_JOBS" == true ]]; then args+=(--rerun-jobs); fi
