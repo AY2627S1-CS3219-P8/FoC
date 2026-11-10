@@ -1,5 +1,6 @@
 """Integration tests for bearer-session authentication."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -93,7 +94,7 @@ def test_protected_profile_requires_a_valid_bearer_session(client, database):
 def test_protected_profile_rejects_missing_or_malformed_credentials(client, database, headers):
     """Missing, malformed, and unsupported credentials receive one safe error."""
 
-    create_user(database)
+    user = create_user(database)
 
     response = client.get("/users/me", headers=headers)
 
@@ -196,14 +197,15 @@ def test_activity_refreshes_after_the_refresh_interval(client, database):
     assert refreshed_expiry > now + timedelta(minutes=29)
 
 
-def test_logout_revokes_the_current_session(client, database):
+def test_logout_revokes_the_current_session(client, database, caplog):
     """A logged-out token cannot be reused for protected operations."""
 
-    create_user(database)
+    user = create_user(database)
     token = login(client)
     headers = {"Authorization": f"Bearer {token}"}
 
-    logout_response = client.post("/logout", headers=headers)
+    with caplog.at_level(logging.INFO, logger="app.auth"):
+        logout_response = client.post("/logout", headers=headers)
     profile_response = client.get("/users/me", headers=headers)
     session = database.scalar(
         select(UserSession).where(UserSession.token_hash == hash_session_token(token))
@@ -212,6 +214,12 @@ def test_logout_revokes_the_current_session(client, database):
     assert logout_response.status_code == 204
     assert profile_response.status_code == 401
     assert session.revoked_at is not None
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "logout_succeeded"
+    )
+    assert record.fields == {"user_id": str(user.id)}
 
 
 def test_cleanup_removes_revoked_and_expired_sessions_but_keeps_active_sessions(database):

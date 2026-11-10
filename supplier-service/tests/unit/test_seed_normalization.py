@@ -234,12 +234,14 @@ def test_real_reviewed_dataset():
     }
     assert {record.values.image_key for record in result.records if record.values.image_key} == {
         "ANNA.jpeg", "NUS_COOP.jpeg", "PRINTER_COM2.jpeg", "COOL_SPOT.jpeg", "INSTACHEF.jpeg", "ROBOT_CAFE.jpeg",
+        "HOT_HIDEOUT.jpg",
     }
-    assert sum(record.values.image_key is None for record in result.records) == 15
+    assert sum(record.values.image_key is None for record in result.records) == 14
     assert {name: record.values.image_key for name, record in by_name.items() if record.values.image_key} == {
         "Anna's x Soup Union": "ANNA.jpeg", "NUS Co-op": "NUS_COOP.jpeg",
         "Printer @ Com 2": "PRINTER_COM2.jpeg", "Cool Spot": "COOL_SPOT.jpeg",
         "InstaChef": "INSTACHEF.jpeg", "Cafe+ Robot Cafe": "ROBOT_CAFE.jpeg",
+        "A Hot Hideout": "HOT_HIDEOUT.jpg",
     }
     assert by_name["Printer @ Com 2"].values.building == "COM2"
     assert path.read_bytes() == before

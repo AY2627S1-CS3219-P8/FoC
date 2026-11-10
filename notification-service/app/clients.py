@@ -16,6 +16,7 @@ from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
+from foc_observability import context_headers
 
 HTTP_TIMEOUT_SECONDS = 3.0
 
@@ -74,7 +75,10 @@ class UserServiceClient:
         try:
             response = self._client.get(
                 self._identity_url,
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    **context_headers(),
+                },
             )
         except httpx.RequestError:
             raise AuthenticationUnavailableError from None

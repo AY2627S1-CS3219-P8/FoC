@@ -22,6 +22,7 @@ import psycopg
 from sqlalchemy.engine import make_url
 
 from app.db import CONNECT_TIMEOUT_SECONDS, SESSION_OPTIONS
+from foc_observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -130,10 +131,12 @@ class NotificationListener:
                 raise
             except Exception as error:
                 # Never log the connection string; it may hold credentials.
-                logger.warning(
-                    "Notification listener disconnected (%s); reconnecting in %ss",
-                    type(error).__name__,
-                    self._reconnect_delay_seconds,
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "notification_listener_disconnected",
+                    exception_type=type(error).__name__,
+                    reconnect_delay_seconds=self._reconnect_delay_seconds,
                 )
             self.connected.clear()
             await asyncio.sleep(self._reconnect_delay_seconds)
@@ -150,7 +153,7 @@ class NotificationListener:
         async with connection:
             await connection.execute(f"LISTEN {NOTIFY_CHANNEL}")
             self.connected.set()
-            logger.info("Notification listener connected")
+            log_event(logger, logging.INFO, "notification_listener_connected")
             # Anything committed while there was no listener produced no
             # wake-up, so every open stream runs its catch-up query now.
             self._hub.wake_all()
@@ -163,6 +166,11 @@ class NotificationListener:
         try:
             recipient_id = UUID(payload)
         except ValueError:
-            logger.warning("Ignoring notification with a payload that is not a UUID")
+            log_event(
+                logger,
+                logging.WARNING,
+                "notification_wakeup_invalid",
+                reason="payload_not_uuid",
+            )
             return
         self._hub.wake(recipient_id)

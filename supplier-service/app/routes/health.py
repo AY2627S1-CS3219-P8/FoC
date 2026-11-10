@@ -14,6 +14,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from foc_observability import log_event
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 ALEMBIC_CONFIG_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
@@ -47,5 +49,5 @@ def ready(request: Request):
         # Keep this request boundary fail-closed without logging those messages.
         pass
 
-    logger.warning("Readiness check failed")
+    log_event(logger, logging.WARNING, "readiness_check_failed")
     return JSONResponse(status_code=503, content={"status": "not_ready"})

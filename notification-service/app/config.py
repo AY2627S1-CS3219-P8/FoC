@@ -22,12 +22,22 @@
 
 """Environment-backed configuration for the Notification Service."""
 
-import logging
 import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+import sys
 from urllib.parse import urlsplit
+
+try:
+    from foc_observability import configure_logging as configure_structured_logging
+except ModuleNotFoundError:
+    # Keep ``python -m app.worker`` usable from a source checkout when the
+    # shared package has not been installed into the active environment.
+    repository_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repository_root / "packages/foc-observability/src"))
+    from foc_observability import configure_logging as configure_structured_logging
 
 DATABASE_URL_SCHEME = "postgresql+psycopg://"
 LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
@@ -177,8 +187,11 @@ class WorkerSettings(Settings):
         )
 
 
-def configure_logging(level: str) -> None:
-    logging.basicConfig(
+def configure_logging(level: str, *, component: str) -> None:
+    """Configure the shared structured logger for one Notification process."""
+
+    configure_structured_logging(
+        "notification-service",
+        component=component,
         level=level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )

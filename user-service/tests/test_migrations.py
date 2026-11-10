@@ -1,6 +1,7 @@
 """Regression tests for fresh and pre-Alembic database migrations."""
 
 import importlib.util
+import json
 import os
 import sqlite3
 import subprocess
@@ -43,6 +44,12 @@ def run_alembic_upgrade(database_url: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def structured_logs(result: subprocess.CompletedProcess[str]) -> list[dict[str, object]]:
+    """Decode the one-JSON-record-per-line migration stdout contract."""
+
+    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+
+
 def test_alembic_requires_database_url():
     """Migrations fail instead of silently targeting a fallback database."""
 
@@ -58,7 +65,13 @@ def test_alembic_requires_database_url():
     )
 
     assert result.returncode != 0
-    assert "DATABASE_URL must be set" in result.stderr
+    assert "DATABASE_URL must be set" in result.stdout + result.stderr
+    records = structured_logs(result)
+    assert [record["event"] for record in records] == [
+        "migration_started",
+        "migration_failed",
+    ]
+    assert all(record["component"] == "migration" for record in records)
 
 
 def test_application_requires_database_url():
@@ -86,6 +99,11 @@ def test_fresh_database_reaches_migration_head(tmp_path):
     result = run_alembic_upgrade(f"sqlite:///{database_path}")
 
     assert result.returncode == 0, result.stderr
+    records = structured_logs(result)
+    assert [record["event"] for record in records] == [
+        "migration_started",
+        "migration_completed",
+    ]
     with sqlite3.connect(database_path) as database:
         tables = {
             row[0]

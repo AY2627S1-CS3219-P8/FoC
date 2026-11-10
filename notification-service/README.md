@@ -1,5 +1,9 @@
 <!--
 AI Assistance Disclosure:
+Tool: Codex (model: GPT-5), date: 2026-11-10
+Scope: Writing implementation code and Refactoring and documentation improvements — integrate the Notification Service with the shared FoC structured observability contract, centralized collection, heartbeat alerting, and regression tests (ai-20261110-002).
+Author review: Pending.
+Details: notification-service/ai/usage-log.md; ai-20261110-002
 Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
 Scope: Refactoring and documentation improvements — write the "Running tests" section covering setup, runs with and without TEST_DATABASE_URL, a throwaway PostgreSQL example, and a warning that the schema tests run alembic downgrade base (ai-20261104-001). The AI Use Summary section is a disclosure record.
 Author review: Keith confirmed that all tests and manual verification were completed and approved, and confirmed rerunning the tests himself, with commands and results unspecified (ai-20261104-001).
@@ -112,7 +116,7 @@ Settings the code reads:
 | Variable | Used by | Default | Purpose |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | API, worker, migrations | required | `postgresql+psycopg://` URL of `notification-db`. Compose builds it from `NOTIFICATION_DB_USER`, without the password. |
-| `LOG_LEVEL` | API, worker | `INFO` | `CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG`. Compose reads it from `.env`. |
+| `LOG_LEVEL` | API, worker, migration | `INFO` | `CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG`. Compose reads it from `.env`. |
 | `USER_SERVICE_URL` | API | required | HTTPS base URL of User Service. Compose sets `https://user-service:8080`. |
 | `USER_SERVICE_CA_FILE` | API | required | CA file that verifies User Service's certificate. Compose mounts `${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}` at `/run/tls/ca.crt`. |
 | `SSE_HEARTBEAT_SECONDS` | API | `20` | Seconds between `: ping` comments on the stream. |
@@ -139,6 +143,24 @@ have one):
 | `SSE_MAX_LIFETIME_SECONDS` | `600` | Passed to the API. |
 | `LOG_LEVEL` | `INFO` | Shared by every service that reads it. |
 | `INTERNAL_CA_CERT_FILE` | `./certs/ca.crt` | Host path of the internal CA mounted into the API. |
+
+## Operational logging
+
+The API, worker, and migration job use the shared FoC observability contract and
+emit one JSON object per application event to stdout. The API includes
+`http_request_completed` records with the route, status, outcome, duration, and
+request/correlation IDs. The worker emits `worker_started`, periodic
+`worker_heartbeat`, `worker_shutdown`, `message_processing_completed`, retry,
+DLQ, and offset-commit events with the Kafka source location and safe domain
+identifiers. The migration job emits migration lifecycle events.
+
+Logs include event IDs, order IDs, correlation IDs, topic, partition, offset,
+attempts, durations, failure codes, exception types, and SQLSTATE/Kafka error
+codes where available. They never include bearer tokens, passwords, database
+URLs, raw Kafka records, or notification contents. Use `docker compose logs
+notification-service notification-worker notification-migrate` locally, or
+query the centralized Loki stream described in the repository's
+[observability guide](../docs/observability.md).
 
 ## Walkthrough
 
@@ -350,8 +372,8 @@ docker compose logs notification-worker | grep "$ORDER_ID"
 ```
 
 ```text
-notification-worker  | ... INFO __main__ notification_event_ignored event_id=... event_type='order.created' order_id=... notifications=0 topic=order.events partition=... offset=...
-notification-worker  | ... INFO __main__ notification_event_stored event_id=... event_type='order.opened' order_id=... notifications=1 topic=order.events partition=... offset=...
+notification-worker  | ... {"event":"notification_event_ignored","event_id":"...","event_type":"order.created","order_id":"...","notifications":0,"topic":"order.events","partition":0,"offset":...}
+notification-worker  | ... {"event":"notification_event_stored","event_id":"...","event_type":"order.opened","order_id":"...","notifications":1,"topic":"order.events","partition":0,"offset":...}
 ```
 
 ### 6. See it through the history API (Terminal 1)
@@ -637,7 +659,8 @@ both 1,100,000 bytes, above the broker's default limit, so any uncompressed reco
 `order.events` accepts fits with the diagnostic headers. A record compressed at
 source can still be too large, because the broker only checked its compressed
 size. The DLQ write then fails, the worker logs
-`notification_dlq_publish_failed kafka_error=MSG_SIZE_TOO_LARGE`, and it restarts
+a structured `message_dlq_publish_failed` event with
+`kafka_error=MSG_SIZE_TOO_LARGE`, and it restarts
 in a cycle with later records waiting until someone removes the record or moves
 the group's offset past it. No service here produces such a record.
 
@@ -741,20 +764,21 @@ running.
 
    ```sh
    # Run in: repository root
-   docker compose logs notification-worker | grep 'topic=order.events partition=<source partition> offset=<source offset>'
+   docker compose logs notification-worker | grep '"offset":<source offset>'
    ```
 
    ```text
-   ... ERROR __main__ notification_event_failed failure_code=UNEXPECTED_PROCESSING_ERROR attempts=1 exception_type=DataError sqlstate=22P05 event_id=778f980e-... event_type='order.rejected' order_id=8dba8fbb-... correlation_id=0964eb46-... topic=order.events partition=0 offset=6
-   ... ERROR __main__ notification_event_sent_to_dlq failure_code=UNEXPECTED_PROCESSING_ERROR attempts=1 topic=order.events partition=0 offset=6
+   ... {"level":"ERROR","event":"notification_event_failed","failure_code":"UNEXPECTED_PROCESSING_ERROR","attempts":1,"exception_type":"DataError","sqlstate":"22P05","event_id":"778f980e-...","event_type":"order.rejected","order_id":"8dba8fbb-...","correlation_id":"0964eb46-...","topic":"order.events","partition":0,"offset":6}
+   ... {"level":"ERROR","event":"message_sent_to_dlq","failure_code":"UNEXPECTED_PROCESSING_ERROR","attempts":1,"source_topic":"order.events","source_partition":0,"source_offset":6}
    ```
 
-   - `notification_event_failed` is followed by a stack trace. It has the
-     exception type and SQL state, but never the exception message, because
-     database errors can quote record contents.
-   - For `MALFORMED_MESSAGE`, the line has `reason=` (for example
-     `reason=header.event_id: does not match envelope`) and no event fields.
-   - `notification_event_retrying` lines show each retry of a transient error.
+   - `notification_event_failed` has the exception type and SQL state, but never
+     the exception message, because database errors can quote record contents.
+   - For `MALFORMED_MESSAGE`, the structured `reason` field gives the failed
+     check (for example `header.event_id: does not match envelope`) and no raw
+     event fields are logged.
+   - `notification_event_retrying` records show each retry of a transient error;
+     `message_retry_exhausted` identifies the final exhausted attempt.
    - Search by `event_id`, `order_id`, or `correlation_id` too; the
      `correlation_id` also appears in Order Service and Credit Service logs for
      the same request.
@@ -1291,3 +1315,24 @@ stated.
 
 See the [usage record](ai/usage-log.md#ai-20261110-001). Original per-message
 timestamps are unavailable; no redactions; no header exceptions.
+
+### Operational observability (ai-20261110-002)
+
+Codex (model: GPT-5) provided **Writing implementation code** and
+**Refactoring and documentation improvements** for the shared JSON logging
+contract, request context middleware, safe API/authentication/read-status/
+listener/SSE events, worker lifecycle/heartbeat/processing/retry/DLQ/offset
+events, migration lifecycle logs, User Service context propagation, Docker and
+Compose metadata, Vector collection, Grafana heartbeat alerting, and regression
+tests. Raw credentials, Kafka records, and notification contents remain
+excluded from logs.
+
+Observed verification (agent only):
+`python -m pytest notification-service/tests packages/foc-observability/tests -q`
+gave 784 passed and 187 skipped without disposable PostgreSQL/Kafka services.
+YAML parsing, Python compilation, and `git diff --check` passed. Real Compose,
+PostgreSQL, Kafka, Loki, Grafana, and Docker image checks were not run.
+
+Author review: Pending. See the
+[usage record](ai/usage-log.md#ai-20261110-002). Original per-message timestamps
+are unavailable; no redactions; no header exceptions.

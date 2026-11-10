@@ -1652,3 +1652,27 @@ I've added the per-recipient lock. Nothing is committed.
 ### Usage summary
 
 Claude Code added a per-recipient, transaction-scoped advisory lock to the Notification Service worker, taken in sorted order before notification rows are inserted, so that each recipient's rows commit in id order and several workers are safe for the live stream. It updated the stream docstring and README, and added deterministic PostgreSQL tests that it checked with mutations.
+
+## ai-20261110-002
+
+- Recorded at: 2026-11-10T23:30:00+08:00
+- Exchange time: Original per-message timestamps unavailable; assistance occurred on 2026-11-10 (Asia/Singapore).
+- Source: Codex (model: GPT-5); shell, file read/write/edit, and pytest tools in the local workspace.
+- Mode and scenario: Agentic implementation of the Notification Service structured logging and centralized observability integration from the user's request.
+- Outcome: Retained the Notification Service changes for shared JSON logging, request-context middleware, safe authentication/read-status/listener/SSE events, worker lifecycle/heartbeat/processing/retry/DLQ/offset events, migration lifecycle logs, request-context propagation to User Service, Compose environment metadata, Docker packaging, Vector collection, the notification worker heartbeat alert, README and observability documentation, and focused regression tests. Existing text-log assertions were updated to inspect structured event fields. No credentials, bearer tokens, raw Kafka records, or notification contents are logged.
+- Verification: `python -m pytest notification-service/tests packages/foc-observability/tests -q` passed 784 tests with 187 skipped because no disposable PostgreSQL/Kafka services were running. YAML parsing, Python compilation, and `git diff --check` passed. The pinned `confluent-kafka==2.16.0` package was installed for the worker tests after the sandbox blocked the initial network attempt. No human test rerun is claimed.
+- Author review: Pending.
+- Header exceptions: None.
+- Missing evidence: Real Compose, PostgreSQL, Kafka, Loki, Grafana, and Docker image checks were not run in this exchange. Original per-message timestamps unavailable. No redactions.
+
+### Scope
+
+- `notification-service/app/`: structured API, authentication, client, listener, stream, configuration, migration, and worker logging.
+- `notification-service/Dockerfile`, `notification-service/pytest.ini`, and root `compose.yaml`: shared observability packaging, test import path, process metadata, and build context.
+- `observability/vector.yaml`, `observability/grafana/provisioning/alerting/foc-backend-alerts.yaml`, `scripts/verify-observability.sh`, and `docs/observability.md`: centralized collection, alerting, verification, and contract documentation.
+- `notification-service/README.md`: operational logging and structured-log runbook documentation.
+- `notification-service/tests/` and `packages/foc-observability/tests/`: structured logging, propagation, collector, alert, and regression tests.
+
+### Usage summary
+
+Codex integrated Notification Service with the repository's shared structured logging contract, added operational events for API, worker, migration, listener, authentication, read-status, and SSE behavior, connected the three Notification processes to Vector and Grafana heartbeat alerting, and verified the available automated tests and configuration syntax.

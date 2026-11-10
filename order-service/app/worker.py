@@ -5,7 +5,6 @@ The API process does not connect to Kafka. A broker outage cannot fail a request
 
 import base64
 import logging
-import os
 import time
 from collections.abc import Callable
 from typing import Protocol
@@ -18,6 +17,12 @@ from sqlalchemy.orm import Session
 from app.config import required_env
 from app.db import database_url, make_engine, make_session_factory
 from app.events import dump_event
+from foc_observability import (
+    context_from_event_body,
+    configure_logging,
+    log_context,
+    log_event,
+)
 from app.messaging import (
     CONSUMER_GROUP,
     CREDIT_DLQ_TOPIC,
@@ -28,6 +33,7 @@ from app.messaging import (
     RELAY_BATCH_SIZE,
     RELAY_POLL_SECONDS,
     RETRY_BACKOFF_SECONDS,
+    WORKER_HEARTBEAT_SECONDS,
 )
 from app.models import OutboxEvent, ParkedMessage, utc_now
 from app.services.orders import expire_overdue_orders, handle_delivery
@@ -143,6 +149,25 @@ def process_delivery(
 ) -> str:
     """Apply one message. Returns 'ack' or 'nack' after bounded backoff."""
 
+    with log_context(**context_from_event_body(body)):
+        started = time.perf_counter()
+        outcome = _process_delivery(session_factory, body, sleep=sleep)
+        log_event(
+            logger,
+            logging.INFO,
+            "message_processing_completed",
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
+            outcome=outcome,
+        )
+        return outcome
+
+
+def _process_delivery(
+    session_factory: Callable[[], Session],
+    body: bytes,
+    *,
+    sleep: Callable[[float], None],
+) -> str:
     for attempt in range(MAX_ATTEMPTS):
         db = session_factory()
         try:
@@ -150,10 +175,27 @@ def process_delivery(
         except Exception:
             db.rollback()
             if attempt >= MAX_ATTEMPTS - 1:
-                logger.exception("message_dead_lettered")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "message_retry_exhausted",
+                    attempts=attempt + 1,
+                    max_attempts=MAX_ATTEMPTS,
+                )
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "message_dead_lettered",
+                    attempts=attempt + 1,
+                    max_attempts=MAX_ATTEMPTS,
+                    exc_info=True,
+                )
                 return "nack"
-            logger.warning(
-                "message_processing_failed", extra={"attempt": attempt + 1}
+            log_event(
+                logger,
+                logging.WARNING,
+                "message_processing_failed",
+                attempt=attempt + 1,
             )
             sleep(RETRY_BACKOFF_SECONDS[attempt])
         else:
@@ -173,21 +215,68 @@ def _handle_message(
     consumer: Consumer,
     message: Message,
 ) -> None:
+    body = message.value() or b""
+    with log_context(
+        topic=message.topic(),
+        partition=message.partition(),
+        offset=message.offset(),
+        **context_from_event_body(body),
+    ):
+        _handle_message_in_context(
+            session_factory, publisher, consumer, message, body
+        )
+
+
+def _handle_message_in_context(
+    session_factory: Callable[[], Session],
+    publisher: KafkaPublisher,
+    consumer: Consumer,
+    message: Message,
+    body: bytes,
+) -> None:
     error = message.error()
     if error is not None:
         if error.fatal():
             raise KafkaException(error)
-        logger.error("kafka_poll_error", extra={"reason": str(error)})
+        log_event(
+            logger,
+            logging.ERROR,
+            "kafka_poll_error",
+            reason=str(error),
+        )
         return
-    if process_delivery(session_factory, message.value() or b"") == "nack":
+    if process_delivery(session_factory, body) == "nack":
         try:
             publisher.dead_letter(message.key(), message.value(), message.headers())
+            log_event(
+                logger,
+                logging.ERROR,
+                "message_sent_to_dlq",
+                dlq_topic=CREDIT_DLQ_TOPIC,
+                source_topic=message.topic(),
+                source_partition=message.partition(),
+                source_offset=message.offset(),
+            )
         except (KafkaException, RuntimeError):
-            logger.exception("dead_letter_failed")
+            log_event(
+                logger,
+                logging.ERROR,
+                "dead_letter_failed",
+                exc_info=True,
+            )
             if not _park(session_factory, message):
                 # Rewind so the message is retried instead of skipped by a later commit.
                 consumer.seek(TopicPartition(message.topic(), message.partition(), message.offset()))
                 return
+            log_event(
+                logger,
+                logging.ERROR,
+                "message_parked_for_dlq",
+                dlq_topic=CREDIT_DLQ_TOPIC,
+                source_topic=message.topic(),
+                source_partition=message.partition(),
+                source_offset=message.offset(),
+            )
     consumer.commit(message=message, asynchronous=False)
 
 
@@ -215,7 +304,7 @@ def _park(session_factory: Callable[[], Session], message: Message) -> bool:
         db.rollback()
     except SQLAlchemyError:
         db.rollback()
-        logger.exception("park_failed")
+        log_event(logger, logging.ERROR, "park_failed", exc_info=True)
         return False
     finally:
         db.close()
@@ -226,13 +315,29 @@ def _relay(
     session_factory: Callable[[], Session],
     publisher: Publisher,
     relay: Callable[[Session, Publisher], int] = relay_once,
-) -> None:
+) -> int:
     db = session_factory()
     try:
-        relay(db, publisher)
+        published = relay(db, publisher)
+        if published:
+            log_event(
+                logger,
+                logging.INFO,
+                "worker_relay_completed",
+                relay=relay.__name__,
+                count=published,
+            )
+        return published
     except Exception:
         db.rollback()
-        logger.exception("relay_failed", extra={"relay": relay.__name__})
+        log_event(
+            logger,
+            logging.ERROR,
+            "relay_failed",
+            relay=relay.__name__,
+            exc_info=True,
+        )
+        return 0
     finally:
         db.close()
 
@@ -246,17 +351,14 @@ def _sweep(session_factory: Callable[[], Session], next_sweep: float) -> float:
         expire_overdue_orders(db)
     except Exception:
         db.rollback()
-        logger.exception("expiry_sweep_failed")
+        log_event(logger, logging.ERROR, "expiry_sweep_failed", exc_info=True)
     finally:
         db.close()
     return now + EXPIRY_SWEEP_SECONDS
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=os.getenv("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging("order-worker", component="worker")
     engine = make_engine(database_url())
     session_factory = make_session_factory(engine)
     producer = Producer(
@@ -278,7 +380,15 @@ def main() -> None:
     )
     consumer.subscribe([CREDIT_TOPIC])
     next_sweep = time.monotonic()
-    logger.info("worker_started")
+    last_heartbeat = next_sweep
+    log_event(
+        logger,
+        logging.INFO,
+        "worker_started",
+        worker="order-worker",
+        topic=CREDIT_TOPIC,
+        consumer_group=CONSUMER_GROUP,
+    )
     try:
         while True:
             message = consumer.poll(RELAY_POLL_SECONDS)
@@ -287,7 +397,26 @@ def main() -> None:
             _relay(session_factory, publisher)
             _relay(session_factory, publisher, relay_parked_once)
             next_sweep = _sweep(session_factory, next_sweep)
+            now = time.monotonic()
+            if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "worker_heartbeat",
+                    worker="order-worker",
+                    topic=CREDIT_TOPIC,
+                    consumer_group=CONSUMER_GROUP,
+                )
+                last_heartbeat = now
     finally:
+        log_event(
+            logger,
+            logging.INFO,
+            "worker_shutdown",
+            worker="order-worker",
+            topic=CREDIT_TOPIC,
+            consumer_group=CONSUMER_GROUP,
+        )
         consumer.close()
         producer.flush(PUBLISH_TIMEOUT_SECONDS)
         engine.dispose()

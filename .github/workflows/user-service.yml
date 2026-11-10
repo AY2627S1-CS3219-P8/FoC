@@ -8,6 +8,7 @@ on:
       - "contracts/**"
       - "event-broker/**"
       - "compose.yaml"
+      - "packages/foc-observability/**"
       - ".github/workflows/user-service.yml"
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - "contracts/**"
       - "event-broker/**"
       - "compose.yaml"
+      - "packages/foc-observability/**"
       - ".github/workflows/user-service.yml"
 
 permissions:
@@ -47,4 +49,4 @@ jobs:
         working-directory: user-service
 
       - name: Build user-service image
-        run: docker build --tag foc-user-service:ci ./user-service
+        run: docker build --tag foc-user-service:ci --file user-service/Dockerfile .

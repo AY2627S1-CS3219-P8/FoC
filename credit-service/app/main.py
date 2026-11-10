@@ -1,6 +1,7 @@
 """FastAPI application factory for the Credit Service."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from sqlalchemy import text
 from app.clients import UserServiceClient
 from app.config import Settings
 from app.db import make_engine, make_session_factory
+from foc_observability import RequestContextMiddleware, configure_logging, log_event
 from app.routes.credits import router as credits_router
 from app.services.credits import (
     CreditAccountNotFound,
@@ -21,6 +23,11 @@ from app.services.credits import (
 )
 
 logger = logging.getLogger(__name__)
+configure_logging(
+    "credit-service",
+    component="api",
+    environment=os.getenv("APP_ENV", "production"),
+)
 ALEMBIC_CONFIG_PATH = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
@@ -28,9 +35,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         active_settings = settings or Settings.from_env()
-        logging.basicConfig(
+        configure_logging(
+            "credit-service",
+            component="api",
+            environment=os.getenv("APP_ENV", "production"),
             level=active_settings.log_level,
-            format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
         app.state.settings = active_settings
         app.state.engine = make_engine(active_settings.database_url)
@@ -46,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.engine.dispose()
 
     app = FastAPI(title="FoC Credit Service", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(RequestContextMiddleware)
 
     @app.exception_handler(CreditAccountNotFound)
     async def credit_account_not_found_handler(
@@ -84,7 +94,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception:
             # Never expose database URLs, credentials, or driver diagnostics.
             pass
-        logger.warning("Credit Service readiness check failed")
+        log_event(logger, logging.WARNING, "readiness_check_failed")
         return JSONResponse(status_code=503, content={"status": "not_ready"})
 
     app.include_router(credits_router)

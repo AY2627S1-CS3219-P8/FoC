@@ -24,6 +24,9 @@ The `credit-order-worker` starts after both the database migration and Kafka
 topic creation. Order Service consumes the resulting
 `credit.events` stream with its own consumer group.
 
+Worker lifecycle, heartbeat, retry, relay, DLQ, and readiness alert guidance is
+in [`docs/observability.md`](../docs/observability.md).
+
 ## HTTP surface
 
 All public routes forward an opaque bearer token to User Service `/users/me`

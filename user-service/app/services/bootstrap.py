@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User
 from app.schemas import UserCreate
 from app.services.users import hash_password
+from foc_observability import log_event
 
 
 logger = logging.getLogger(__name__)
@@ -110,5 +111,10 @@ def bootstrap_admin(payload: UserCreate, db: Session) -> bool:
         db.rollback()
         raise BootstrapError("The database was unavailable during administrator bootstrap") from exc
 
-    logger.info("administrator_bootstrap_created", extra={"user_id": str(user.id)})
+    log_event(
+        logger,
+        logging.INFO,
+        "administrator_bootstrap_created",
+        user_id=str(user.id),
+    )
     return True

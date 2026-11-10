@@ -87,6 +87,53 @@ docker compose down
 
 ---
 
+## Running on Kubernetes (kind)
+
+The same stack can run on a local [kind](https://kind.sigs.k8s.io/) cluster.
+Manifests under [`deploy/k8s/`](deploy/k8s/) keep the Compose service names, so
+`https://user-service:8080` and `kafka:9092` still resolve. Compose is unchanged.
+
+Install kind (`brew install kind`) in addition to Docker and kubectl. Copy
+`.env.example` to `.env`, then generate the development certificates once.
+On Windows, `scripts/generate-dev-tls.ps1` writes the same files.
+
+```bash
+./scripts/generate-dev-tls.sh
+./scripts/k8s-up.sh
+```
+
+`./scripts/k8s-up.sh --demo` also starts the Kafka UI and the demo console.
+That flag needs `demo-console/` in the checkout.
+Re-running the script rebuilds the images, keeps the database volumes, and
+replaces the one-shot migration Jobs. `./scripts/k8s-down.sh` deletes the
+cluster. Changing [`deploy/k8s/kind-config.yaml`](deploy/k8s/kind-config.yaml)
+requires a new cluster, because kind reads host port mappings only at creation.
+
+| Surface | URL |
+| --- | --- |
+| Frontend | http://127.0.0.1:3000 |
+| Supplier Service | http://127.0.0.1:8081 |
+| Order Service | http://127.0.0.1:8082 |
+| Credit Service | http://127.0.0.1:8083 |
+| Kafka UI (`--demo`) | http://127.0.0.1:8090 |
+| Demo console (`--demo`) | http://127.0.0.1:8091 |
+
+User Service stays inside the cluster at `https://user-service:8080`, matching
+Compose, which does not publish it on the host.
+
+Supplier seed is the Compose `tools` profile. The CSV is CP1252, so it is
+stored in a Secret rather than a ConfigMap. Run it after the stack is up:
+
+```bash
+kubectl -n foc delete job supplier-seed-dry-run --ignore-not-found
+kubectl apply -k deploy/k8s/tools-dry-run
+kubectl -n foc wait --for=condition=complete job/supplier-seed-dry-run --timeout=180s
+
+kubectl -n foc delete job supplier-seed --ignore-not-found
+kubectl apply -k deploy/k8s/tools
+kubectl -n foc wait --for=condition=complete job/supplier-seed --timeout=180s
+```
+
 ## AI Use Summary (FoC)
 
 Codex (GPT-6) assisted Supplier Service work. The
@@ -749,6 +796,16 @@ and [usage log](notification-service/ai/usage-log.md).
   `.venv/bin/python -m pytest -rs`, with 940 passed. The exact prompt and the
   final response are recorded; original timestamps unavailable; no redactions; no
   header exceptions. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service observability](notification-service/ai/usage-log.md#ai-20261110-002):
+  Codex (GPT-5) provided Writing implementation code and Refactoring and
+  documentation improvements for shared JSON logging, request context,
+  worker lifecycle and processing events, migration and API diagnostics,
+  Vector collection, notification-worker heartbeat alerting, and regression
+  tests. Agent checks: 784 tests passed and 187 were skipped without disposable
+  PostgreSQL/Kafka services; YAML parsing, Python compilation, and
+  `git diff --check` passed. No human test rerun or live Compose observability
+  check is claimed. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

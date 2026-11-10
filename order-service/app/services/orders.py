@@ -16,6 +16,7 @@ from app.events import IncomingEvent, enqueue_event, isoformat_utc, parse_incomi
 from app.messaging import ORDER_TTL, RELAY_BATCH_SIZE
 from app.models import Order, ProcessedEvent, utc_now
 from app.schemas import DeliveryLocation, OrderCreate
+from foc_observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ def change_delivery(
             detail="Only the requester can change the delivery destination",
         )
     if order.status not in DESTINATION_MUTABLE:
-        _illegal(order, "change the destination of")
+        _illegal(order, "change the destination of", actor.id)
     if not delivery_within_campus(delivery.latitude, delivery.longitude):
         raise HTTPException(status_code=422, detail="Delivery location is not supported")
     order.delivery_label = delivery.label
@@ -204,11 +205,11 @@ def accept_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     # A competing courier already saw this errand in the open feed. 409 tells
     # them they lost, which a 404 would hide.
     if order.status == "ACCEPTED":
-        _illegal(order, "accept")
+        _illegal(order, "accept", actor.id)
     if order.status != "OPEN":
         if not _can_view(order, actor):
             raise HTTPException(status_code=404, detail="Order not found")
-        _illegal(order, "accept")
+        _illegal(order, "accept", actor.id)
     now = utc_now()
     order.status = "ACCEPTED"
     order.courier_id = actor.id
@@ -231,7 +232,7 @@ def pick_up_order(db: Session, order_id: UUID, actor: Identity) -> Order:
             status_code=403, detail="Only the assigned courier can pick up this order"
         )
     if order.status != "ACCEPTED":
-        _illegal(order, "pick up")
+        _illegal(order, "pick up", actor.id)
     now = utc_now()
     order.status = "PICKED_UP"
     order.picked_up_at = now
@@ -253,7 +254,7 @@ def complete_order(db: Session, order_id: UUID, actor: Identity) -> Order:
             status_code=403, detail="Only the requester can complete this order"
         )
     if order.status != "PICKED_UP":
-        _illegal(order, "complete")
+        _illegal(order, "complete", actor.id)
     now = utc_now()
     order.status = "COMPLETED"
     order.completed_at = now
@@ -271,7 +272,7 @@ def cancel_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     if order.status == "CANCELLED" and order.cancelled_by == actor.id:
         return order
     if order.status in TERMINAL_STATUSES:
-        _illegal(order, "cancel")
+        _illegal(order, "cancel", actor.id)
     requester_may = (
         actor.id == order.requester_id and order.status in REQUESTER_CANCELLABLE
     )
@@ -462,12 +463,19 @@ def _can_view(order: Order, actor: Identity) -> bool:
     )
 
 
-def _illegal(order: Order, action: str) -> None:
-    logger.warning(
-        "illegal_order_transition order_id=%s status=%s action=%s",
-        order.id,
-        order.status,
-        action,
+def _illegal(order: Order, action: str, actor_id: UUID | None = None) -> None:
+    fields = {
+        "order_id": str(order.id),
+        "status": order.status,
+        "action": action,
+    }
+    if actor_id is not None:
+        fields["actor_user_id"] = str(actor_id)
+    log_event(
+        logger,
+        logging.WARNING,
+        "illegal_order_transition",
+        **fields,
     )
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,

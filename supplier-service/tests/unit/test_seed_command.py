@@ -82,6 +82,10 @@ def test_multiple_failures_reject_batch_but_count_only_validated_records(tmp_pat
     completed = run("--file", path, "--dry-run")
     assert completed.returncode == 1 and "Traceback" not in completed.stderr
     report = json.loads(completed.stdout)
+    assert report["schema_version"] == 1
+    assert report["service"] == "supplier-seed"
+    assert report["component"] == "seed"
+    assert report["event"] == "seed_preview_rejected"
     assert report["batch_rejected"] and not report["valid"]
     assert report["source_count"] == 21 and report["validated_supplier_count"] == 19
     assert report["total_category_assignments"] == sum(report["category_counts"].values())

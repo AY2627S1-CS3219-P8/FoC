@@ -126,7 +126,10 @@ def test_database_failures_release_connections_and_recover(
                 event.remove(database, "before_cursor_execute", fail)
 
     assert len(returned_connections) == (0 if failure == "connect" else 1)
-    assert "Readiness check failed" in caplog.text
+    assert any(
+        getattr(record, "event", None) == "readiness_check_failed"
+        for record in caplog.records
+    )
     for sensitive in [secret, "private_user", "secret_password", "private-host", "private-db"]:
         assert sensitive not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
