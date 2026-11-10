@@ -43,7 +43,7 @@ jobs:
       AWS_REGION: ap-southeast-1
       EKS_CLUSTER_NAME: foc-eks
       NAMESPACE: foc
-      IMAGE_TAG: ${{ inputs.image_tag || '9a6415d' }}
+      IMAGE_TAG: ${{ inputs.image_tag || 'release-20261110-01' }}
       FRONTEND_COOKIE_SECURE: 'true'
     steps:
       - uses: actions/checkout@v4
