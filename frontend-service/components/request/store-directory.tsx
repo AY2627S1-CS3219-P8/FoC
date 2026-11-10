@@ -34,7 +34,8 @@ const CATEGORY_ICONS: Record<string, LucideIcon> = {
 
 function SupplierThumbnail({ supplier }: { supplier: Supplier }) {
   const src = supplierImageSrc(supplier);
-  if (src) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (src && src !== failedSrc) {
     return (
       // Unoptimized: the browser fetches the image directly from its host
       // instead of through the Next.js image optimizer.
@@ -44,6 +45,7 @@ function SupplierThumbnail({ supplier }: { supplier: Supplier }) {
         width={44}
         height={44}
         unoptimized
+        onError={() => setFailedSrc(src)}
         className='size-11 shrink-0 rounded-xl object-cover'
       />
     );

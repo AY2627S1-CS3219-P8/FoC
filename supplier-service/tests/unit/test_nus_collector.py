@@ -241,3 +241,58 @@ def test_duplicate_review_ids_rejected(dataset):
     write_review(dataset, rows + [rows[0]])
     with pytest.raises(ValueError, match="repeated candidate IDs"):
         read_review(dataset)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_image_roundtrip_refresh_and_report(dataset, legacy):
+    from app.commands.seed_parsing import IMAGE_KEYS
+    approve(dataset)
+    rows = read_review(dataset)
+    row = next(row for row in rows if row["Name"] == "CHAGEE")
+    row["ImageKey"] = "ANNA.jpeg" if legacy else "curated.webp"
+    row["ImageURL"] = next(iter(IMAGE_KEYS)) if legacy else ""
+    cid = row["candidate_id"]
+    write_review(dataset, rows)
+    collect(dataset, FIXTURES)
+    retained = next(row for row in read_review(dataset) if row["candidate_id"] == cid)
+    assert retained == row
+    assert report(dataset)["valid"]
+    assert row["ImageKey"] in (dataset / "report.html").read_text()
+    export(dataset)
+    bundle = dataset / "bundle"
+    batch = parse_seed_source(bundle / "suppliers.csv", bundle / "manifest.json", bundle / "area_mapping.json")
+    assert batch.valid
+    assert batch.records[0].values.image_key == row["ImageKey"]
+    assert read_json(bundle / "provenance.json")["review"][0]["ImageURL"] == row["ImageURL"]
+
+
+def test_old_review_without_image_key(dataset):
+    import csv
+    from tools.nus_collector.workflow import REVIEW_FIELDS
+    rows = read_review(dataset)
+    fields = [field for field in REVIEW_FIELDS if field != "ImageKey"]
+    with (dataset / "review.csv").open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    assert all(row["ImageKey"] == "" for row in read_review(dataset))
+    collect(dataset, FIXTURES)
+    assert all(row["ImageKey"] == "" for row in read_review(dataset))
+
+
+@pytest.mark.parametrize("key,url,reason", [
+    ("../a.png", "", "ImageKey must be a filename"),
+    ("a.png\n", "", "ImageKey must be a filename"),
+    ("different.webp", "https://github.com/CS3219-AY2627S1/FoC-Template/blob/main/data/images/ANNA.jpeg", "does not match"),
+    ("a.webp", "https://example.com/a.webp", "six reviewed"),
+])
+def test_collector_rejects_bad_images(dataset, key, url, reason):
+    approve(dataset)
+    rows = read_review(dataset)
+    next(row for row in rows if row["Name"] == "CHAGEE").update(ImageKey=key, ImageURL=url)
+    write_review(dataset, rows)
+    result = validate(dataset)
+    assert not result["valid"]
+    assert any(reason in error["message"] for error in result["errors"])
+    with pytest.raises(ValueError, match="Export blocked"):
+        export(dataset)

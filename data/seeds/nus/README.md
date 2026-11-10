@@ -16,3 +16,11 @@ are local artifacts ignored by Git; retain snapshots separately for auditing.
 
 Commit reviewed files and export versions deliberately after inspecting their
 contents. There are no API tokens or other credentials in this workflow.
+
+`review.csv` now includes optional `ImageKey` filenames. The six inherited image
+references retain their legacy URLs as provenance; suppliers without known
+images remain blank. Older review files and archived seed bundles without
+`ImageKey` remain supported. Newly exported bundles include it. See
+[supplier image setup](../../images/README.md) for validation and local/CloudFront
+configuration. Export still requires resolving existing review validation issues;
+image support does not change decisions or supplier identities.

@@ -13,13 +13,13 @@ from uuid import uuid4, uuid5, NAMESPACE_URL
 
 import httpx
 
-from app.commands.seed_parsing import SOURCE_HEADERS, normalize_building, parse_seed_source
+from app.commands.seed_parsing import SEED_HEADERS, normalize_building, parse_seed_source
 from app.validation.vocabulary import APPROVED_AREAS
 from .sources import SOURCES, digest, key, parse_html
 
 SERVICE = Path(__file__).resolve().parents[2]
 BASELINE = SERVICE.parent / "data/csv/supplier-seed-data.csv"
-REVIEW_FIELDS = (*SOURCE_HEADERS, "candidate_id", "area", "decision", "coordinate_precision",
+REVIEW_FIELDS = (*SEED_HEADERS, "candidate_id", "area", "decision", "coordinate_precision",
                  "coordinate_verified", "coordinate_source", "hours_policy", "evidence_url",
                  "reviewer", "reviewed_at", "notes", "duplicate_resolution", "exclusion_reason")
 
@@ -50,11 +50,13 @@ def read_review(root):
         return []
     with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream, strict=True)
-        if reader.fieldnames != list(REVIEW_FIELDS):
+        if reader.fieldnames not in (list(REVIEW_FIELDS), [field for field in REVIEW_FIELDS if field != "ImageKey"]):
             raise ValueError("review.csv headers must match the generated review template.")
         rows = list(reader)
     if any(None in row or any(value is None for value in row.values()) for row in rows):
         raise ValueError("review.csv contains a row with the wrong number of columns.")
+    for row in rows:
+        row.setdefault("ImageKey", "")
     ids = [row["candidate_id"] for row in rows]
     if len(set(ids)) != len(ids):
         raise ValueError("review.csv contains repeated candidate IDs.")
@@ -175,11 +177,11 @@ def build_bundle(rows, identities):
     """Construct bundle values; identities are supplied, never allocated here."""
     manifest, areas = [], {"buildings": {}, "seed_overrides": {}}
     stream = io.StringIO(newline="")
-    writer = csv.DictWriter(stream, fieldnames=SOURCE_HEADERS)
+    writer = csv.DictWriter(stream, fieldnames=SEED_HEADERS)
     writer.writeheader()
     for row in rows:
         identity = identities[row["candidate_id"]]
-        fields = {field: row[field].strip() for field in SOURCE_HEADERS}
+        fields = {field: row[field] if field == "ImageKey" else row[field].strip() for field in SEED_HEADERS}
         if row["hours_policy"] == "unknown":
             fields["StartingTime"] = fields["ClosingTime"] = ""
         writer.writerow(fields)
@@ -251,8 +253,6 @@ def validate(root, baseline=BASELINE):
             issue(cid, "Approximated daily hours require an explanation in notes.")
         if row["hours_policy"] == "daily" and candidates[cid]["raw_hours"] and not candidates[cid]["proposed"]["StartingTime"] and not row["notes"].strip():
             issue(cid, "Source hours are complex; document evidence for a true daily schedule or choose unknown/approximation.")
-        if row["ImageURL"].strip():
-            issue(cid, "ImageURL must remain blank in collector v1.")
         if any(match["exact"] for match in matches[cid]):
             issue(cid, "Existing baseline name/building match: exclude this supplier from the additional dataset.")
         elif matches[cid] and (row["duplicate_resolution"] != "distinct" or not row["notes"].strip()):

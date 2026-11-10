@@ -77,8 +77,14 @@ For every record you want to import:
    for 24 hours; an overnight interval such as `1100hrs`–`0200hrs` is supported.
    Weekday, holiday, vacation, split-session, and last-order text remains in source
    evidence. Complex source schedules require notes before claiming daily hours.
-6. Keep `ImageURL` blank. Images are evidence only in v1; new assets need separate
-   integration with the frontend and the seed parser's reviewed image mapping.
+6. Enter an optional `ImageKey` filename for a known asset in `data/images/`.
+   Leave image fields blank when no image is known. `ImageURL` may retain one of
+   the six exact legacy GitHub references as provenance; if both fields are
+   supplied they must resolve to the same filename. Put other image evidence in
+   notes. See [image setup](../../../data/images/README.md). Image keys survive
+   collection refreshes and are included in reports, validation, seed CSVs, and
+   review provenance. Older review files without `ImageKey` remain readable and
+   gain a blank column on the next collection refresh.
 7. Resolve suggested existing matches. Confirmed original suppliers must be
    excluded from this additional dataset. A distinct branch requires
    `duplicate_resolution=distinct` and supporting notes. Similar names are

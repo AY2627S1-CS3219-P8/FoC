@@ -6,6 +6,7 @@ on:
     paths:
       - "compose.yaml"
       - "event-broker/**"
+      - "data/nginx/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
       - "supplier-service/**"
@@ -14,6 +15,7 @@ on:
     paths:
       - "compose.yaml"
       - "event-broker/**"
+      - "data/nginx/**"
       - ".env.example"
       - ".github/workflows/compose.yml"
       - "supplier-service/**"
