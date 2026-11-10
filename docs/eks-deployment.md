@@ -260,3 +260,12 @@ Repository validation proves only local rendering and static configuration.
 Do not treat it as evidence that AWS deployment succeeded. A maintainer must run
 the validation and deployment commands against `foc-eks` and record the actual
 cluster results separately.
+
+## Component	Configuration
+CloudFront distribution	E357ABJQQBSGSB
+Public URL	https://d1zyry725efjgr.cloudfront.net
+VPC origin	vo_6y9LDcBN2PxGKlytRO04Id
+ALB	Internal, HTTP port 80
+Frontend	frontend-service:3000
+ALB security group	Allow TCP 80 from the CloudFront VPC-origin security group
+Subnet role tag	kubernetes.io/role/internal-elb=1
