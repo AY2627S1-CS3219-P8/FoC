@@ -542,12 +542,17 @@ services:
 
   notification-migrate:
     image: foc-notification-service:local
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     environment:
       DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
       PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       notification-db:
         condition: service_healthy
@@ -558,7 +563,9 @@ services:
 
   notification-service:
     image: foc-notification-service:local
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     container_name: notification-service
     environment:
       DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
@@ -567,6 +574,8 @@ services:
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
       SSE_HEARTBEAT_SECONDS: ${SSE_HEARTBEAT_SECONDS:-20}
       SSE_MAX_LIFETIME_SECONDS: ${SSE_MAX_LIFETIME_SECONDS:-600}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       notification-db:
@@ -583,7 +592,9 @@ services:
 
   notification-worker:
     image: foc-notification-service:local
-    build: ./notification-service
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
     container_name: notification-worker
     command: ["python", "-m", "app.worker"]
     restart: unless-stopped
@@ -594,6 +605,8 @@ services:
       NOTIFICATIONS_START_AT: ${NOTIFICATIONS_START_AT:?Set NOTIFICATIONS_START_AT in .env}
       # "-", not ":-": an empty value is valid and means no retries.
       NOTIFICATION_RETRY_BACKOFF_SECONDS: ${NOTIFICATION_RETRY_BACKOFF_SECONDS-0.5,1,2,4}
+      APP_VERSION: ${APP_VERSION:-unknown}
+      APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:

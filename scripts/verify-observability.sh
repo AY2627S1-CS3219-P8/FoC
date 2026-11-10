@@ -67,6 +67,7 @@ check_alert_rules() {
   for expected_uid in \
     foc-order-worker-heartbeat \
     foc-credit-worker-heartbeat \
+    foc-notification-worker-heartbeat \
     foc-backend-delivery-failure \
     foc-backend-readiness-failure \
     foc-backend-relay-failure \

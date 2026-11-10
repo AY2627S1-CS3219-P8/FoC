@@ -26,7 +26,10 @@ transforms:
       .label."com.docker.compose.service" == "credit-order-worker" ||
       .label."com.docker.compose.service" == "order-service" ||
       .label."com.docker.compose.service" == "order-migrate" ||
-      .label."com.docker.compose.service" == "order-worker"
+      .label."com.docker.compose.service" == "order-worker" ||
+      .label."com.docker.compose.service" == "notification-service" ||
+      .label."com.docker.compose.service" == "notification-migrate" ||
+      .label."com.docker.compose.service" == "notification-worker"
 
   normalize_backend_logs:
     type: remap

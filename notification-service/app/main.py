@@ -30,6 +30,7 @@ from app.db import make_engine, make_session_factory
 from app.listener import NotificationHub, NotificationListener
 from app.routes.notifications import router as notifications_router
 from app.routes.stream import router as stream_router
+from foc_observability import RequestContextMiddleware, log_event
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         active_settings = settings or ApiSettings.from_env()
-        configure_logging(active_settings.log_level)
+        configure_logging(active_settings.log_level, component="api")
         app.state.settings = active_settings
         app.state.engine = make_engine(active_settings.database_url)
         app.state.session_factory = make_session_factory(app.state.engine)
@@ -106,8 +107,10 @@ def create_app(
             )
             app.state.listener.start()
         try:
+            log_event(logger, logging.INFO, "api_started")
             yield
         finally:
+            log_event(logger, logging.INFO, "api_shutdown")
             if app.state.listener is not None:
                 await app.state.listener.stop()
             app.state.user_client.close()
@@ -117,6 +120,7 @@ def create_app(
     app = FastAPI(
         title="FoC Notification Service", version="0.1.0", lifespan=lifespan
     )
+    app.add_middleware(RequestContextMiddleware)
 
     app.include_router(stream_router)
     app.include_router(notifications_router)
@@ -130,7 +134,7 @@ def create_app(
         if request.app.state.readiness.check():
             return {"status": "ready"}
         # Never expose database URLs, credentials, or driver diagnostics.
-        logger.warning("Notification Service readiness check failed")
+        log_event(logger, logging.WARNING, "readiness_check_failed")
         return JSONResponse(status_code=503, content={"status": "not_ready"})
 
     return app

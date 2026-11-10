@@ -10,6 +10,7 @@ Every query is scoped to ``recipient_id = identity.id``. The caller's user ID
 comes only from the resolved identity, never from the request.
 """
 
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -27,6 +28,10 @@ from app.schemas import (
     UnreadCount,
     notification_dto_adapter,
 )
+from foc_observability import log_event
+
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 100
@@ -118,6 +123,13 @@ def mark_all_read(identity: CurrentIdentity, db: DbSession) -> ReadAllResult:
         .execution_options(synchronize_session=False)
     )
     db.commit()
+    log_event(
+        logger,
+        logging.INFO,
+        "notifications_marked_read",
+        recipient_id=identity.id,
+        count=result.rowcount,
+    )
     return ReadAllResult(updated=result.rowcount)
 
 
@@ -149,4 +161,11 @@ def mark_read(
         db.rollback()
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Notification not found")
     db.commit()
+    log_event(
+        logger,
+        logging.INFO,
+        "notification_marked_read",
+        recipient_id=identity.id,
+        notification_id=notification_id,
+    )
     return _to_dto(row)

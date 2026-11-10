@@ -233,7 +233,11 @@ def test_compressed_record_too_large_for_the_dlq_stops_without_committing(
     with caplog.at_level(logging.ERROR), pytest.raises(WorkerAbort):
         run_worker(commits=1)
 
-    assert "notification_dlq_publish_failed kafka_error=MSG_SIZE_TOO_LARGE" in caplog.text
+    assert any(
+        getattr(record, "event", None) == "message_dlq_publish_failed"
+        and record.fields.get("kafka_error") == "MSG_SIZE_TOO_LARGE"
+        for record in caplog.records
+    )
     assert committed_offset(source_topic) < 0
     assert dlq_records(source_topic) == []
 

@@ -750,5 +750,15 @@ and [usage log](notification-service/ai/usage-log.md).
   final response are recorded; original timestamps unavailable; no redactions; no
   header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service observability](notification-service/ai/usage-log.md#ai-20261110-002):
+  Codex (GPT-5) provided Writing implementation code and Refactoring and
+  documentation improvements for shared JSON logging, request context,
+  worker lifecycle and processing events, migration and API diagnostics,
+  Vector collection, notification-worker heartbeat alerting, and regression
+  tests. Agent checks: 784 tests passed and 187 were skipped without disposable
+  PostgreSQL/Kafka services; YAML parsing, Python compilation, and
+  `git diff --check` passed. No human test rerun or live Compose observability
+  check is claimed. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
 
 Disclosure-only updates do not establish submission readiness.

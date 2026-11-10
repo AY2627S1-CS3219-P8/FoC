@@ -16,3 +16,14 @@ def test_readiness_alert_requires_three_failures_in_two_minutes():
     assert 'event="readiness_check_failed" [2m]' in rule
     assert "params:\n                      - 2\n                    type: gt" in rule
     assert "At least three readiness_check_failed events" in rule
+
+
+def test_notification_worker_has_a_heartbeat_alert():
+    config = (
+        REPOSITORY_ROOT
+        / "observability/grafana/provisioning/alerting/foc-backend-alerts.yaml"
+    ).read_text()
+
+    assert "uid: foc-notification-worker-heartbeat" in config
+    assert 'service="notification-worker"' in config
+    assert 'event="worker_heartbeat"' in config

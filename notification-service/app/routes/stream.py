@@ -39,6 +39,7 @@ from app.listener import NotificationHub, Subscription
 from app.models import Notification
 from app.routes.notifications import _AUTH_RESPONSES, CurrentIdentity, _to_dto
 from app.schemas import notification_dto_adapter
+from foc_observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,8 @@ async def notification_events(
     deadline = started + lifetime_seconds
     next_ping = started + heartbeat_seconds
     recipient_id = subscription.recipient_id
+    notifications_sent = 0
+    close_reason = "lifetime"
     try:
         while True:
             now = loop.time()
@@ -155,6 +158,7 @@ async def notification_events(
                 for row in rows:
                     yield format_event(row)
                     last_sent_id = row.id
+                    notifications_sent += 1
                 if len(rows) == BATCH_SIZE:
                     subscription.wake.set()
             elif now >= next_ping:
@@ -170,10 +174,30 @@ async def notification_events(
                     )
                 except TimeoutError:
                     pass
-    except Exception:
+    except asyncio.CancelledError:
+        close_reason = "cancelled"
+        raise
+    except Exception as error:
         # Headers are already sent, so the only way to report it is to end
         # the stream; the client reconnects with Last-Event-ID.
-        logger.exception("Notification stream for a recipient failed; closing it")
+        close_reason = "error"
+        log_event(
+            logger,
+            logging.ERROR,
+            "notification_stream_failed",
+            recipient_id=recipient_id,
+            exception_type=type(error).__name__,
+        )
+    finally:
+        log_event(
+            logger,
+            logging.INFO,
+            "notification_stream_closed",
+            recipient_id=recipient_id,
+            notifications_sent=notifications_sent,
+            duration_ms=round((loop.time() - started) * 1000, 3),
+            reason=close_reason,
+        )
 
 
 class NotificationStreamResponse(StreamingResponse):
@@ -204,10 +228,31 @@ class NotificationStreamResponse(StreamingResponse):
         self._lifetime_seconds = lifetime_seconds
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        subscription, last_sent_id = await open_subscription(
-            self._hub, self._session_factory, self._recipient_id, self._last_event_id
-        )
         try:
+            subscription, last_sent_id = await open_subscription(
+                self._hub,
+                self._session_factory,
+                self._recipient_id,
+                self._last_event_id,
+            )
+        except BaseException as error:
+            if not isinstance(error, asyncio.CancelledError):
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "notification_stream_open_failed",
+                    recipient_id=self._recipient_id,
+                    exception_type=type(error).__name__,
+                )
+            raise
+        try:
+            log_event(
+                logger,
+                logging.INFO,
+                "notification_stream_opened",
+                recipient_id=self._recipient_id,
+                resumed=self._last_event_id is not None,
+            )
             self.body_iterator = notification_events(
                 subscription,
                 self._session_factory,

@@ -10,6 +10,7 @@
 
 import threading
 import time
+import logging
 from pathlib import Path
 
 import certifi
@@ -39,6 +40,30 @@ def test_health_returns_200(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
+
+
+def test_http_requests_emit_structured_completion_fields(tmp_path: Path, caplog) -> None:
+    with caplog.at_level(logging.INFO):
+        with TestClient(create_app(sqlite_settings(tmp_path))) as client:
+            response = client.get(
+                "/health",
+                headers={
+                    "X-Request-ID": "11111111-1111-4111-8111-111111111111",
+                    "X-Correlation-ID": "22222222-2222-4222-8222-222222222222",
+                },
+            )
+
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "http_request_completed"
+        and record.fields.get("route") == "/health"
+    )
+    assert response.status_code == 200
+    assert record.fields["method"] == "GET"
+    assert record.fields["status_code"] == 200
+    assert record.fields["outcome"] == "success"
+    assert record.fields["duration_ms"] >= 0
 
 
 def test_health_does_not_touch_the_database(tmp_path: Path) -> None:

@@ -123,7 +123,11 @@ def test_listener_ignores_payloads_that_are_not_uuids(payload, caplog) -> None:
         assert not alice.wake.is_set()
 
     asyncio.run(scenario())
-    assert "not a UUID" in caplog.text
+    assert any(
+        getattr(record, "event", None) == "notification_wakeup_invalid"
+        and record.fields["reason"] == "payload_not_uuid"
+        for record in caplog.records
+    )
 
 
 def test_listener_wakes_the_recipient_in_the_payload() -> None:
@@ -453,7 +457,11 @@ def test_query_failure_ends_the_events(rows, monkeypatch, caplog) -> None:
         return await asyncio.wait_for(collect(), timeout=2)
 
     assert asyncio.run(scenario()) == []
-    assert "Notification stream for a recipient failed" in caplog.text
+    assert any(
+        getattr(record, "event", None) == "notification_stream_failed"
+        and record.fields["exception_type"] == "RuntimeError"
+        for record in caplog.records
+    )
 
 
 # --- The response, driven as an ASGI app ----------------------------------------

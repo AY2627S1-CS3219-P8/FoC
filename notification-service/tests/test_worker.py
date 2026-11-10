@@ -94,6 +94,14 @@ def no_sleep(delay):
     raise AssertionError("nothing here should back off")
 
 
+def log_fields(caplog, event: str) -> list[dict]:
+    return [
+        record.fields
+        for record in caplog.records
+        if getattr(record, "event", None) == event
+    ]
+
+
 def handle(
     consumer,
     message,
@@ -154,7 +162,7 @@ def test_non_fatal_poll_error_is_logged_and_the_loop_continues(caplog) -> None:
 
     assert consumer.committed == [7]
     assert consumer.closed
-    assert "kafka_poll_error reason=broker trouble" in caplog.text
+    assert log_fields(caplog, "kafka_poll_error")[-1]["error_type"] == "FakeError"
 
 
 def test_fatal_poll_error_stops_the_worker(caplog) -> None:
@@ -195,17 +203,13 @@ def test_ignore_commits_and_logs_identifiers(caplog) -> None:
 
     assert consumer.committed == [3]
     assert consumer.commit_modes == [False]
-    line = caplog.text
-    for expected in (
-        "notification_event_ignored",
-        f"event_id={event_id}",
-        "event_type='order.created'",
-        f"order_id={order_id}",
-        "topic=order.events",
-        "partition=0",
-        "offset=3",
-    ):
-        assert expected in line
+    fields = log_fields(caplog, "notification_event_ignored")[-1]
+    assert fields["event_id"] == event_id
+    assert fields["event_type"] == "order.created"
+    assert fields["order_id"] == order_id
+    assert fields["topic"] == "order.events"
+    assert fields["partition"] == 0
+    assert fields["offset"] == 3
 
 
 def test_malformed_goes_to_the_dlq_and_later_records_keep_flowing(caplog) -> None:
@@ -222,12 +226,14 @@ def test_malformed_goes_to_the_dlq_and_later_records_keep_flowing(caplog) -> Non
     assert publisher.published == [(9, "MALFORMED_MESSAGE", 1)]
     assert consumer.committed == [9, 10]
     assert consumer.commit_modes == [False, False]
-    text = caplog.text
-    assert (
-        "failure_code=MALFORMED_MESSAGE attempts=1 reason=envelope.event_id: missing "
-        "topic=order.events partition=0 offset=9"
-    ) in text
-    assert "SECRET" not in text
+    fields = log_fields(caplog, "notification_event_failed")[-1]
+    assert fields["failure_code"] == "MALFORMED_MESSAGE"
+    assert fields["attempts"] == 1
+    assert fields["reason"] == "envelope.event_id: missing"
+    assert fields["topic"] == "order.events"
+    assert fields["partition"] == 0
+    assert fields["offset"] == 9
+    assert "SECRET" not in caplog.text
 
 
 def test_control_characters_in_event_type_cannot_forge_log_lines(caplog) -> None:
@@ -284,25 +290,25 @@ def test_sigterm_closes_the_consumer_and_exits_cleanly() -> None:
         [sys.executable, "-m", "app.worker"],
         cwd=SERVICE_ROOT,
         env=environment,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
         text=True,
     )
     try:
         with selectors.DefaultSelector() as selector:
-            selector.register(process.stderr, selectors.EVENT_READ)
+            selector.register(process.stdout, selectors.EVENT_READ)
             deadline = time.monotonic() + 30
             started = ""
-            while "notification_worker_started" not in started:
+            while '"event": "worker_started"' not in started:
                 assert time.monotonic() < deadline and selector.select(timeout=30)
-                started = process.stderr.readline()
+                started = process.stdout.readline()
         process.send_signal(signal.SIGTERM)
-        _, stderr = process.communicate(timeout=30)
+        stdout, _ = process.communicate(timeout=30)
     finally:
         process.kill()
         process.wait()
 
     assert process.returncode == 0
-    assert "notification_worker_stopped" in stderr
+    assert '"event": "worker_shutdown"' in stdout
 
 
 # --- Failure classification and retries ---
@@ -389,11 +395,15 @@ def test_retries_are_logged_with_attempt_and_delay(monkeypatch, caplog) -> None:
             sleep=lambda _delay: None,
         )
 
-    text = caplog.text
-    assert "notification_event_retrying attempt=1 retry_delay_seconds=0.5 " in text
-    assert "notification_event_retrying attempt=2 retry_delay_seconds=1.0 " in text
-    assert "failure_code=TRANSIENT_RETRIES_EXHAUSTED attempts=3 " in text
-    assert "notification_event_sent_to_dlq failure_code=TRANSIENT_RETRIES_EXHAUSTED" in text
+    retries = log_fields(caplog, "notification_event_retrying")
+    assert [fields["attempt"] for fields in retries] == [1, 2]
+    assert [fields["retry_delay_seconds"] for fields in retries] == [0.5, 1.0]
+    assert log_fields(caplog, "notification_event_failed")[-1]["failure_code"] == (
+        "TRANSIENT_RETRIES_EXHAUSTED"
+    )
+    assert log_fields(caplog, "message_sent_to_dlq")[-1]["failure_code"] == (
+        "TRANSIENT_RETRIES_EXHAUSTED"
+    )
 
 
 @pytest.mark.parametrize("make_error", UNEXPECTED_ERRORS)
@@ -525,20 +535,17 @@ def test_failure_log_has_identifiers_but_no_contents(monkeypatch, caplog) -> Non
     with caplog.at_level(logging.DEBUG):
         handle(FakeConsumer([], threading.Event()), message)
 
-    text = caplog.text
-    for expected in (
-        "failure_code=UNEXPECTED_PROCESSING_ERROR",
-        "attempts=1",
-        "exception_type=DataError",
-        f"event_id={event_id}",
-        "event_type='order.rejected'",
-        f"order_id={order_id}",
-        f"correlation_id={correlation_id}",
-        "topic=order.events",
-        "offset=8",
-    ):
-        assert expected in text
-    assert "SECRET" not in text
+    fields = log_fields(caplog, "notification_event_failed")[-1]
+    assert fields["failure_code"] == "UNEXPECTED_PROCESSING_ERROR"
+    assert fields["attempts"] == 1
+    assert fields["exception_type"] == "DataError"
+    assert fields["event_id"] == event_id
+    assert fields["event_type"] == "order.rejected"
+    assert fields["order_id"] == order_id
+    assert fields["correlation_id"] == correlation_id
+    assert fields["topic"] == "order.events"
+    assert fields["offset"] == 8
+    assert "SECRET" not in caplog.text
 
 
 def test_retry_log_has_identifiers_but_no_contents(monkeypatch, caplog) -> None:
@@ -556,7 +563,10 @@ def test_retry_log_has_identifiers_but_no_contents(monkeypatch, caplog) -> None:
             sleep=lambda _delay: None,
         )
 
-    assert f"correlation_id={correlation_id}" in caplog.text
+    assert any(
+        fields.get("correlation_id") == correlation_id
+        for fields in log_fields(caplog, "notification_event_retrying")
+    )
     assert "SECRET" not in caplog.text
 
 
@@ -717,8 +727,9 @@ def test_dlq_failure_stops_the_worker_without_committing(publisher, caplog) -> N
 
     assert consumer.commit_modes == []
     assert consumer.closed
-    assert "notification_dlq_publish_failed kafka_error=" in caplog.text
-    assert "failure_code=MALFORMED_MESSAGE" in caplog.text
+    fields = log_fields(caplog, "message_dlq_publish_failed")[-1]
+    assert fields.get("kafka_error") is None
+    assert fields["failure_code"] == "MALFORMED_MESSAGE"
     assert "SECRET" not in caplog.text
 
 
@@ -744,10 +755,10 @@ def test_dlq_failure_logs_the_kafka_error_code(error, expected, caplog) -> None:
             publisher=FakePublisher(error=error),
         )
 
-    assert (
-        f"notification_dlq_publish_failed kafka_error={expected} "
-        "failure_code=MALFORMED_MESSAGE attempts=1 "
-    ) in caplog.text
+    fields = log_fields(caplog, "message_dlq_publish_failed")[-1]
+    assert fields.get("kafka_error") == (None if expected == "None" else expected)
+    assert fields["failure_code"] == "MALFORMED_MESSAGE"
+    assert fields["attempts"] == 1
     assert consumer.commit_modes == []
 
 
@@ -771,9 +782,9 @@ def test_offset_commit_failure_after_the_dlq_write_stops_the_worker(caplog) -> N
 
     assert publisher.published == [(3, "MALFORMED_MESSAGE", 1)]
     assert consumer.committed == []
-    assert (
-        "notification_offset_commit_failed failure_code=MALFORMED_MESSAGE attempts=1 "
-    ) in caplog.text
+    fields = log_fields(caplog, "notification_offset_commit_failed")[-1]
+    assert fields["failure_code"] == "MALFORMED_MESSAGE"
+    assert fields["attempts"] == 1
 
 
 @pytest.mark.parametrize(
@@ -806,9 +817,9 @@ def test_offset_commit_failure_logs_the_records_failure_code(
             sleep=lambda _delay: None,
         )
 
-    assert (
-        f"notification_offset_commit_failed failure_code={code} attempts={attempts} "
-    ) in caplog.text
+    fields = log_fields(caplog, "notification_offset_commit_failed")[-1]
+    assert fields["failure_code"] == (None if code == "None" else code)
+    assert fields["attempts"] == attempts
 
 
 # --- Stopping ---
@@ -905,7 +916,10 @@ def test_run_uses_the_configured_delays_with_a_real_database_error(caplog) -> No
     assert slept == [0.5, 1.0]
     assert publisher.published == [(2, "TRANSIENT_RETRIES_EXHAUSTED", 3)]
     assert consumer.committed == [2]
-    assert "exception_type=OperationalError" in caplog.text
+    assert any(
+        fields["exception_type"] == "OperationalError"
+        for fields in log_fields(caplog, "notification_event_retrying")
+    )
     assert json.loads(message.value())["payload"]["courier_id"] not in caplog.text
 
 

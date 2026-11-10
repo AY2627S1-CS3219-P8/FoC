@@ -140,6 +140,73 @@ groups:
           team: backend
           severity: critical
 
+      - uid: foc-notification-worker-heartbeat
+        title: Notification worker heartbeat missing
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: foc-loki
+            model:
+              datasource:
+                type: loki
+                uid: foc-loki
+              editorMode: code
+              expr: 'sum(count_over_time({source="foc-backend", service="notification-worker"} | json | event="worker_heartbeat" [2m])) or on() vector(0)'
+              intervalMs: 1000
+              maxDataPoints: 43200
+              queryType: range
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: B
+              type: reduce
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: B
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: Notification worker heartbeat missing
+          description: No notification-worker worker_heartbeat event has arrived in the last two minutes.
+        labels:
+          source: foc-backend
+          team: backend
+          severity: critical
+
       - uid: foc-backend-delivery-failure
         title: Backend delivery failure event
         condition: C

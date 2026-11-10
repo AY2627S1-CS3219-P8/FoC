@@ -24,6 +24,9 @@ collector must include these Compose services:
 | `order-service` | API |
 | `order-migrate` | Migration job |
 | `order-worker` | Kafka worker |
+| `notification-service` | API |
+| `notification-migrate` | Migration job |
+| `notification-worker` | Kafka worker |
 
 The initial collector must exclude `frontend-service`, all PostgreSQL services,
 `kafka`, `kafka-topics`, `supplier-bootstrap`, and `supplier-grants`. Those
@@ -43,7 +46,7 @@ those records to the central logging backend.
 
 The root Compose file runs Vector as the initial backend log collector. Vector
 reads Docker logs through the read-only Docker socket mount and passes only the
-12 backend services listed above through the `select_backend` transform, using
+15 backend services listed above through the `select_backend` transform, using
 the `com.docker.compose.service` label. It does not send frontend, database,
 Kafka, or excluded provisioning-job records to the collector sink. Filtering in
 the pipeline also lets a restarted collector discover backend containers that
@@ -100,7 +103,7 @@ The Compose stack provisions a `FoC Backend Logs` dashboard in the `FoC` folder.
 
 Grafana also provisions backend-only alert rules in the `FoC Alerts` folder from `observability/grafana/provisioning/alerting/foc-backend-alerts.yaml`:
 
-- `order-worker` and `credit-order-worker` heartbeat missing for two minutes
+- `order-worker`, `credit-order-worker`, and `notification-worker` heartbeat missing for two minutes
 - retry exhausted, dead-lettered, sent-to-DLQ, or parked-for-DLQ events
 - readiness check failures
 - relay failures
@@ -119,7 +122,7 @@ After the full Compose stack is running, run the repository smoke test from the 
 GRAFANA_ADMIN_PASSWORD='your-local-password' ./scripts/verify-observability.sh
 ```
 
-The test checks Loki readiness, Grafana health, dashboard provisioning, all seven file-provisioned alert rules, the expected Loki labels, and at least one backend log delivered through Vector in the previous five minutes. It uses `GRAFANA_URL` and `LOKI_URL` when the services are exposed on non-default local addresses. Set `OBSERVABILITY_REQUIRE_BACKEND_LOGS=false` when testing only provisioning before any backend service has emitted a log.
+The test checks Loki readiness, Grafana health, dashboard provisioning, all eight file-provisioned alert rules, the expected Loki labels, and at least one backend log delivered through Vector in the previous five minutes. It uses `GRAFANA_URL` and `LOKI_URL` when the services are exposed on non-default local addresses. Set `OBSERVABILITY_REQUIRE_BACKEND_LOGS=false` when testing only provisioning before any backend service has emitted a log.
 
 This Compose Loki setup is for local development and evaluation. Production
 should use authenticated transport, an authentication layer in front of Loki,
@@ -158,7 +161,7 @@ format.
 
 ## Worker signals
 
-Both Kafka workers emit the following events with `worker`, `topic`, and
+Kafka workers emit the following events with `worker`, `topic`, and
 `consumer_group` where applicable:
 
 | Event | Meaning |
@@ -176,6 +179,12 @@ Both Kafka workers emit the following events with `worker`, `topic`, and
 The Credit worker's `credit_event_sent_to_dlq` event is emitted only after the
 DLQ publish is confirmed and before the source offset is committed. A failed
 publish therefore does not look like a successful quarantine.
+
+The Notification Service API also emits `readiness_check_failed`, authentication
+outcome events, notification read-status events, listener connection events,
+and stream opened/closed/failed events. Stream and read-status events carry only
+safe notification/user identifiers and counts; notification titles, bodies,
+parameters, bearer tokens, and raw request bodies are excluded.
 
 ## Alert guidance
 

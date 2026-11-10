@@ -52,7 +52,6 @@ import signal
 import sys
 import threading
 import time
-import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -75,6 +74,7 @@ from app.config import WorkerSettings, configure_logging
 from app.db import make_engine, make_session_factory
 from app.events import BeforeCutoff, Event, Ignore, Malformed, process_record
 from app.models import Notification, ProcessedEvent
+from foc_observability import context_from_event_body, log_context, log_event
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,8 @@ PUBLISH_TIMEOUT_SECONDS = 10
 DLQ_MAX_MESSAGE_BYTES = 1_100_000
 # How quickly a backoff sleep notices a stop request.
 STOP_CHECK_SECONDS = 0.1
+WORKER_HEARTBEAT_SECONDS = 60.0
+WORKER_NAME = "notification-worker"
 
 FailureCode = Literal[
     "MALFORMED_MESSAGE",
@@ -128,6 +130,7 @@ class DeliveryResult:
     result: BeforeCutoff | Ignore | Event | None
     attempts: int
     failure_code: FailureCode | None = None
+    outcome: str = "unknown"
 
 
 class _Delivery:
@@ -253,19 +256,29 @@ def _log_outcome(
     message: Message,
     *,
     notifications: int = 0,
+    attempts: int = 1,
+    duration_ms: float | None = None,
 ) -> None:
-    # %r because event_type comes from the record and may hold control characters.
-    logger.info(
-        "notification_event_%s event_id=%s event_type=%r order_id=%s "
-        "notifications=%s topic=%s partition=%s offset=%s",
-        outcome,
-        result.event_id,
-        result.event_type,
-        result.order_id,
-        notifications,
-        message.topic(),
-        message.partition(),
-        message.offset(),
+    fields = {
+        "event_id": result.event_id,
+        "event_type": result.event_type,
+        "order_id": result.order_id,
+        "notifications": notifications,
+        "attempts": attempts,
+        "topic": message.topic(),
+        "partition": message.partition(),
+        "offset": message.offset(),
+    }
+    if duration_ms is not None:
+        fields["duration_ms"] = duration_ms
+    correlation_id = getattr(result, "correlation_id", None)
+    if correlation_id is not None:
+        fields["correlation_id"] = correlation_id
+    log_event(
+        logger,
+        logging.INFO,
+        f"notification_event_{outcome}",
+        **fields,
     )
 
 
@@ -292,27 +305,28 @@ def _kafka_error_name(error: Exception) -> str | None:
     return None
 
 
+def _message_error_name(error: object) -> str | None:
+    """Return a Kafka poll error code without logging its free-form text."""
+
+    name = getattr(error, "name", None)
+    return name() if callable(name) else None
+
+
 def _failure_fields(
     error: Exception, result: BeforeCutoff | Ignore | Event | None, message: Message
-) -> tuple:
-    return (
-        type(error).__name__,
-        getattr(getattr(error, "orig", None), "sqlstate", None),
-        getattr(result, "event_id", None),
-        getattr(result, "event_type", None),
-        getattr(result, "order_id", None),
-        getattr(result, "correlation_id", None),
-        message.topic(),
-        message.partition(),
-        message.offset(),
-        "".join(traceback.format_tb(error.__traceback__)),
-    )
-
-
-_FAILURE_FORMAT = (
-    "exception_type=%s sqlstate=%s event_id=%s event_type=%r order_id=%s "
-    "correlation_id=%s topic=%s partition=%s offset=%s\n%s"
-)
+) -> dict[str, object]:
+    fields: dict[str, object] = {
+        "exception_type": type(error).__name__,
+        "sqlstate": getattr(getattr(error, "orig", None), "sqlstate", None),
+        "event_id": getattr(result, "event_id", None),
+        "event_type": getattr(result, "event_type", None),
+        "order_id": getattr(result, "order_id", None),
+        "correlation_id": getattr(result, "correlation_id", None),
+        "topic": message.topic(),
+        "partition": message.partition(),
+        "offset": message.offset(),
+    }
+    return {key: value for key, value in fields.items() if value is not None}
 
 
 def _log_failure(
@@ -323,12 +337,30 @@ def _log_failure(
     message: Message,
     *,
     event: str = "notification_event_failed",
+    kafka_error: str | None = None,
+    duration_ms: float | None = None,
 ) -> None:
-    logger.error(
-        f"{event} failure_code=%s attempts=%s {_FAILURE_FORMAT}",
-        failure_code,
-        attempts,
-        *_failure_fields(error, result, message),
+    fields = {
+        "failure_code": failure_code,
+        "attempts": attempts,
+        **_failure_fields(error, result, message),
+    }
+    if kafka_error is not None:
+        fields["kafka_error"] = kafka_error
+    if duration_ms is not None:
+        fields["duration_ms"] = duration_ms
+    if failure_code == "TRANSIENT_RETRIES_EXHAUSTED":
+        log_event(
+            logger,
+            logging.ERROR,
+            "message_retry_exhausted",
+            **fields,
+        )
+    log_event(
+        logger,
+        logging.ERROR,
+        event,
+        **fields,
     )
 
 
@@ -347,28 +379,48 @@ def process_delivery(
     caller sees ``stop`` and leaves the offset uncommitted.
     """
 
+    started = time.perf_counter()
+
     try:
         result = process_record(
             message.key(), message.value(), message.headers(), start_at=start_at
         )
     except Exception as error:
-        _log_failure("UNEXPECTED_PROCESSING_ERROR", 1, error, None, message)
-        return DeliveryResult(None, 1, "UNEXPECTED_PROCESSING_ERROR")
+        _log_failure(
+            "UNEXPECTED_PROCESSING_ERROR",
+            1,
+            error,
+            None,
+            message,
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
+        )
+        return DeliveryResult(
+            None, 1, "UNEXPECTED_PROCESSING_ERROR", outcome="failed"
+        )
 
     if isinstance(result, Malformed):
-        logger.error(
-            "notification_event_failed failure_code=MALFORMED_MESSAGE attempts=1 "
-            "reason=%s topic=%s partition=%s offset=%s",
-            result.reason,
-            message.topic(),
-            message.partition(),
-            message.offset(),
+        log_event(
+            logger,
+            logging.ERROR,
+            "notification_event_failed",
+            failure_code="MALFORMED_MESSAGE",
+            attempts=1,
+            reason=result.reason,
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
         )
-        return DeliveryResult(None, 1, "MALFORMED_MESSAGE")
+        return DeliveryResult(None, 1, "MALFORMED_MESSAGE", outcome="malformed")
 
     if isinstance(result, Ignore):
-        _log_outcome("ignored", result, message)
-        return DeliveryResult(result, 1)
+        _log_outcome(
+            "ignored",
+            result,
+            message,
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
+        )
+        return DeliveryResult(result, 1, outcome="ignored")
 
     for attempts, delay in enumerate((*retry_backoff_seconds, None), start=1):
         try:
@@ -379,31 +431,91 @@ def process_delivery(
             elif delay is None:
                 failure_code = "TRANSIENT_RETRIES_EXHAUSTED"
             else:
-                logger.warning(
-                    f"notification_event_retrying attempt=%s retry_delay_seconds=%s "
-                    f"{_FAILURE_FORMAT}",
-                    attempts,
-                    delay,
-                    *_failure_fields(error, result, message),
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "notification_event_retrying",
+                    attempt=attempts,
+                    retry_delay_seconds=delay,
+                    **_failure_fields(error, result, message),
                 )
                 sleep(delay)
                 if stop.is_set():
-                    return DeliveryResult(result, attempts)
+                    return DeliveryResult(result, attempts, outcome="stopping")
                 continue
-            _log_failure(failure_code, attempts, error, result, message)
-            return DeliveryResult(result, attempts, failure_code)
+            _log_failure(
+                failure_code,
+                attempts,
+                error,
+                result,
+                message,
+                duration_ms=round((time.perf_counter() - started) * 1000, 3),
+            )
+            return DeliveryResult(
+                result, attempts, failure_code, outcome="failed"
+            )
 
+        duration_ms = round((time.perf_counter() - started) * 1000, 3)
         if not stored:
-            _log_outcome("duplicate", result, message)
+            _log_outcome(
+                "duplicate", result, message, attempts=attempts, duration_ms=duration_ms
+            )
+            outcome = "duplicate"
         elif isinstance(result, BeforeCutoff):
-            _log_outcome("before_cutoff", result, message)
+            _log_outcome(
+                "before_cutoff",
+                result,
+                message,
+                attempts=attempts,
+                duration_ms=duration_ms,
+            )
+            outcome = "before_cutoff"
         else:
-            _log_outcome("stored", result, message, notifications=len(result.drafts))
-        return DeliveryResult(result, attempts)
+            _log_outcome(
+                "stored",
+                result,
+                message,
+                notifications=len(result.drafts),
+                attempts=attempts,
+                duration_ms=duration_ms,
+            )
+            outcome = "stored"
+        return DeliveryResult(result, attempts, outcome=outcome)
     raise AssertionError("Retry loop exited without a delivery result")
 
 
 def handle_message(
+    session_factory: Callable[[], Session],
+    consumer: CommittingConsumer,
+    publisher: DeadLetterPublisher,
+    message: Message,
+    *,
+    start_at: datetime,
+    retry_backoff_seconds: tuple[float, ...],
+    stop: threading.Event,
+    sleep: Callable[[float], None],
+) -> None:
+    """Process one record with its Kafka and domain context attached to logs."""
+
+    with log_context(
+        topic=message.topic(),
+        partition=message.partition(),
+        offset=message.offset(),
+        **context_from_event_body(message.value()),
+    ):
+        _handle_message_in_context(
+            session_factory,
+            consumer,
+            publisher,
+            message,
+            start_at=start_at,
+            retry_backoff_seconds=retry_backoff_seconds,
+            stop=stop,
+            sleep=sleep,
+        )
+
+
+def _handle_message_in_context(
     session_factory: Callable[[], Session],
     consumer: CommittingConsumer,
     publisher: DeadLetterPublisher,
@@ -419,15 +531,28 @@ def handle_message(
     error = message.error()
     if error is not None:
         if error.fatal():
-            logger.error("kafka_fatal_error reason=%s", error)
+            log_event(
+                logger,
+                logging.ERROR,
+                "kafka_fatal_error",
+                error_type=type(error).__name__,
+                kafka_error=_message_error_name(error),
+            )
             raise WorkerAbort
-        logger.error("kafka_poll_error reason=%s", error)
+        log_event(
+            logger,
+            logging.ERROR,
+            "kafka_poll_error",
+            error_type=type(error).__name__,
+            kafka_error=_message_error_name(error),
+        )
         return
 
     # A record polled while stopping is left for the next run.
     if stop.is_set():
         return
 
+    started = time.perf_counter()
     outcome = process_delivery(
         session_factory,
         message,
@@ -436,16 +561,29 @@ def handle_message(
         stop=stop,
         sleep=sleep,
     )
+    log_event(
+        logger,
+        logging.ERROR if outcome.failure_code is not None else logging.INFO,
+        "message_processing_completed",
+        duration_ms=round((time.perf_counter() - started) * 1000, 3),
+        outcome=outcome.outcome,
+        attempts=outcome.attempts,
+        failure_code=outcome.failure_code,
+        notifications=(
+            len(outcome.result.drafts) if isinstance(outcome.result, Event) else 0
+        ),
+    )
 
     if stop.is_set():
         # The next run sees a duplicate, or reprocesses the record.
-        logger.info(
-            "notification_offset_not_committed event_id=%s topic=%s "
-            "partition=%s offset=%s",
-            getattr(outcome.result, "event_id", None),
-            message.topic(),
-            message.partition(),
-            message.offset(),
+        log_event(
+            logger,
+            logging.INFO,
+            "notification_offset_not_committed",
+            event_id=getattr(outcome.result, "event_id", None),
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
         )
         return
 
@@ -461,20 +599,21 @@ def handle_message(
                 failure,
                 outcome.result,
                 message,
-                event=(
-                    "notification_dlq_publish_failed "
-                    f"kafka_error={_kafka_error_name(failure)}"
-                ),
+                event="message_dlq_publish_failed",
+                kafka_error=_kafka_error_name(failure),
             )
             raise WorkerAbort from None
-        logger.error(
-            "notification_event_sent_to_dlq failure_code=%s attempts=%s "
-            "topic=%s partition=%s offset=%s",
-            outcome.failure_code,
-            outcome.attempts,
-            message.topic(),
-            message.partition(),
-            message.offset(),
+        log_event(
+            logger,
+            logging.ERROR,
+            "message_sent_to_dlq",
+            failure_code=outcome.failure_code,
+            attempts=outcome.attempts,
+            event_id=getattr(outcome.result, "event_id", None),
+            dlq_topic=DLQ_TOPIC,
+            source_topic=message.topic(),
+            source_partition=message.partition(),
+            source_offset=message.offset(),
         )
 
     try:
@@ -547,17 +686,27 @@ def run(
     consumer = consumer or make_consumer(settings)
     publisher = publisher or KafkaPublisher(make_producer(settings))
     sleep = sleep or (lambda delay: sleep_until_stopped(delay, stop))
-    logger.info(
-        "notification_worker_started topic=%s consumer_group=%s",
-        ORDER_TOPIC,
-        CONSUMER_GROUP,
+    log_event(
+        logger,
+        logging.INFO,
+        "worker_started",
+        worker=WORKER_NAME,
+        topic=ORDER_TOPIC,
+        consumer_group=CONSUMER_GROUP,
     )
+    last_heartbeat = time.monotonic()
     try:
         while not stop.is_set():
             try:
                 message = consumer.poll(POLL_TIMEOUT_SECONDS)
             except KafkaException as error:
-                logger.error("kafka_fatal_error reason=%s", error)
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "kafka_fatal_error",
+                    error_type=type(error).__name__,
+                    kafka_error=_kafka_error_name(error),
+                )
                 raise WorkerAbort from None
             if message is not None:
                 handle_message(
@@ -570,19 +719,43 @@ def run(
                     stop=stop,
                     sleep=sleep,
                 )
+            now = time.monotonic()
+            if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "worker_heartbeat",
+                    worker=WORKER_NAME,
+                    topic=ORDER_TOPIC,
+                    consumer_group=CONSUMER_GROUP,
+                )
+                last_heartbeat = now
     finally:
+        log_event(
+            logger,
+            logging.INFO,
+            "worker_shutdown",
+            worker=WORKER_NAME,
+            topic=ORDER_TOPIC,
+            consumer_group=CONSUMER_GROUP,
+        )
         consumer.close()
         engine.dispose()
-    logger.info("notification_worker_stopped")
 
 
 def main() -> None:
     settings = WorkerSettings.from_env()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, component="worker")
     stop = threading.Event()
 
     def request_stop(signum: int, _frame) -> None:
-        logger.info("notification_worker_stopping signal=%s", signum)
+        log_event(
+            logger,
+            logging.INFO,
+            "worker_shutdown_requested",
+            worker=WORKER_NAME,
+            signal=signum,
+        )
         stop.set()
 
     signal.signal(signal.SIGTERM, request_stop)
@@ -590,7 +763,12 @@ def main() -> None:
     try:
         run(settings, stop)
     except WorkerAbort:
-        logger.error("notification_worker_aborted")
+        log_event(
+            logger,
+            logging.ERROR,
+            "worker_aborted",
+            worker=WORKER_NAME,
+        )
         sys.exit(1)
 
 
