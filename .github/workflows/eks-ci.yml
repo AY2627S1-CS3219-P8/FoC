@@ -1,3 +1,4 @@
+
 name: FoC EKS CI
 
 on:
@@ -21,6 +22,7 @@ on:
       - 'deploy/k8s/**'
       - 'scripts/eks-deploy.sh'
       - 'scripts/test-eks-render.sh'
+      - 'docs/eks-cicd.md'
       - 'user-service/**'
       - 'supplier-service/**'
       - 'order-service/**'
@@ -57,30 +59,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-  include:
-    - name: user-service
-      context: .
-      dockerfile: ./user-service/Dockerfile
-
-    - name: supplier-service
-      context: .
-      dockerfile: ./supplier-service/Dockerfile
-
-    - name: order-service
-      context: .
-      dockerfile: ./order-service/Dockerfile
-
-    - name: credit-service
-      context: .
-      dockerfile: ./credit-service/Dockerfile
-
-    - name: supplier-db
-      context: ./supplier-service/database
-      dockerfile: ./supplier-service/database/Dockerfile
-
-    - name: frontend-service
-      context: ./frontend-service
-      dockerfile: ./frontend-service/Dockerfile
+        include:
+          - component: user-service
+            requirements: user-service/requirements-dev.txt
+            command: python -m pytest -q
+          - component: supplier-service
+            requirements: supplier-service/requirements-dev.txt
+            command: python -m pytest tests/unit tests/api -q
+          - component: credit-service
+            requirements: credit-service/requirements-dev.txt
+            command: python -m pytest -q
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -166,17 +154,23 @@ jobs:
       matrix:
         include:
           - name: user-service
-            context: ./user-service
+            context: .
+            dockerfile: ./user-service/Dockerfile
           - name: supplier-service
-            context: ./supplier-service
+            context: .
+            dockerfile: ./supplier-service/Dockerfile
           - name: supplier-db
             context: ./supplier-service/database
+            dockerfile: ./supplier-service/database/Dockerfile
           - name: order-service
-            context: ./order-service
+            context: .
+            dockerfile: ./order-service/Dockerfile
           - name: credit-service
-            context: ./credit-service
+            context: .
+            dockerfile: ./credit-service/Dockerfile
           - name: frontend-service
             context: ./frontend-service
+            dockerfile: ./frontend-service/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -187,4 +181,3 @@ jobs:
           push: false
           platforms: linux/amd64
           tags: foc-${{ matrix.name }}:ci
-# Trigger initial CI run
