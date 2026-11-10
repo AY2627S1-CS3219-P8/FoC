@@ -437,8 +437,15 @@ create_support_resource() {
   local name="$2"
   local source_arg="$3"
   local output="$work_dir/${name}.yaml"
-  kubectl --namespace "$NAMESPACE" create "$kind" "$name" "$source_arg" \
+  if [[ "$kind" == "secret" ]]; then
+  kubectl --namespace "$NAMESPACE" create secret generic \
+    "$name" "$source_arg" \
     --dry-run=client -o yaml >"$output"
+  else
+    kubectl --namespace "$NAMESPACE" create configmap \
+      "$name" "$source_arg" \
+      --dry-run=client -o yaml >"$output"
+  fi
   if [[ "$mode" == deploy ]]; then
     kubectl apply -f "$output" >/dev/null
   fi
