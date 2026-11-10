@@ -358,7 +358,7 @@ def _sweep(session_factory: Callable[[], Session], next_sweep: float) -> float:
 
 
 def main() -> None:
-    configure_logging("order-worker")
+    configure_logging("order-worker", component="worker")
     engine = make_engine(database_url())
     session_factory = make_session_factory(engine)
     producer = Producer(

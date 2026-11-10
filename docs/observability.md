@@ -39,6 +39,28 @@ change the existing stdout behavior: backend processes continue to write
 structured JSON to stdout, and the collector remains responsible for shipping
 those records to the central logging backend.
 
+## Log envelope
+
+Every structured backend application record uses log schema version `1` and
+contains these fields:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | integer | Version of the logging envelope; currently `1`. |
+| `timestamp` | ISO-8601 UTC string | Time the process created the record. |
+| `level` | string | `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
+| `service` | string | Stable backend service identity. |
+| `component` | string | Process role, such as `api`, `worker`, `migration`, `bootstrap`, or `seed`. |
+| `service_version` | string | Build identifier from `APP_VERSION`, or `unknown`. |
+| `environment` | string | Deployment environment, such as `development`, `test`, or `production`. |
+| `logger` | string | Python logger name. |
+| `event` | string | Lower-snake-case event name. |
+
+Request, message, and domain identifiers such as `request_id`,
+`correlation_id`, `event_id`, and `order_id` are optional top-level fields when
+available. Application fields must not override envelope fields. Sensitive
+values remain subject to the shared redaction rules.
+
 ## Worker signals
 
 Both Kafka workers emit the following events with `worker`, `topic`, and

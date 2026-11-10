@@ -44,6 +44,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       USER_SERVICE_INTERNAL_TOKEN: ${USER_SERVICE_INTERNAL_TOKEN:?Set USER_SERVICE_INTERNAL_TOKEN in .env}
       APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ${USER_SERVICE_TLS_CERT_FILE:-./certs/user-service.crt}:/run/tls/user-service.crt:ro
@@ -74,6 +75,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Set POSTGRES_USER in .env}@user-db:5432/foc_users
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
     depends_on:
       user-db:
         condition: service_healthy
@@ -92,6 +94,7 @@ services:
       BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       user-db:
@@ -129,6 +132,7 @@ services:
       APP_ENV: development
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       supplier-db:
@@ -174,6 +178,7 @@ services:
     restart: "no"
     environment:
       DATABASE_URL: "postgresql+psycopg://supplier_migrator:${SUPPLIER_MIGRATION_PASSWORD:?Set migration database password}@supplier-db:5432/${SUPPLIER_POSTGRES_DB:?Set database name}"
+      APP_VERSION: ${APP_VERSION:-unknown}
       APP_ENV: development
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
@@ -222,6 +227,7 @@ services:
       APP_ENV: development
       USER_SERVICE_URL: https://user-service:8080
       AUTH_TIMEOUT_SECONDS: ${AUTH_TIMEOUT_SECONDS:-3}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./data/csv/supplier-seed-data.csv:/seed/supplier-seed-data.csv:ro
@@ -283,6 +289,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${CREDIT_DB_USER:?Set CREDIT_DB_USER in .env}@credit-db:5432/foc_credits
       PGPASSWORD: ${CREDIT_DB_PASSWORD:?Set CREDIT_DB_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
     depends_on:
       credit-db:
         condition: service_healthy
@@ -303,6 +310,7 @@ services:
       USER_SERVICE_URL: https://user-service:8080
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
       APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -333,6 +341,7 @@ services:
       USER_SERVICE_URL: https://user-service:8080
       USER_SERVICE_CA_FILE: /run/tls/ca.crt
       APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
       CREDIT_RETRY_BACKOFF_SECONDS: ${CREDIT_RETRY_BACKOFF_SECONDS:-0.5,1,2,4}
       CREDIT_EVENT_STREAM: order
@@ -381,6 +390,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
+      APP_VERSION: ${APP_VERSION:-unknown}
     depends_on:
       order-db:
         condition: service_healthy
@@ -401,6 +411,7 @@ services:
       USER_SERVICE_URL: https://user-service:8080
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
       APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       order-db:
@@ -426,6 +437,7 @@ services:
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       APP_ENV: ${APP_ENV:-development}
+      APP_VERSION: ${APP_VERSION:-unknown}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PYTHONUNBUFFERED: "1"
     depends_on:

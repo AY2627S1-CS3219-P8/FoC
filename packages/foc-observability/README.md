@@ -5,8 +5,11 @@ This package provides the shared logging contract for FoC Python services.
 ## Contract
 
 - Emit one JSON object per line to stdout.
+- Use log schema version `1`.
+- Include the envelope fields `schema_version`, `timestamp`, `level`, `service`,
+  `component`, `service_version`, `environment`, `logger`, and `event`.
 - Keep `logging.getLogger(__name__)` in application modules.
-- Use stable, whitespace-free event names.
+- Use stable lower-snake-case event names.
 - Put application values in `fields`, not directly in `LogRecord.extra`.
 - Carry request and message identifiers with `log_context`.
 - Add `RequestContextMiddleware` to FastAPI applications.
@@ -19,6 +22,11 @@ This package provides the shared logging contract for FoC Python services.
   bearer credentials, credentialed URLs, and exception text are redacted.
 - Never log credentials, bearer tokens, passwords, database URLs, or raw
   request/response bodies.
+
+`service_version` is read from the optional `APP_VERSION` environment variable
+and defaults to `unknown`. `component` identifies the process role, such as
+`api`, `worker`, `migration`, `bootstrap`, or `seed`. Envelope fields cannot be
+overridden by application fields.
 
 ## Example
 
@@ -55,5 +63,28 @@ Configure the process once at its entry point:
 ```python
 from foc_observability import configure_logging
 
-configure_logging("order-service")
+configure_logging(
+    "order-service",
+    component="api",
+    service_version="2026.11.10-build.1",
+)
+```
+
+The resulting record has this shape:
+
+```json
+{
+  "schema_version": 1,
+  "timestamp": "2026-11-10T00:00:00Z",
+  "level": "INFO",
+  "service": "order-service",
+  "component": "api",
+  "service_version": "2026.11.10-build.1",
+  "environment": "production",
+  "logger": "app.routes.orders",
+  "event": "order_created",
+  "request_id": "...",
+  "correlation_id": "...",
+  "order_id": "..."
+}
 ```

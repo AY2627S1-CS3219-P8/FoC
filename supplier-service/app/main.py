@@ -27,7 +27,7 @@ from app.routes.reference_data import router as reference_router
 from app.routes.suppliers import router as supplier_router
 from app.validation.errors import DomainValidationError, request_validation_issues
 
-configure_logging("supplier-service")
+configure_logging("supplier-service", component="api")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -39,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.settings = settings
         configure_logging(
             "supplier-service",
+            component="api",
             environment=app.state.settings.app_env,
             level=app.state.settings.log_level,
         )

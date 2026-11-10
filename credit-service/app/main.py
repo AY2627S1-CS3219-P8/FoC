@@ -25,6 +25,7 @@ from app.services.credits import (
 logger = logging.getLogger(__name__)
 configure_logging(
     "credit-service",
+    component="api",
     environment=os.getenv("APP_ENV", "production"),
 )
 ALEMBIC_CONFIG_PATH = Path(__file__).resolve().parents[1] / "alembic.ini"
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         active_settings = settings or Settings.from_env()
         configure_logging(
             "credit-service",
+            component="api",
             environment=os.getenv("APP_ENV", "production"),
             level=active_settings.log_level,
         )

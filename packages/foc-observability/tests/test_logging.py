@@ -8,6 +8,7 @@ import pytest
 
 from foc_observability import (
     CORRELATION_ID_HEADER,
+    LOG_SCHEMA_VERSION,
     REQUEST_ID_HEADER,
     JsonFormatter,
     RequestContextMiddleware,
@@ -44,7 +45,10 @@ def test_formatter_emits_context_and_fields_as_json():
         ).format(record)
 
     payload = json.loads(output)
+    assert payload["schema_version"] == LOG_SCHEMA_VERSION
     assert payload["service"] == "supplier-service"
+    assert payload["component"] == "application"
+    assert payload["service_version"] == "unknown"
     assert payload["environment"] == "test"
     assert payload["event"] == "supplier_loaded"
     assert payload["supplier_id"] == "supplier-1"
@@ -71,8 +75,11 @@ def test_formatter_preserves_canonical_fields_from_application_collisions():
     record.event = "canonical_event"
     record.fields = {
         "timestamp": "spoofed-timestamp",
+        "schema_version": 99,
         "level": "CRITICAL",
         "service": "spoofed-service",
+        "component": "spoofed-component",
+        "service_version": "spoofed-version",
         "environment": "spoofed-environment",
         "logger": "spoofed-logger",
         "event": "spoofed-event",
@@ -81,11 +88,19 @@ def test_formatter_preserves_canonical_fields_from_application_collisions():
     }
 
     payload = json.loads(
-        JsonFormatter(service="real-service", environment="test").format(record)
+        JsonFormatter(
+            service="real-service",
+            environment="test",
+            component="api",
+            service_version="build-42",
+        ).format(record)
     )
 
+    assert payload["schema_version"] == LOG_SCHEMA_VERSION
     assert payload["level"] == "INFO"
     assert payload["service"] == "real-service"
+    assert payload["component"] == "api"
+    assert payload["service_version"] == "build-42"
     assert payload["environment"] == "test"
     assert payload["logger"] == "app.example"
     assert payload["event"] == "canonical_event"
@@ -176,11 +191,20 @@ def test_log_event_uses_an_explicit_event_and_fields(caplog):
     logger = logging.getLogger("test.events")
 
     with caplog.at_level(logging.INFO, logger="test.events"):
-        log_event(logger, logging.INFO, "worker_started", component="worker")
+        log_event(logger, logging.INFO, "worker_started", worker="worker")
 
     record = caplog.records[-1]
     assert record.event == "worker_started"
-    assert record.fields == {"component": "worker"}
+    assert record.fields == {"worker": "worker"}
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["", "WorkerStarted", "worker started", "worker-started", "worker.started"],
+)
+def test_log_event_rejects_non_lower_snake_case_names(event):
+    with pytest.raises(ValueError, match="lower_snake_case"):
+        log_event(logging.getLogger("test.events"), logging.INFO, event)
 
 
 def test_log_event_sanitizes_fields_before_handlers(caplog):
@@ -221,6 +245,43 @@ def test_configure_logging_writes_owned_handlers_to_stdout():
 
         assert handlers
         assert all(handler.stream is sys.stdout for handler in handlers)
+
+
+def test_configure_logging_emits_process_metadata(monkeypatch):
+    monkeypatch.setenv("APP_VERSION", "2026.11.10-build.1")
+    configure_logging(
+        "test-service",
+        component="worker",
+        environment="test",
+    )
+
+    formatter = next(
+        handler.formatter
+        for handler in logging.getLogger().handlers
+        if getattr(handler, "foc_observability_handler", False)
+    )
+    payload = json.loads(formatter.format(_record()))
+
+    assert payload["schema_version"] == LOG_SCHEMA_VERSION
+    assert payload["service"] == "test-service"
+    assert payload["component"] == "worker"
+    assert payload["service_version"] == "2026.11.10-build.1"
+    assert payload["environment"] == "test"
+
+
+def test_formatter_serializes_non_finite_floats_as_strings():
+    record = _record()
+    record.fields = {
+        "not_a_number": float("nan"),
+        "positive_infinity": float("inf"),
+    }
+
+    payload = json.loads(
+        JsonFormatter(service="test-service", environment="test").format(record)
+    )
+
+    assert payload["not_a_number"] == "nan"
+    assert payload["positive_infinity"] == "inf"
 
 
 def test_request_middleware_binds_context_and_returns_headers():

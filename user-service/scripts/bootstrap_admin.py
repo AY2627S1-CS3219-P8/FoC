@@ -75,7 +75,7 @@ def payload_from_environment() -> UserCreate | None:
 def main() -> int:
     """Run the one-shot bootstrap command and return a process exit code."""
 
-    configure_logging("user-bootstrap")
+    configure_logging("user-bootstrap", component="bootstrap")
     logger = logging.getLogger(__name__)
 
     try:

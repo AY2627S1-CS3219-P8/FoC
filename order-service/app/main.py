@@ -17,7 +17,7 @@ from app.routes.orders import router as orders_router
 
 
 logger = logging.getLogger(__name__)
-configure_logging("order-service")
+configure_logging("order-service", component="api")
 
 
 @asynccontextmanager

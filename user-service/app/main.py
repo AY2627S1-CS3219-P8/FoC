@@ -16,7 +16,7 @@ from foc_observability import RequestContextMiddleware, configure_logging, log_e
 
 
 logger = logging.getLogger(__name__)
-configure_logging("user-service")
+configure_logging("user-service", component="api")
 
 
 def run_session_cleanup() -> None:

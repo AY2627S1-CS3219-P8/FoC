@@ -623,6 +623,7 @@ def main() -> None:
     settings = Settings.from_env()
     configure_logging(
         "credit-worker",
+        component="worker",
         environment=os.getenv("APP_ENV", "production"),
         level=settings.log_level,
     )
