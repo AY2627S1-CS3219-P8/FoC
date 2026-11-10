@@ -4,6 +4,26 @@
 # Scope: Boilerplate generation — configure the Supplier tools service with the Python module entrypoint, empty command, read-only CSV mount, runtime settings, private network, migration/health dependencies, disabled healthcheck, and no restart or published ports. (ai-20260930-012)
 # Author review: Keith confirmed review of all affected changes. Keith confirmed review of the packaging changes (ai-20260930-012).
 # Details: supplier-service/ai/usage-log.md; ai-20260929-001; ai-20260929-003; ai-20260930-012
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-03
+# Scope: Boilerplate generation — add notification-db, notification-migrate, notification-service, and notification-worker on the shared foc-notification-service:local image, with .env-required credentials, health and migration gating, loopback-only port 127.0.0.1:8084, the internal notification-private network, and the notification-db-data volume (ai-20261103-001).
+# Author review: Keith confirmed review of all affected changes (ai-20261103-001).
+# Details: notification-service/ai/usage-log.md; ai-20261103-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-04
+# Scope: Boilerplate generation — give notification-worker KAFKA_BOOTSTRAP_SERVERS and a required NOTIFICATIONS_START_AT, and start it after kafka-topics (ai-20261104-003).
+# Author review: Keith confirmed verification, with 551 tests passed on the Pytest suite (ai-20261104-003).
+# Details: notification-service/ai/usage-log.md; ai-20261104-003
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-05
+# Scope: Boilerplate generation — pass NOTIFICATION_RETRY_BACKOFF_SECONDS to notification-worker, keeping an empty value empty (ai-20261105-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16 and Kafka 4.1.2, 645 passed; code manually read and verified; manual checks in an isolated Compose run (ai-20261105-001).
+# Details: notification-service/ai/usage-log.md; ai-20261105-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Boilerplate generation — give notification-service USER_SERVICE_URL, USER_SERVICE_CA_FILE, and the internal CA mount, matching credit-service (ai-20261108-001).
+# Author review: Keith confirmed on 2026-11-08: full pytest suite with PostgreSQL 16, 790 passed and 5 real-broker tests skipped; code read and verified; manual checks against the full Compose stack with the real User Service (ai-20261108-001).
+# Details: notification-service/ai/usage-log.md; ai-20261108-001
+# Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-08
+# Scope: Boilerplate generation — pass SSE_HEARTBEAT_SECONDS and SSE_MAX_LIFETIME_SECONDS to notification-service, defaulting to 20 and 600 (ai-20261108-002).
+# Author review: Keith confirmed on 2026-11-09: full pytest suite (.venv/bin/python -m pytest -rs), 918 passed and 5 skipped; manual SSE checks against the local Compose stack (ai-20261108-002).
+# Details: notification-service/ai/usage-log.md; ai-20261108-002
 
 include:
   - event-broker/compose.yaml
@@ -152,6 +172,10 @@ services:
       COOKIE_SECURE: "false"
       # Not in depends_on: supplier pages show an error until it is reachable.
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
+      ORDER_SERVICE_URL: http://order-service:8080
+      CREDIT_SERVICE_URL: http://credit-service:8080
+      # Must match Credit Service so the request form caps a new user's offer.
+      INITIAL_CREDIT_ALLOCATION: ${INITIAL_CREDIT_ALLOCATION:-100}
     volumes:
       - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     depends_on:
@@ -451,6 +475,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${ORDER_DB_USER:?Set ORDER_DB_USER in .env}@order-db:5432/foc_orders
       PGPASSWORD: ${ORDER_DB_PASSWORD:?Set ORDER_DB_PASSWORD in .env}
       USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
       SUPPLIER_SERVICE_URL: http://supplier-service:8080
       APP_ENV: ${APP_ENV:-development}
       APP_VERSION: ${APP_VERSION:-unknown}
@@ -463,6 +488,8 @@ services:
     networks:
       - default
       - order-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
     ports:
       - "127.0.0.1:8082:8080"
 
@@ -495,6 +522,93 @@ services:
     healthcheck:
       disable: true
 
+  notification-db:
+    image: postgres:16-alpine
+    container_name: notification-db
+    environment:
+      POSTGRES_DB: foc_notifications
+      POSTGRES_USER: ${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+    networks:
+      - notification-private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d foc_notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  notification-migrate:
+    image: foc-notification-service:local
+    build: ./notification-service
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
+      PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+    depends_on:
+      notification-db:
+        condition: service_healthy
+    networks:
+      - notification-private
+    healthcheck:
+      disable: true
+
+  notification-service:
+    image: foc-notification-service:local
+    build: ./notification-service
+    container_name: notification-service
+    environment:
+      DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
+      PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      USER_SERVICE_URL: https://user-service:8080
+      USER_SERVICE_CA_FILE: /run/tls/ca.crt
+      SSE_HEARTBEAT_SECONDS: ${SSE_HEARTBEAT_SECONDS:-20}
+      SSE_MAX_LIFETIME_SECONDS: ${SSE_MAX_LIFETIME_SECONDS:-600}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      notification-migrate:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - notification-private
+    volumes:
+      - ${INTERNAL_CA_CERT_FILE:-./certs/ca.crt}:/run/tls/ca.crt:ro
+    ports:
+      - "127.0.0.1:8084:8080"
+
+  notification-worker:
+    image: foc-notification-service:local
+    build: ./notification-service
+    container_name: notification-worker
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${NOTIFICATION_DB_USER:?Set NOTIFICATION_DB_USER in .env}@notification-db:5432/foc_notifications
+      PGPASSWORD: ${NOTIFICATION_DB_PASSWORD:?Set NOTIFICATION_DB_PASSWORD in .env}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NOTIFICATIONS_START_AT: ${NOTIFICATIONS_START_AT:?Set NOTIFICATIONS_START_AT in .env}
+      # "-", not ":-": an empty value is valid and means no retries.
+      NOTIFICATION_RETRY_BACKOFF_SECONDS: ${NOTIFICATION_RETRY_BACKOFF_SECONDS-0.5,1,2,4}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      notification-migrate:
+        condition: service_completed_successfully
+      kafka-topics:
+        condition: service_completed_successfully
+    networks:
+      - default
+      - notification-private
+    healthcheck:
+      disable: true
+
 networks:
   default: {}
   supplier-private:
@@ -502,6 +616,8 @@ networks:
   credit-private:
     internal: true
   order-private:
+    internal: true
+  notification-private:
     internal: true
 
 volumes:
@@ -512,3 +628,4 @@ volumes:
   vector-data:
   loki-data:
   grafana-data:
+  notification-db-data:

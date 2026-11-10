@@ -23,6 +23,7 @@ from app.services.users import (
     deactivate_user,
     get_user_status,
     get_user_profile,
+    grant_admin_rights,
     is_user_admin,
     login_user,
     reactivate_user,
@@ -132,6 +133,17 @@ def revoke_admin(
     """Revoke administrator rights from another administrator."""
 
     return revoke_admin_rights(auth.user_id, user_id, db)
+
+
+@router.post("/admin/users/{user_id}/grant-admin", response_model=UserResponse)
+def grant_admin(
+    user_id: UUID,
+    auth: AuthContext = Depends(get_current_session),
+    db: Session = Depends(get_db),
+):
+    """Grant administrator rights to another active user."""
+
+    return grant_admin_rights(auth.user_id, user_id, db)
 
 
 @router.get("/users/{user_id}", response_model=BasicProfileResponse)

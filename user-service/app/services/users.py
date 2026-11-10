@@ -539,6 +539,75 @@ def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
     return target
 
 
+def grant_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
+    """Grant administrator rights to another active user.
+
+    The actor and target are re-authorized while locked in the same transaction
+    as the role change. The administrator-state lock serializes this operation
+    with other role and account-status mutations.
+    """
+
+    try:
+        actor = _load_user(actor_id, db)
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+
+        target = _load_user(target_id, db)
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot grant themselves administrator rights",
+            )
+        if target.role == "admin":
+            raise HTTPException(status_code=409, detail="User is already an administrator")
+        if target.status != "active":
+            raise HTTPException(
+                status_code=409,
+                detail="Only active users can be made administrators",
+            )
+
+        _lock_admin_state(db)
+        actor = _load_user(actor_id, db, lock=True)
+        target = _load_user(target_id, db, lock=True)
+        if actor is None or actor.status != "active" or actor.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin privileges required")
+        if target is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == actor.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Administrators cannot grant themselves administrator rights",
+            )
+        if target.role == "admin":
+            raise HTTPException(status_code=409, detail="User is already an administrator")
+        if target.status != "active":
+            raise HTTPException(
+                status_code=409,
+                detail="Only active users can be made administrators",
+            )
+
+        target.role = "admin"
+        db.commit()
+        db.refresh(target)
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    logger.info(
+        "admin_rights_granted",
+        extra={
+            "actor_user_id": str(actor.id),
+            "target_user_id": str(target.id),
+        },
+    )
+    return target
+
+
 def deactivate_user(user: User, db: Session) -> User:
     """Deactivate an account while retaining its persisted profile record."""
 
