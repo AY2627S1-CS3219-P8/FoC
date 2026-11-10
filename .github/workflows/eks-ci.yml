@@ -2,7 +2,7 @@ name: FoC EKS CI
 
 on:
   push:
-    branches: [main]
+    branches: [feat/cloud-deployment]
     paths:
       - '.github/workflows/eks-*.yml'
       - 'deploy/k8s/**'
