@@ -95,6 +95,23 @@ and [usage log](supplier-service/ai/usage-log.md) record the affected files and 
 Claude Code (claude-opus-5-5 and claude-sonnet-5-5) assisted Notification Service work; see the
 [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service)
 and [usage log](notification-service/ai/usage-log.md).
+A Cursor agent (model not recorded) assisted Ewen Low's event broker work; see the
+[event broker summary](event-broker/README.md#ai-use-summary-event-broker-ewen-low).
+
+- [Event broker](event-broker/README.md#ai-use-summary-event-broker-ewen-low):
+  Writing implementation code and Boilerplate generation covered
+  `event-broker/compose.yaml`, `event-broker/create-topics.sh`, the root
+  `compose.yaml` `include:` line, and the `event-broker/**` CI path filter.
+  Refactoring and documentation improvements covered `event-broker/README.md`.
+  Debugging assistance covered merge-conflict resolution in the broker files and
+  the Compose CI workflow. Learning support explained Kafka, the broker container,
+  and the DLQs. The AI also proposed the RabbitMQ-to-Kafka change when asked how to
+  align the architecture with the lecture. Agent checks against the running stack
+  covered keyed publishing, recovery after a Kafka outage, replay by a new consumer
+  group, and DLQ routing. `compose-validation` passed on PR #27. Ewen committed and
+  merged the work; no further review is recorded. Exact prompts and key responses
+  are in the event broker README; the model identifier is unavailable, and there are
+  no file-header attributions or usage-log entries yet.
 
 - [Database and migration work](supplier-service/ai/usage-log.md#ai-20260929-001):
   Requirements work, Learning support, Boilerplate generation, Writing implementation
