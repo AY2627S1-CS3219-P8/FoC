@@ -2,11 +2,50 @@
 
 ## Friend on Campus (FoC)
 
-**Friend on Campus (FoC)** is a peer-to-peer campus errand platform where
-students can request items to be collected from stores or facilities on
-campus, and other students can fulfil (and deliver) those requests. The
-platform runs on a closed credit economy — credits cannot be bought,
-withdrawn, or exchanged for money, and only circulate within the platform.
+## Friend on Campus (FoC)
+
+Friend on Campus (FoC) is a peer-to-peer campus errand platform for NUS
+students. A requester can ask another student to collect an item from a campus
+supplier and deliver it to a chosen campus location. Couriers earn credits for
+completed errands, creating a closed internal economy: credits cannot be bought,
+withdrawn, or exchanged for money.
+
+FoC is implemented as a service-oriented application:
+
+- **Frontend Service** — Next.js web application providing authentication,
+  supplier browsing, errand creation, order tracking, credit views, and
+  server-side service integration. Session tokens remain in secure HTTP-only
+  cookies.
+- **User Service** — student registration, authentication, sessions, profiles,
+  roles, account lifecycle, and authorization.
+- **Supplier Service** — NUS supplier and category data, public browsing,
+  administrator reads, validation, soft deletion, seed imports, and supplier
+  image delivery.
+- **Order Service** — errand creation and idempotency, supplier validation,
+  courier acceptance, pickup, completion, cancellation, expiry, and order
+  lifecycle events.
+- **Credit Service** — account initialization, reservations, settlement,
+  refunds, transaction auditing, administrator adjustments, transactional
+  outbox processing, and dead-letter handling.
+- **Notification Service** — per-user notifications generated from order events,
+  notification history, read-status updates, and live Server-Sent Events.
+- **Event Broker and Contracts** — Kafka topics and versioned AsyncAPI contracts
+  coordinate asynchronous order, credit, and notification workflows.
+
+Each backend service owns its PostgreSQL database. Kafka provides durable
+event delivery with idempotent consumers, retries, transactional outboxes, and
+dead-letter queues. Services communicate through documented APIs rather than
+direct database access. Internal User Service calls use certificate-verified
+HTTPS.
+
+The complete stack can run locally with Docker Compose and can also be
+deployed to a local kind Kubernetes cluster or AWS EKS. Centralized backend
+logging uses structured JSON records collected by Vector, stored in Loki, and
+visualized and alerted through Grafana.
+
+The main remaining integration work is relaying Notification Service history
+and live events through the Frontend Service. Administrator interfaces for
+credit, account, and order management are also not yet exposed in the frontend.
 
 ---
 
@@ -14,11 +53,11 @@ withdrawn, or exchanged for money, and only circulate within the platform.
 
 | Name        | Role             |
 | ----------- | ---------------- |
-| Swee Kah Ho | Frontend Service |
-| Max Khoo    | User Service     |
-| Keith Shen  | Supplier Service |
-| Chen Chi    | Credit Service   |
-| Ewen Low    | Order Service    |
+| Swee Kah Ho | Frontend Service + Admin Dashboard |
+| Max Khoo    | User Service + Centralized Logging    |
+| Keith Shen  | Supplier Service + Notification Service |
+| Chen Chi    | Credit Service + Cloud Deployment |
+| Ewen Low    | Order Service + Kubernetes  |
 
 ---
 
@@ -30,20 +69,62 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
 
 ```text
 .
-├── user-service/
-├── supplier-service/
-├── order-service/
-├── credit-service/
-├── <n2h-service>/
-└── README.md
+├── frontend-service/              # Next.js web application
+│   ├── app/                       # Routes and pages
+│   ├── components/                # Reusable UI components
+│   ├── lib/                       # Server clients, actions, validation, utilities
+│   └── test/                      # Frontend tests
+│
+├── user-service/                  # Accounts, authentication, profiles, roles
+│   ├── app/
+│   ├── alembic/
+│   ├── scripts/
+│   └── tests/
+│
+├── supplier-service/              # Suppliers, categories, seed imports
+│   ├── app/
+│   ├── migrations/
+│   ├── database/
+│   ├── seed/
+│   ├── tools/
+│   ├── documentation/
+│   └── tests/
+│
+├── order-service/                 # Errand lifecycle and order events
+│   ├── app/
+│   ├── alembic/
+│   └── tests/
+│
+├── credit-service/                # Closed credit economy and settlement
+│   ├── app/
+│   ├── alembic/
+│   └── tests/
+│
+├── notification-service/          # Notification history and live SSE streams
+│   ├── app/
+│   ├── alembic/
+│   ├── ai/
+│   └── tests/
+│
+├── packages/
+│   └── foc-observability/         # Shared structured logging and context
+│
+├── contracts/
+│   ├── asyncapi.yaml              # Versioned Kafka event contract
+│   └── README.md
+│
+├── event-broker/                  # Kafka topic setup and broker guidance
+├── data/                          # Seed CSVs, images, mappings, and provenance
+├── observability/                 # Vector, Loki, and Grafana configuration
+├── deploy/
+│   ├── k8s/                       # Kubernetes manifests
+│   └── aws/                       # AWS and GitHub OIDC infrastructure
+├── docs/                          # Architecture, HTTPS, observability, and EKS guides
+├── scripts/                       # TLS, Compose, Kubernetes, EKS, and verification scripts
+├── compose.yaml                   # Local multi-service deployment
+├── pytest.ini                     # Shared Python test configuration
+└── LICENSE
 ```
-
-- Any **nice-to-have (N2H)** feature that warrants its own service should
-  be added as an **additional folder** at the same level, following the
-  same per-service structure.
-- Files for agentic coding tools (e.g. agent configs, prompts, skills)
-  may be added as needed, but must still **respect the
-  one-service-per-folder skeleton** for core implementation.
 
 ---
 
