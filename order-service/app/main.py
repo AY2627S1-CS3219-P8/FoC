@@ -12,10 +12,13 @@ from sqlalchemy.orm import Session
 from app.clients import SupplierServiceClient, UserServiceClient
 from app.config import required_env
 from app.db import database_url, get_db, make_engine, make_session_factory
+from foc_observability import RequestContextMiddleware, configure_logging, log_event
+from app.routes.admin import router as admin_router
 from app.routes.orders import router as orders_router
 
 
 logger = logging.getLogger(__name__)
+configure_logging("order-service", component="api")
 
 
 @asynccontextmanager
@@ -38,11 +41,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="FoC Order Service", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 
 
 @app.exception_handler(OperationalError)
 async def database_unavailable(request: Request, exc: OperationalError) -> JSONResponse:
-    logger.error("database_unavailable", extra={"path": request.url.path})
+    log_event(
+        logger,
+        logging.ERROR,
+        "database_unavailable",
+        path=request.url.path,
+    )
     return JSONResponse(
         status_code=503, content={"detail": "Database temporarily unavailable"}
     )
@@ -62,8 +71,10 @@ def readiness_check(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
     except SQLAlchemyError as exc:
+        log_event(logger, logging.WARNING, "readiness_check_failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "ready"}
 
 
 app.include_router(orders_router)
+app.include_router(admin_router)

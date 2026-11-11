@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "order-service/**"
+      - "packages/foc-observability/**"
       - ".github/workflows/order-service.yml"
   pull_request:
     paths:
       - "order-service/**"
+      - "packages/foc-observability/**"
       - ".github/workflows/order-service.yml"
 
 permissions:
@@ -59,4 +61,4 @@ jobs:
         working-directory: order-service
 
       - name: Build order-service image
-        run: docker build --tag foc-order-service:ci ./order-service
+        run: docker build --tag foc-order-service:ci --file order-service/Dockerfile .

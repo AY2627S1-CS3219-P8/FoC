@@ -38,6 +38,7 @@ SOURCE_HEADERS = (
     "Name", "Type", "Building", "Floor", "Location Description", "Latitude",
     "Longitude", "StartingTime", "ClosingTime", "ImageURL",
 )
+SEED_HEADERS = (*SOURCE_HEADERS, "ImageKey")
 DEFAULT_SEED_ROOT = Path(__file__).resolve().parents[2] / "seed"
 
 
@@ -129,7 +130,7 @@ def load_csv(path: str | PathLike[str]) -> CsvSource:
 
             reader = csv.DictReader(tracked_lines(), strict=True)
             headers = reader.fieldnames or []
-            missing = tuple(field for field in SOURCE_HEADERS if field not in headers)
+            missing = tuple(field for field in SOURCE_HEADERS if field != "ImageURL" and field not in headers)
             duplicates = tuple(field for field, count in Counter(headers).items() if count > 1)
             if missing:
                 issues.append(SeedIssue(context, missing, "MISSING_HEADERS", "Required CSV headers are missing."))
@@ -374,11 +375,37 @@ IMAGE_KEYS = {
     "https://github.com/CS3219-AY2627S1/FoC-Template/blob/main/data/images/INSTACHEF.jpeg": "INSTACHEF.jpeg",
     "https://github.com/CS3219-AY2627S1/FoC-Template/blob/main/data/images/ROBOT_CAFE.jpeg": "ROBOT_CAFE.jpeg",
 }
+
+
+def resolve_image_reference(image_key, image_url, report):
+    """Resolve portable filenames and exact legacy provenance, reporting all errors."""
+    raw_key = image_key or ""
+    key = raw_key.strip() or None
+    url = (image_url or "").strip()
+    # Restrict to portable ASCII filenames: no paths, URL syntax, percent escapes,
+    # traversal sequences, spaces, or control characters (even at the edges).
+    if key and (
+        any(ord(char) < 32 or ord(char) == 127 for char in raw_key)
+        or ".." in key
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.(?i:jpe?g|png|webp|gif|avif|svg|bmp|ico|tiff?)", key)
+    ):
+        report(("ImageKey",), "INVALID_IMAGE_KEY",
+               "ImageKey must be a filename with a common image extension (for example anna.webp), without paths, URLs, traversal, or control characters.")
+    legacy_key = IMAGE_KEYS.get(url) if url else None
+    if url and legacy_key is None:
+        report(("ImageURL",), "UNKNOWN_IMAGE",
+               "ImageURL must be one of the six reviewed GitHub URLs. For a new asset, put its filename in ImageKey and leave ImageURL blank; retain other provenance in review notes.")
+    if key and legacy_key and key != legacy_key:
+        report(("ImageKey", "ImageURL"), "CONFLICTING_IMAGE_REFERENCE",
+               f"ImageURL maps to {legacy_key!r}, which does not match ImageKey {key!r}.")
+    return key or legacy_key
+
+
 CATEGORY_NAMES = frozenset({"Food", "Coffee", "Shopping", "Printing"})
 _INVALID_SOURCE_TIME = object()
 _SCALAR_SOURCE_FIELDS = {
     "name": "Name", "building": "Building", "floor": "Floor",
-    "description": "Location Description", "image_key": "ImageURL",
+    "description": "Location Description", "image_key": "ImageKey",
     "location.latitude": "Latitude", "location.longitude": "Longitude",
     "opening_time": "StartingTime", "closing_time": "ClosingTime",
 }
@@ -452,10 +479,7 @@ def normalize_seed_source(source: SeedSourceResult) -> ParsedSeedBatch:
             elif label not in categories:
                 categories.append(label)
 
-        image_url = (row.get("ImageURL") or "").strip()
-        image_key = IMAGE_KEYS.get(image_url) if image_url else None
-        if image_url and image_key is None:
-            report(("ImageURL",), "UNKNOWN_IMAGE", "Image URL is not one of the six reviewed source references.")
+        image_key = resolve_image_reference(row.get("ImageKey"), row.get("ImageURL"), report)
 
         opening = _source_time(row.get("StartingTime"))
         closing = _source_time(row.get("ClosingTime"))

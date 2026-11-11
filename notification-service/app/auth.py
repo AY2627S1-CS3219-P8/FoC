@@ -9,11 +9,16 @@
 Follows credit-service/app/auth.py.
 """
 
+import logging
 from typing import Annotated
 
 from fastapi import Header, HTTPException, Request, status
 
 from app.clients import AuthenticationUnavailableError, Identity, InvalidSessionError
+from foc_observability import log_event
+
+
+logger = logging.getLogger(__name__)
 
 
 def _unauthorized() -> HTTPException:
@@ -30,12 +35,30 @@ def get_current_identity(
 ) -> Identity:
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
+        log_event(
+            logger,
+            logging.WARNING,
+            "authentication_rejected",
+            reason="missing_or_malformed_bearer_header",
+        )
         raise _unauthorized()
     try:
         return request.app.state.user_client.resolve_identity(token.strip())
     except InvalidSessionError:
+        log_event(
+            logger,
+            logging.WARNING,
+            "authentication_rejected",
+            reason="invalid_session",
+        )
         raise _unauthorized() from None
     except AuthenticationUnavailableError:
+        log_event(
+            logger,
+            logging.ERROR,
+            "authentication_unavailable",
+            upstream="user-service",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication temporarily unavailable",

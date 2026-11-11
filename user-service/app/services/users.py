@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from argon2 import PasswordHasher
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from app.auth import (
 )
 from app.models import ADMIN_STATE_LOCK_NAME, AdminStateLock, User, UserSession
 from app.schemas import LoginResponse, UserCreate, UserLogin, UserUpdate
+from foc_observability import log_event
 
 
 password_hasher = PasswordHasher()
@@ -113,12 +114,24 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
         )
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "login_failed",
+            reason="database_unavailable",
+        )
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
     password_hash = user.password_hash if user else DUMMY_PASSWORD_HASH
     password_matches = verify_password(payload.password, password_hash)
 
     if not user or not password_matches or user.status != "active":
+        log_event(
+            logger,
+            logging.WARNING,
+            "login_failed",
+            reason="invalid_credentials",
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     now = datetime.now(timezone.utc)
@@ -138,11 +151,29 @@ def login_user(payload: UserLogin, db: Session) -> LoginResponse:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "login_failed",
+            reason="session_persistence_failed",
+        )
         raise HTTPException(status_code=503, detail="Authentication temporarily unavailable") from exc
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "login_failed",
+            reason="database_unavailable",
+        )
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
+    log_event(
+        logger,
+        logging.INFO,
+        "login_succeeded",
+        user_id=str(user.id),
+    )
     return LoginResponse(
         access_token=raw_token,
         expires_in=int(SESSION_INACTIVITY.total_seconds()),
@@ -164,9 +195,21 @@ def register_user(payload: UserCreate, db: Session) -> User:
         )
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "registration_failed",
+            reason="database_unavailable",
+        )
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
     if existing:
+        log_event(
+            logger,
+            logging.WARNING,
+            "registration_failed",
+            reason="identity_conflict",
+        )
         raise HTTPException(status_code=409, detail="Unable to create account")
 
     user = User(
@@ -183,11 +226,29 @@ def register_user(payload: UserCreate, db: Session) -> User:
         db.refresh(user)
     except IntegrityError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.WARNING,
+            "registration_failed",
+            reason="identity_conflict",
+        )
         raise HTTPException(status_code=409, detail="Unable to create account") from exc
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "registration_failed",
+            reason="database_unavailable",
+        )
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
+    log_event(
+        logger,
+        logging.INFO,
+        "user_registered",
+        user_id=str(user.id),
+    )
     return user
 
 
@@ -229,6 +290,15 @@ def update_user_profile(user: User, payload: UserUpdate, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
+    changed_fields = sorted(payload.model_fields_set)
+    log_event(
+        logger,
+        logging.INFO,
+        "password_changed" if payload.password is not None else "profile_updated",
+        user_id=str(user.id),
+        changed_fields=changed_fields,
+        sessions_revoked=payload.password is not None,
+    )
     return user
 
 
@@ -270,6 +340,89 @@ def get_user_status(user_id: UUID, db: Session) -> str:
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
     return user.status if user else "unknown"
+
+
+def _require_admin(actor_id: UUID, db: Session) -> None:
+    """Reject the request unless the actor is an active administrator."""
+
+    actor = _load_user(actor_id, db)
+    if actor is None or actor.status != "active" or actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards so a search term only matches literally."""
+
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_users_for_admin(
+    actor_id: UUID,
+    db: Session,
+    *,
+    query: str | None,
+    status: str | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[User], int]:
+    """Return a page of accounts in any status for an active administrator.
+
+    ``query`` matches case-insensitively against the student number, email
+    and display name. Results are newest first, with the ID as a tiebreaker so
+    paging is stable when accounts share a creation time.
+    """
+
+    try:
+        _require_admin(actor_id, db)
+
+        filters = []
+        if status is not None:
+            filters.append(User.status == status)
+        term = (query or "").strip().lower()
+        if term:
+            pattern = f"%{_escape_like(term)}%"
+            filters.append(
+                or_(
+                    func.lower(User.nus_student_number).like(pattern, escape="\\"),
+                    func.lower(User.email).like(pattern, escape="\\"),
+                    func.lower(User.display_name).like(pattern, escape="\\"),
+                )
+            )
+
+        total = db.scalar(select(func.count()).select_from(User).where(*filters)) or 0
+        items = list(
+            db.scalars(
+                select(User)
+                .where(*filters)
+                .order_by(User.created_at.desc(), User.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    return items, total
+
+
+def get_user_for_admin(actor_id: UUID, target_id: UUID, db: Session) -> User:
+    """Return any account, whatever its status, to an active administrator."""
+
+    try:
+        _require_admin(actor_id, db)
+        target = _load_user(target_id, db)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return target
 
 
 def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
@@ -331,12 +484,12 @@ def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    logger.info(
+    log_event(
+        logger,
+        logging.INFO,
         "account_suspended",
-        extra={
-            "actor_user_id": str(actor.id),
-            "target_user_id": str(target.id),
-        },
+        actor_user_id=str(actor.id),
+        target_user_id=str(target.id),
     )
     return target
 
@@ -400,12 +553,12 @@ def unsuspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    logger.info(
+    log_event(
+        logger,
+        logging.INFO,
         "account_unsuspended",
-        extra={
-            "actor_user_id": str(actor.id),
-            "target_user_id": str(target.id),
-        },
+        actor_user_id=str(actor.id),
+        target_user_id=str(target.id),
     )
     return target
 
@@ -459,12 +612,12 @@ def revoke_admin_rights(actor_id: UUID, target_id: UUID, db: Session) -> User:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
-    logger.info(
+    log_event(
+        logger,
+        logging.INFO,
         "admin_rights_revoked",
-        extra={
-            "actor_user_id": str(actor.id),
-            "target_user_id": str(target.id),
-        },
+        actor_user_id=str(actor.id),
+        target_user_id=str(target.id),
     )
     return target
 
@@ -582,6 +735,12 @@ def deactivate_user(user: User, db: Session) -> User:
     except SQLAlchemyError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+    log_event(
+        logger,
+        logging.INFO,
+        "account_deactivated",
+        user_id=str(locked_user.id),
+    )
     return locked_user
 
 
@@ -598,11 +757,23 @@ def reactivate_user(payload: UserLogin, db: Session) -> User:
         candidate = _load_user_by_student_number(student_number, db)
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "account_reactivation_failed",
+            reason="database_unavailable",
+        )
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
     password_hash = candidate.password_hash if candidate else DUMMY_PASSWORD_HASH
     password_matches = verify_password(payload.password, password_hash)
     if not candidate or not password_matches or candidate.status == "suspended":
+        log_event(
+            logger,
+            logging.WARNING,
+            "account_reactivation_failed",
+            reason="invalid_credentials",
+        )
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     try:
@@ -612,11 +783,23 @@ def reactivate_user(payload: UserLogin, db: Session) -> User:
             _lock_admin_state(db)
         user = _load_user_by_student_number(student_number, db, lock=True)
         if not user:
+            log_event(
+                logger,
+                logging.WARNING,
+                "account_reactivation_failed",
+                reason="invalid_credentials",
+            )
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
         # Re-check after locking in case the password or account status changed
         # while the credential was being verified.
         if not verify_password(payload.password, user.password_hash) or user.status == "suspended":
+            log_event(
+                logger,
+                logging.WARNING,
+                "account_reactivation_failed",
+                reason="invalid_credentials",
+            )
             raise HTTPException(status_code=401, detail="Invalid credentials")
         user.status = "active"
         db.commit()
@@ -626,5 +809,17 @@ def reactivate_user(payload: UserLogin, db: Session) -> User:
         raise
     except SQLAlchemyError as exc:
         db.rollback()
+        log_event(
+            logger,
+            logging.ERROR,
+            "account_reactivation_failed",
+            reason="database_unavailable",
+        )
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+    log_event(
+        logger,
+        logging.INFO,
+        "account_reactivated",
+        user_id=str(user.id),
+    )
     return user

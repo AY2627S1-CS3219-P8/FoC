@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "supplier-service/**"
+      - "packages/foc-observability/**"
       - ".github/workflows/supplier-service.yml"
   pull_request:
     paths:
       - "supplier-service/**"
+      - "packages/foc-observability/**"
       - ".github/workflows/supplier-service.yml"
 
 permissions:
@@ -40,7 +42,7 @@ jobs:
         working-directory: supplier-service
 
       - name: Build supplier API image
-        run: docker build --tag foc-supplier-service:ci ./supplier-service
+        run: docker build --tag foc-supplier-service:ci --file supplier-service/Dockerfile .
 
       - name: Build supplier database image
         run: docker build --tag foc-supplier-db:ci ./supplier-service/database

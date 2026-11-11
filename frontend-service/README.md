@@ -1,3 +1,11 @@
+<!--
+AI Assistance Disclosure:
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-11
+Scope: Refactoring and documentation improvements — write the "Notification Service" section covering the relay routes, live stream, UI, errors, and configuration (ai-20261111-001). The AI Use Summary section is a disclosure record.
+Author review: Not confirmed (pending).
+Details: frontend-service/ai/usage-log.md; ai-20261111-001
+-->
+
 # React NextJS Shadcn + TailwindCSS Template
 
 Components installed in template:
@@ -100,7 +108,7 @@ public reads: `GET /suppliers`, `GET /suppliers/{id}`, `GET /categories` and
   defaulting to the seed images the CSV references
   (`raw.githubusercontent.com/CS3219-AY2627S1/FoC-Template/main/data/images`);
   the frontend neither stores nor proxies image files. Suppliers without an
-  image show a category icon. `NEXT_PUBLIC_*` values are inlined at build time.
+  image or with a failed image load show the existing fallback icon. `NEXT_PUBLIC_*` values are inlined at build time.
 - **Unavailable service**: the frontend does not depend on Supplier Service to
   start (no Compose `depends_on`). If the service is down, unreachable, slow
   (5 s timeout) or returns an invalid response, supplier pages show an error
@@ -193,6 +201,59 @@ Service. Both require the User Service bearer token, which is read from the
   and rewrite the ones a user can act on, such as an errand another courier
   accepted first, so components never check HTTP status codes.
 
+## Notification Service
+
+Notifications about the user's own errands (opened, accepted, picked up,
+completed, expired, rejected or cancelled) come from Notification Service.
+See its [API reference](../notification-service/README.md#api-reference) for
+who receives which notification.
+
+- **Relay routes** (`app/api/notifications/`, `lib/notification-relay.ts`):
+  the browser never calls Notification Service, which is published only on
+  the host's loopback interface. Each route reads the `foc_session` cookie,
+  sends it as `Authorization: Bearer`, and passes the upstream status and
+  JSON body back unchanged. If the service can't be reached, the route
+  answers `503` itself; a request with no cookie gets a `401` without calling
+  the service. `proxy.ts` lets `/api/` requests through without a cookie so
+  they get that JSON `401` rather than a redirect to the login page.
+
+  | Relay route                           | Notification Service              | Forwards          |
+  | ------------------------------------- | --------------------------------- | ----------------- |
+  | `GET /api/notifications`              | `GET /notifications`              | `cursor`, `limit` |
+  | `GET /api/notifications/unread-count` | `GET /notifications/unread-count` | —                 |
+  | `POST /api/notifications/[id]/read`   | `POST /notifications/{id}/read`   | `[id]` as is      |
+  | `POST /api/notifications/read-all`    | `POST /notifications/read-all`    | —                 |
+  | `GET /api/notifications/stream`       | `GET /notifications/stream`       | `Last-Event-ID`   |
+
+- **Live stream**: the stream route pipes the Server-Sent Events body through
+  as it arrives, with `Cache-Control: no-cache, no-transform` (which also
+  keeps Next's gzip from buffering it) and `X-Accel-Buffering: no`. It has no
+  timeout of its own; Notification Service ends each stream after
+  `SSE_MAX_LIFETIME_SECONDS` and `EventSource` reconnects with
+  `Last-Event-ID`, which replays anything missed. Closing the page aborts the
+  upstream request. A `401` or `503` before the stream starts comes back as
+  JSON.
+- **UI** (user view only): `NotificationProvider` in the main layout holds
+  one `EventSource` for the whole app and counts unread notifications. The
+  count is read when a fresh stream opens and whenever the tab becomes
+  visible again, and each live event adds one. The bell shows the count as
+  "Alerts" in the side navigation on desktop and in a slim bar above the page
+  on mobile. `/notifications` lists the history newest first, 20 at a time
+  with "Load more" (Notification Service pages by cursor, so nothing is
+  skipped), shows new notifications at the top as they arrive, and has "Mark
+  all read". Opening a notification marks it read and goes to the Orders tab
+  for the user's role on that order. The admin view shows no bell and opens no
+  stream, and `/notifications` redirects administrators in that view to the
+  admin pages.
+- **Errors**: a `401` from any relay route goes to `/auth/expired`, which logs
+  the user out once User Service confirms the session ended. If the stream is
+  refused before it starts (for example during a Notification Service
+  outage), the provider retries every 15 seconds.
+- **Configuration**: set `NOTIFICATION_SERVICE_URL` at runtime. Compose uses
+  `http://notification-service:8080`; `yarn dev` defaults to
+  `http://127.0.0.1:8084`. Notification Service isn't deployed to the
+  Kubernetes manifests yet, so `deploy/k8s` doesn't set it.
+
 ## Authentication
 
 Authentication goes through User Service, but the browser never talks to it
@@ -212,7 +273,7 @@ never sees the token and User Service needs no CORS configuration.
   browser reaches User Service. It and `lib/session.ts` import
   `server-only`, so importing either from a client component fails the build.
 - **Server Actions** (`lib/auth-actions.ts`): `login`, `signup`,
-  `reactivate`, `logout`, `updateProfile` and `deactivateAccount`. They return
+  `logout`, `updateProfile` and `deactivateAccount`. They return
   `{ ok, error, fieldErrors }` instead of throwing, so forms can show User
   Service validation messages next to the matching field.
 - **Session** (`lib/session.ts`): sets and clears the cookie. The cookie is
@@ -232,15 +293,14 @@ never sees the token and User Service needs no CORS configuration.
 
 | Page                | User Service endpoints                                                 |
 | ------------------- | ---------------------------------------------------------------------- |
-| `/` login           | `POST /login`; `POST /users/me/reactivate` from "Reactivate it"        |
+| `/` login           | `POST /login`                                                          |
 | `/signup`           | `POST /users`, then `POST /login`                                      |
 | `/profile`          | `GET /users/me`, `PATCH /users/me`, `DELETE /users/me`, `POST /logout` |
 | every `(main)` page | `GET /users/me`                                                        |
 
 Login uses the **NUS student number** (for example `A1234567B`) and
-password. User Service returns the same 401 for a wrong password and a
-deactivated account, so the login form offers "Reactivate it" after User
-Service rejects the credentials. A password change revokes every session, so `updateProfile` logs in
+password. The frontend offers no way to reactivate a deactivated account;
+only an administrator can restore it. A password change revokes every session, so `updateProfile` logs in
 again with the new password to keep the current device signed in.
 
 Not integrated yet: the admin endpoints (`/admin/users/{id}/suspend`,
@@ -327,3 +387,39 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+See [supplier image setup](../data/images/README.md) for the Docker build argument,
+local Nginx, browser-reachable URLs, and CloudFront configuration.
+
+## AI Use Summary (Frontend Service)
+
+### Notification Service integration (ai-20261111-001)
+
+Claude Code (model: claude-opus-5-5) provided **Writing implementation code**,
+**Boilerplate generation**, and **Refactoring and documentation improvements**
+for the notification integration: the relay Route Handlers under
+`app/api/notifications/` and `lib/notification-relay.ts`, the browser and
+server helpers (`lib/notifications.ts`, `lib/notification-service.ts`), the
+provider, bell and list components under `components/notifications/`, the
+`/notifications` page, the changes to `app/(main)/layout.tsx`,
+`components/app-nav.tsx` and `proxy.ts`, unit tests
+(`lib/notification-relay.test.ts`, `lib/notifications.test.ts`), the
+"Notification Service" section of this README, and `NOTIFICATION_SERVICE_URL`
+in root `compose.yaml`. The relay follows the handover contract in the
+Notification Service README, and the UI follows the user's answers on
+placement, live behaviour, click target and the admin view. A planned
+Kubernetes setting was dropped because Notification Service isn't deployed
+there. The same exchange also explained a Docker Desktop engine error and when
+notifications are sent, with no file changes.
+
+Observed verification (agent only): Prettier, ESLint and `tsc --noEmit`
+passed; `vitest run` passed 111 tests in 16 files; `next build` succeeded. A
+local `next start` against a fake SSE upstream showed the stream relayed
+unbuffered with its headers, `Last-Event-ID` and the token forwarded, the
+upstream closed on client disconnect, and JSON 401s passed through. The real
+Notification Service, Compose stack and browser UI were not exercised, because
+the Docker Desktop engine was failing. No human test rerun is claimed.
+
+Author review: Not confirmed (pending). See the
+[usage record](ai/usage-log.md#ai-20261111-001). Original per-message
+timestamps are unavailable; no redactions; no header exceptions.

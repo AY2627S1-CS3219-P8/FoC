@@ -1,5 +1,6 @@
 """Integration tests for profile access and lifecycle operations."""
 
+import logging
 from uuid import uuid4
 
 import pytest
@@ -104,16 +105,17 @@ def test_other_profile_exposes_only_display_name(client, database):
     assert response.json() == {"display_name": "Other Student"}
 
 
-def test_owner_can_partially_update_mutable_profile_fields(client, database):
+def test_owner_can_partially_update_mutable_profile_fields(client, database, caplog):
     """Profile updates preserve omitted fields and replace the password hash."""
 
     user = create_user(database)
     token = login(client)
-    response = client.patch(
-        "/users/me",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"display_name": "  Updated Student  ", "email": "NEW@example.com"},
-    )
+    with caplog.at_level(logging.INFO, logger="app.services.users"):
+        response = client.patch(
+            "/users/me",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"display_name": "  Updated Student  ", "email": "NEW@example.com"},
+        )
 
     assert response.status_code == 200
     assert response.json()["display_name"] == "Updated Student"
@@ -125,6 +127,16 @@ def test_owner_can_partially_update_mutable_profile_fields(client, database):
     assert user.display_name == "Updated Student"
     assert user.email == "new@example.com"
     assert user.nus_student_number == "A0123456X"
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "profile_updated"
+    )
+    assert record.fields == {
+        "user_id": str(user.id),
+        "changed_fields": ["display_name", "email"],
+        "sessions_revoked": False,
+    }
 
 
 def test_empty_profile_update_is_a_no_op(client, database):
@@ -203,17 +215,18 @@ def test_profile_update_rejects_display_names_with_unsupported_characters(
     assert "display_name contains unsupported" in response.json()["detail"][0]["msg"]
 
 
-def test_password_update_revokes_existing_session(client, database):
+def test_password_update_revokes_existing_session(client, database, caplog):
     """Changing a password invalidates the bearer session that made the change."""
 
-    create_user(database)
+    user = create_user(database)
     token = login(client)
     second_token = login(client)
-    response = client.patch(
-        "/users/me",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"password": "NewPassword1!"},
-    )
+    with caplog.at_level(logging.INFO, logger="app.services.users"):
+        response = client.patch(
+            "/users/me",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"password": "NewPassword1!"},
+        )
 
     assert response.status_code == 200
     for revoked_token in (token, second_token):
@@ -228,6 +241,16 @@ def test_password_update_revokes_existing_session(client, database):
         "/login",
         json={"nus_student_number": "A0123456X", "password": "NewPassword1!"},
     ).status_code == 200
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "password_changed"
+    )
+    assert record.fields == {
+        "user_id": str(user.id),
+        "changed_fields": ["password"],
+        "sessions_revoked": True,
+    }
 
 
 @pytest.mark.parametrize("field", ["nus_student_number", "role", "status", "created_at"])
@@ -335,16 +358,19 @@ def test_profile_lookup_hides_deactivated_user(client, database):
     assert response.json() == {"detail": "User not found"}
 
 
-def test_deactivation_preserves_record_and_reactivation_restores_it(client, database):
+def test_deactivation_preserves_record_and_reactivation_restores_it(
+    client, database, caplog
+):
     """Deactivation is reversible on the same user row."""
 
     user = create_user(database)
     token = login(client)
     second_token = login(client)
-    deactivated = client.post(
-        "/users/me/deactivate",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    with caplog.at_level(logging.INFO, logger="app.services.users"):
+        deactivated = client.post(
+            "/users/me/deactivate",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
     assert deactivated.status_code == 200
     assert deactivated.json()["status"] == "deactivated"
@@ -359,24 +385,42 @@ def test_deactivation_preserves_record_and_reactivation_restores_it(client, data
         )
         assert blocked.status_code == 401
 
-    invalid_reactivation = client.post(
-        "/users/reactivate",
-        json={"nus_student_number": "A0123456X", "password": "WrongPassword1!"},
-    )
+    with caplog.at_level(logging.INFO, logger="app.services.users"):
+        invalid_reactivation = client.post(
+            "/users/reactivate",
+            json={"nus_student_number": "A0123456X", "password": "WrongPassword1!"},
+        )
     assert invalid_reactivation.status_code == 401
     database.refresh(user)
     assert user.status == "deactivated"
 
-    reactivated = client.post(
-        "/users/me/reactivate",
-        json={"nus_student_number": "A0123456X", "password": "Password1!"},
-    )
+    with caplog.at_level(logging.INFO, logger="app.services.users"):
+        reactivated = client.post(
+            "/users/me/reactivate",
+            json={"nus_student_number": "A0123456X", "password": "Password1!"},
+        )
     assert reactivated.status_code == 200
     assert reactivated.json()["id"] == str(user.id)
     assert reactivated.json()["status"] == "active"
     assert client.get(
         "/users/me", headers={"Authorization": f"Bearer {token}"}
     ).status_code == 401
+
+    event_records = {
+        record.event: record
+        for record in caplog.records
+        if getattr(record, "event", None)
+        in {
+            "account_deactivated",
+            "account_reactivation_failed",
+            "account_reactivated",
+        }
+    }
+    assert event_records["account_deactivated"].fields == {"user_id": str(user.id)}
+    assert event_records["account_reactivation_failed"].fields == {
+        "reason": "invalid_credentials"
+    }
+    assert event_records["account_reactivated"].fields == {"user_id": str(user.id)}
 
     database.expire_all()
     assert database.scalar(select(User).where(User.id == user.id)).status == "active"

@@ -8,6 +8,7 @@ on:
       - "contracts/**"
       - "event-broker/**"
       - "compose.yaml"
+      - "packages/foc-observability/**"
       - ".github/workflows/credit-service.yml"
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - "contracts/**"
       - "event-broker/**"
       - "compose.yaml"
+      - "packages/foc-observability/**"
       - ".github/workflows/credit-service.yml"
 
 permissions:
@@ -50,4 +52,4 @@ jobs:
         working-directory: credit-service
 
       - name: Build credit-service image
-        run: docker build --tag foc-credit-service:ci ./credit-service
+        run: docker build --tag foc-credit-service:ci --file credit-service/Dockerfile .

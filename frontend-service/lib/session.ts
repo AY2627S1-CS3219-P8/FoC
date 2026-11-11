@@ -2,9 +2,13 @@ import 'server-only';
 
 import { cache } from 'react';
 import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
-import { SESSION_COOKIE_NAME, SESSION_EXPIRED_PATH } from '@/lib/auth';
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_EXPIRED_PATH,
+  VIEW_COOKIE_NAME,
+} from '@/lib/auth';
 import { type User, UserServiceError, userService } from '@/lib/user-service';
 
 export async function getSessionToken() {
@@ -32,8 +36,26 @@ export async function setSessionCookie(token: string) {
   });
 }
 
+/** Also leaves the admin view, so every new session starts as a user. */
 export async function clearSessionCookie() {
-  (await cookies()).delete(SESSION_COOKIE_NAME);
+  const store = await cookies();
+  store.delete(SESSION_COOKIE_NAME);
+  store.delete(VIEW_COOKIE_NAME);
+}
+
+/** Only callable from Server Actions and Route Handlers. */
+export async function setAdminViewCookie(enabled: boolean) {
+  const store = await cookies();
+  if (!enabled) {
+    store.delete(VIEW_COOKIE_NAME);
+    return;
+  }
+  store.set(VIEW_COOKIE_NAME, 'admin', {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: COOKIE_SECURE,
+    path: '/',
+  });
 }
 
 /**
@@ -55,3 +77,24 @@ export const requireCurrentUser = cache(async (): Promise<User> => {
     throw error;
   }
 });
+
+/**
+ * Whether the signed-in user is an administrator who switched to the admin
+ * view. A stale cookie on an account that lost its admin role is ignored.
+ */
+export const isAdminView = cache(async (): Promise<boolean> => {
+  const user = await requireCurrentUser();
+  const view = (await cookies()).get(VIEW_COOKIE_NAME)?.value;
+  return user.role === 'admin' && view === 'admin';
+});
+
+/**
+ * Guards admin pages. Non-administrators get a 404 so the pages' existence
+ * isn't advertised; an administrator in the user view goes back to the app.
+ */
+export async function requireAdminView(): Promise<User> {
+  const user = await requireCurrentUser();
+  if (user.role !== 'admin') notFound();
+  if (!(await isAdminView())) redirect('/home');
+  return user;
+}

@@ -1499,7 +1499,10 @@ including candidates within the batch. Deleted matches do not block a new UUID.
 Categories must already exist from migrations. See the
 [confirmed identity policy](docs/seed-mapping.md#confirmed-database-classification-policy).
 
-The JSON report includes:
+The command writes one structured JSON record to stdout. The standard logging
+envelope identifies it as the `supplier-seed` service with `component: "seed"`
+and an event describing the outcome. The existing report fields remain
+top-level fields in that record. It includes:
 
 - `source_count`, `validated_supplier_count`, `category_counts`, and
   `total_category_assignments`: source/diagnostic totals, not committed row counts.
@@ -2295,3 +2298,12 @@ suites and live authentication were not rerun; prior counts remain historical.
 Keith confirmed review of the README work and correction; no human test rerun is
 claimed. Both exact prompts and verbatim relevant responses are recorded; original
 timestamps are unavailable. No redactions or header exceptions apply.
+
+## Collecting an additional NUS supplier dataset
+
+The optional [Python collector and review workflow](tools/nus_collector/README.md)
+collects official Kent Ridge and UTown dining/retail listings, supports saved HTML
+when direct requests are blocked, and produces a review CSV and HTML report.
+Explicitly approved records export to a separate seed bundle with permanent
+identities. Validate locally, then use `supplier-seed-nus --dry-run` for database
+preview before importing. The original dataset and import defaults remain intact.

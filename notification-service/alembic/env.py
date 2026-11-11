@@ -10,10 +10,20 @@
 
 """Alembic migration environment for the Notification Service."""
 
-from logging.config import fileConfig
+import logging
+import os
+import sys
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+try:
+    from foc_observability import configure_logging, log_event
+except ModuleNotFoundError:
+    repository_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(repository_root / "packages/foc-observability/src"))
+    from foc_observability import configure_logging, log_event
 
 from app.config import required_env
 from app.db import SESSION_OPTIONS, Base
@@ -21,15 +31,13 @@ from app import models  # noqa: F401  (registers tables on Base.metadata)
 
 
 config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-database_url = required_env("DATABASE_URL")
-
-# Alembic's Config uses configparser interpolation for percent signs.
-config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-target_metadata = Base.metadata
+logger = logging.getLogger(__name__)
+configure_logging(
+    "notification-migrate",
+    component="migration",
+    level=os.getenv("LOG_LEVEL", "INFO"),
+)
+logging.getLogger("alembic").setLevel(logging.WARNING)
 
 
 def run_migrations_offline() -> None:
@@ -61,7 +69,34 @@ def run_migrations_online() -> None:
             context.run_migrations()
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+def main() -> None:
+    """Run the migration with structured lifecycle events."""
+
+    mode = "offline" if context.is_offline_mode() else "online"
+    log_event(logger, logging.INFO, "migration_started", mode=mode)
+    try:
+        database_url = required_env("DATABASE_URL")
+
+        # Alembic's Config uses configparser interpolation for percent signs.
+        config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+        global target_metadata
+        target_metadata = Base.metadata
+
+        if context.is_offline_mode():
+            run_migrations_offline()
+        else:
+            run_migrations_online()
+    except Exception as error:
+        log_event(
+            logger,
+            logging.ERROR,
+            "migration_failed",
+            mode=mode,
+            exception_type=type(error).__name__,
+        )
+        raise
+    else:
+        log_event(logger, logging.INFO, "migration_completed", mode=mode)
+
+
+main()

@@ -5,6 +5,7 @@
  */
 
 import { ServiceError } from '@/lib/service-request';
+import { UserServiceError } from '@/lib/user-service';
 
 export type ActionFailure = {
   ok: false;
@@ -38,13 +39,15 @@ export async function toResult<T extends object>(
   try {
     return { ok: true, ...(await run()) };
   } catch (error) {
-    if (!(error instanceof ServiceError)) throw error;
+    if (!(error instanceof ServiceError || error instanceof UserServiceError)) {
+      throw error;
+    }
     const override = overrides[error.status];
     return {
       ok: false,
       status: error.status,
       message: override?.message ?? error.message,
-      code: override?.code ?? error.code,
+      code: override?.code ?? ('code' in error ? error.code : undefined),
     };
   }
 }

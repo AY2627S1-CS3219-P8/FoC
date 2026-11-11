@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -16,6 +17,7 @@ from app.events import IncomingEvent, enqueue_event, isoformat_utc, parse_incomi
 from app.messaging import ORDER_TTL, RELAY_BATCH_SIZE
 from app.models import Order, ProcessedEvent, utc_now
 from app.schemas import DeliveryLocation, OrderCreate
+from foc_observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -152,13 +154,85 @@ def list_open_orders(
 
 
 def list_my_orders(
-    db: Session, actor: Identity, *, role: str, limit: int, offset: int
+    db: Session,
+    actor: Identity,
+    *,
+    role: str,
+    statuses: list[str] | None = None,
+    limit: int,
+    offset: int,
 ) -> tuple[list[Order], int]:
+    """The caller's orders in one role, optionally limited to some statuses."""
+
     if role == "requester":
-        filters = (Order.requester_id == actor.id,)
+        filters = [Order.requester_id == actor.id]
     else:
-        filters = (Order.courier_id == actor.id,)
+        filters = [Order.courier_id == actor.id]
+    if statuses:
+        filters.append(Order.status.in_(statuses))
+    return _page(db, tuple(filters), limit=limit, offset=offset)
+
+
+def list_all_orders(
+    db: Session, *, statuses: list[str] | None, limit: int, offset: int
+) -> tuple[list[Order], int]:
+    """Every order, newest first, optionally limited to some statuses.
+
+    Only for administrators; the route enforces that.
+    """
+
+    filters = (Order.status.in_(statuses),) if statuses else ()
     return _page(db, filters, limit=limit, offset=offset)
+
+
+ACTIVITY_BUCKET = timedelta(hours=1)
+
+
+def order_activity(db: Session, *, hours: int) -> dict:
+    """Count creations, acceptances and completions per hour.
+
+    Buckets are rolling hours ending now, oldest first, so the last bucket is
+    exactly the past hour. An order counts in each bucket where one of its
+    timestamps falls, whatever its current status.
+    """
+
+    window_end = utc_now()
+    window_start = window_end - ACTIVITY_BUCKET * hours
+    counts = {
+        name: [0] * hours for name in ("created", "accepted", "completed")
+    }
+    for name, column in (
+        ("created", Order.created_at),
+        ("accepted", Order.accepted_at),
+        ("completed", Order.completed_at),
+    ):
+        for at in db.scalars(
+            select(column).where(column >= window_start, column < window_end)
+        ):
+            index = int((_as_utc(at) - window_start) / ACTIVITY_BUCKET)
+            counts[name][min(index, hours - 1)] += 1
+
+    return {
+        "window_start": window_start,
+        "window_end": window_end,
+        "bucket_minutes": int(ACTIVITY_BUCKET.total_seconds() // 60),
+        "buckets": [
+            {
+                "start": window_start + ACTIVITY_BUCKET * i,
+                "end": window_start + ACTIVITY_BUCKET * (i + 1),
+                "created": counts["created"][i],
+                "accepted": counts["accepted"][i],
+                "completed": counts["completed"][i],
+            }
+            for i in range(hours)
+        ],
+    }
+
+
+def _as_utc(value: datetime) -> datetime:
+    """PostgreSQL returns aware timestamps; treat a naive one as UTC."""
+
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def get_order(db: Session, order_id: UUID, actor: Identity) -> Order:
@@ -178,7 +252,7 @@ def change_delivery(
             detail="Only the requester can change the delivery destination",
         )
     if order.status not in DESTINATION_MUTABLE:
-        _illegal(order, "change the destination of")
+        _illegal(order, "change the destination of", actor.id)
     if not delivery_within_campus(delivery.latitude, delivery.longitude):
         raise HTTPException(status_code=422, detail="Delivery location is not supported")
     order.delivery_label = delivery.label
@@ -204,11 +278,11 @@ def accept_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     # A competing courier already saw this errand in the open feed. 409 tells
     # them they lost, which a 404 would hide.
     if order.status == "ACCEPTED":
-        _illegal(order, "accept")
+        _illegal(order, "accept", actor.id)
     if order.status != "OPEN":
         if not _can_view(order, actor):
             raise HTTPException(status_code=404, detail="Order not found")
-        _illegal(order, "accept")
+        _illegal(order, "accept", actor.id)
     now = utc_now()
     order.status = "ACCEPTED"
     order.courier_id = actor.id
@@ -231,7 +305,7 @@ def pick_up_order(db: Session, order_id: UUID, actor: Identity) -> Order:
             status_code=403, detail="Only the assigned courier can pick up this order"
         )
     if order.status != "ACCEPTED":
-        _illegal(order, "pick up")
+        _illegal(order, "pick up", actor.id)
     now = utc_now()
     order.status = "PICKED_UP"
     order.picked_up_at = now
@@ -253,7 +327,7 @@ def complete_order(db: Session, order_id: UUID, actor: Identity) -> Order:
             status_code=403, detail="Only the requester can complete this order"
         )
     if order.status != "PICKED_UP":
-        _illegal(order, "complete")
+        _illegal(order, "complete", actor.id)
     now = utc_now()
     order.status = "COMPLETED"
     order.completed_at = now
@@ -271,7 +345,7 @@ def cancel_order(db: Session, order_id: UUID, actor: Identity) -> Order:
     if order.status == "CANCELLED" and order.cancelled_by == actor.id:
         return order
     if order.status in TERMINAL_STATUSES:
-        _illegal(order, "cancel")
+        _illegal(order, "cancel", actor.id)
     requester_may = (
         actor.id == order.requester_id and order.status in REQUESTER_CANCELLABLE
     )
@@ -462,12 +536,19 @@ def _can_view(order: Order, actor: Identity) -> bool:
     )
 
 
-def _illegal(order: Order, action: str) -> None:
-    logger.warning(
-        "illegal_order_transition order_id=%s status=%s action=%s",
-        order.id,
-        order.status,
-        action,
+def _illegal(order: Order, action: str, actor_id: UUID | None = None) -> None:
+    fields = {
+        "order_id": str(order.id),
+        "status": order.status,
+        "action": action,
+    }
+    if actor_id is not None:
+        fields["actor_user_id"] = str(actor_id)
+    log_event(
+        logger,
+        logging.WARNING,
+        "illegal_order_transition",
+        **fields,
     )
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,

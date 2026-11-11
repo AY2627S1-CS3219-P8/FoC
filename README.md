@@ -2,11 +2,48 @@
 
 ## Friend on Campus (FoC)
 
-**Friend on Campus (FoC)** is a peer-to-peer campus errand platform where
-students can request items to be collected from stores or facilities on
-campus, and other students can fulfil (and deliver) those requests. The
-platform runs on a closed credit economy — credits cannot be bought,
-withdrawn, or exchanged for money, and only circulate within the platform.
+Friend on Campus (FoC) is a peer-to-peer campus errand platform for NUS
+students. A requester can ask another student to collect an item from a campus
+supplier and deliver it to a chosen campus location. Couriers earn credits for
+completed errands, creating a closed internal economy: credits cannot be bought,
+withdrawn, or exchanged for money.
+
+FoC is implemented as a service-oriented application:
+
+- **Frontend Service** — Next.js web application providing authentication,
+  supplier browsing, errand creation, order tracking, credit views, and
+  server-side service integration. Session tokens remain in secure HTTP-only
+  cookies.
+- **User Service** — student registration, authentication, sessions, profiles,
+  roles, account lifecycle, and authorization.
+- **Supplier Service** — NUS supplier and category data, public browsing,
+  administrator reads, validation, soft deletion, seed imports, and supplier
+  image delivery.
+- **Order Service** — errand creation and idempotency, supplier validation,
+  courier acceptance, pickup, completion, cancellation, expiry, and order
+  lifecycle events.
+- **Credit Service** — account initialization, reservations, settlement,
+  refunds, transaction auditing, administrator adjustments, transactional
+  outbox processing, and dead-letter handling.
+- **Notification Service** — per-user notifications generated from order events,
+  notification history, read-status updates, and live Server-Sent Events.
+- **Event Broker and Contracts** — Kafka topics and versioned AsyncAPI contracts
+  coordinate asynchronous order, credit, and notification workflows.
+
+Each backend service owns its PostgreSQL database. Kafka provides durable
+event delivery with idempotent consumers, retries, transactional outboxes, and
+dead-letter queues. Services communicate through documented APIs rather than
+direct database access. Internal User Service calls use certificate-verified
+HTTPS.
+
+The complete stack can run locally with Docker Compose and can also be
+deployed to a local kind Kubernetes cluster or AWS EKS. Centralized backend
+logging uses structured JSON records collected by Vector, stored in Loki, and
+visualized and alerted through Grafana.
+
+The main remaining integration work is relaying Notification Service history
+and live events through the Frontend Service. Administrator interfaces for
+credit, account, and order management are also not yet exposed in the frontend.
 
 ---
 
@@ -14,11 +51,11 @@ withdrawn, or exchanged for money, and only circulate within the platform.
 
 | Name        | Role             |
 | ----------- | ---------------- |
-| Swee Kah Ho | Frontend Service |
-| Max Khoo    | User Service     |
-| Keith Shen  | Supplier Service |
-| Chen Chi    | Credit Service   |
-| Ewen Low    | Order Service    |
+| Swee Kah Ho | Frontend Service + Admin Dashboard |
+| Max Khoo    | User Service + Centralized Logging    |
+| Keith Shen  | Supplier Service + Notification Service |
+| Chen Chi    | Credit Service + Cloud Deployment |
+| Ewen Low    | Order Service + Kubernetes  |
 
 ---
 
@@ -30,20 +67,62 @@ microservice (`user-service/`, `supplier-service/`, `order-service/`,
 
 ```text
 .
-├── user-service/
-├── supplier-service/
-├── order-service/
-├── credit-service/
-├── <n2h-service>/
-└── README.md
+├── frontend-service/              # Next.js web application
+│   ├── app/                       # Routes and pages
+│   ├── components/                # Reusable UI components
+│   ├── lib/                       # Server clients, actions, validation, utilities
+│   └── test/                      # Frontend tests
+│
+├── user-service/                  # Accounts, authentication, profiles, roles
+│   ├── app/
+│   ├── alembic/
+│   ├── scripts/
+│   └── tests/
+│
+├── supplier-service/              # Suppliers, categories, seed imports
+│   ├── app/
+│   ├── migrations/
+│   ├── database/
+│   ├── seed/
+│   ├── tools/
+│   ├── documentation/
+│   └── tests/
+│
+├── order-service/                 # Errand lifecycle and order events
+│   ├── app/
+│   ├── alembic/
+│   └── tests/
+│
+├── credit-service/                # Closed credit economy and settlement
+│   ├── app/
+│   ├── alembic/
+│   └── tests/
+│
+├── notification-service/          # Notification history and live SSE streams
+│   ├── app/
+│   ├── alembic/
+│   ├── ai/
+│   └── tests/
+│
+├── packages/
+│   └── foc-observability/         # Shared structured logging and context
+│
+├── contracts/
+│   ├── asyncapi.yaml              # Versioned Kafka event contract
+│   └── README.md
+│
+├── event-broker/                  # Kafka topic setup and broker guidance
+├── data/                          # Seed CSVs, images, mappings, and provenance
+├── observability/                 # Vector, Loki, and Grafana configuration
+├── deploy/
+│   ├── k8s/                       # Kubernetes manifests
+│   └── aws/                       # AWS and GitHub OIDC infrastructure
+├── docs/                          # Architecture, HTTPS, observability, and EKS guides
+├── scripts/                       # TLS, Compose, Kubernetes, EKS, and verification scripts
+├── compose.yaml                   # Local multi-service deployment
+├── pytest.ini                     # Shared Python test configuration
+└── LICENSE
 ```
-
-- Any **nice-to-have (N2H)** feature that warrants its own service should
-  be added as an **additional folder** at the same level, following the
-  same per-service structure.
-- Files for agentic coding tools (e.g. agent configs, prompts, skills)
-  may be added as needed, but must still **respect the
-  one-service-per-folder skeleton** for core implementation.
 
 ---
 
@@ -87,6 +166,53 @@ docker compose down
 
 ---
 
+## Running on Kubernetes (kind)
+
+The same stack can run on a local [kind](https://kind.sigs.k8s.io/) cluster.
+Manifests under [`deploy/k8s/`](deploy/k8s/) keep the Compose service names, so
+`https://user-service:8080` and `kafka:9092` still resolve. Compose is unchanged.
+
+Install kind (`brew install kind`) in addition to Docker and kubectl. Copy
+`.env.example` to `.env`, then generate the development certificates once.
+On Windows, `scripts/generate-dev-tls.ps1` writes the same files.
+
+```bash
+./scripts/generate-dev-tls.sh
+./scripts/k8s-up.sh
+```
+
+`./scripts/k8s-up.sh --demo` also starts the Kafka UI and the demo console.
+That flag needs `demo-console/` in the checkout.
+Re-running the script rebuilds the images, keeps the database volumes, and
+replaces the one-shot migration Jobs. `./scripts/k8s-down.sh` deletes the
+cluster. Changing [`deploy/k8s/kind-config.yaml`](deploy/k8s/kind-config.yaml)
+requires a new cluster, because kind reads host port mappings only at creation.
+
+| Surface | URL |
+| --- | --- |
+| Frontend | http://127.0.0.1:3000 |
+| Supplier Service | http://127.0.0.1:8081 |
+| Order Service | http://127.0.0.1:8082 |
+| Credit Service | http://127.0.0.1:8083 |
+| Kafka UI (`--demo`) | http://127.0.0.1:8090 |
+| Demo console (`--demo`) | http://127.0.0.1:8091 |
+
+User Service stays inside the cluster at `https://user-service:8080`, matching
+Compose, which does not publish it on the host.
+
+Supplier seed is the Compose `tools` profile. The CSV is CP1252, so it is
+stored in a Secret rather than a ConfigMap. Run it after the stack is up:
+
+```bash
+kubectl -n foc delete job supplier-seed-dry-run --ignore-not-found
+kubectl apply -k deploy/k8s/tools-dry-run
+kubectl -n foc wait --for=condition=complete job/supplier-seed-dry-run --timeout=180s
+
+kubectl -n foc delete job supplier-seed --ignore-not-found
+kubectl apply -k deploy/k8s/tools
+kubectl -n foc wait --for=condition=complete job/supplier-seed --timeout=180s
+```
+
 ## AI Use Summary (FoC)
 
 Codex (GPT-6) assisted Supplier Service work. The
@@ -98,6 +224,9 @@ and [usage log](notification-service/ai/usage-log.md).
 A Cursor agent (model not recorded) assisted Ewen Low's Order Service, event broker,
 demo, Kubernetes, review and slide work; see
 [Ewen Low's disclosure](#ewen-low-order-service-event-broker-demo-kubernetes).
+Claude Code (claude-opus-5-5) also assisted Frontend Service work; see the
+[Frontend Service summary](frontend-service/README.md#ai-use-summary-frontend-service)
+and [usage log](frontend-service/ai/usage-log.md).
 
 - [Database and migration work](supplier-service/ai/usage-log.md#ai-20260929-001):
   Requirements work, Learning support, Boilerplate generation, Writing implementation
@@ -753,6 +882,27 @@ demo, Kubernetes, review and slide work; see
   final response are recorded; original timestamps unavailable; no redactions; no
   header exceptions. See the
   [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+- [Notification Service observability](notification-service/ai/usage-log.md#ai-20261110-002):
+  Codex (GPT-5) provided Writing implementation code and Refactoring and
+  documentation improvements for shared JSON logging, request context,
+  worker lifecycle and processing events, migration and API diagnostics,
+  Vector collection, notification-worker heartbeat alerting, and regression
+  tests. Agent checks: 784 tests passed and 187 were skipped without disposable
+  PostgreSQL/Kafka services; YAML parsing, Python compilation, and
+  `git diff --check` passed. No human test rerun or live Compose observability
+  check is claimed. See the
+  [Notification Service summary](notification-service/README.md#ai-use-summary-notification-service).
+
+- [Frontend Service notification integration](frontend-service/ai/usage-log.md#ai-20261111-001):
+  Claude Code (claude-opus-5-5) provided Writing implementation code,
+  Boilerplate generation, and Refactoring and documentation improvements for
+  the Frontend Service notification relay routes, unread badge, live stream
+  provider, `/notifications` page, unit tests, `NOTIFICATION_SERVICE_URL` in
+  `compose.yaml`, and README updates in Frontend Service and Notification
+  Service. Agent checks: lint, type check, 111 Vitest tests, a production
+  build, and a relay check against a fake SSE upstream passed; the real stack
+  was not exercised. Author review is pending. See the
+  [Frontend Service summary](frontend-service/README.md#ai-use-summary-frontend-service).
 
 Disclosure-only updates do not establish submission readiness.
 
@@ -4052,3 +4202,5 @@ Key response 2:
 > **1. The signed declaration (Appendix 1, page 14), as the last slide.** The brief says it "should be printed, completed, scanned, and attached to the slide deck submitted on Canvas as the last slide." The team signs these statements:
 
 </details>
+Supplier image setup, portable seed keys, local Nginx, and CloudFront build
+configuration are documented in [data/images/README.md](data/images/README.md).

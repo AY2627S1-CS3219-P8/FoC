@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Lock, LogOut, Mail, UserRound } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Lock, LogOut, Mail, ShieldCheck, UserRound } from 'lucide-react';
 
 import { Notice } from '@/components/auth/auth-layout';
 import { FormField } from '@/components/auth/form-field';
@@ -13,6 +14,7 @@ import {
   logout,
   updateProfile,
 } from '@/lib/auth-actions';
+import { switchView } from '@/lib/admin-actions';
 import type { FieldErrors, User, UserUpdate } from '@/lib/user-service';
 import { validateDisplayName, validatePassword } from '@/lib/validation';
 
@@ -221,8 +223,8 @@ function DeactivateAccount() {
   return (
     <div className='space-y-3'>
       <p className='text-sm text-slate-700'>
-        You will be logged out everywhere. You can reactivate the account later
-        by logging in with the same student number and password.
+        You will be logged out everywhere and won&apos;t be able to log in
+        again. Only an administrator can restore the account.
       </p>
       {error && <Notice tone='error'>{error}</Notice>}
       <div className='flex flex-wrap gap-2'>
@@ -255,7 +257,50 @@ function DeactivateAccount() {
   );
 }
 
-export function ProfileView({ user }: { user: User }) {
+function AdminViewToggle({ adminView }: { adminView: boolean }) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <div className='space-y-3'>
+      {error && <Notice tone='error'>{error}</Notice>}
+      <Button
+        variant='outline'
+        disabled={isPending}
+        onClick={() =>
+          startTransition(async () => {
+            setError(null);
+            try {
+              const { href } = await switchView(adminView ? 'user' : 'admin');
+              // Inside the transition, so the button stays pending until the
+              // chosen view's home page has loaded.
+              router.push(href);
+            } catch {
+              setError('Something went wrong. Try again.');
+            }
+          })
+        }
+        className='text-courier hover:text-courier h-11 rounded-xl border-white bg-white px-5 font-bold hover:bg-white/90'
+      >
+        <ShieldCheck aria-hidden />
+        {isPending
+          ? 'Switching…'
+          : adminView
+            ? 'Switch to user view'
+            : 'Switch to admin view'}
+      </Button>
+    </div>
+  );
+}
+
+export function ProfileView({
+  user,
+  adminView,
+}: {
+  user: User;
+  adminView: boolean;
+}) {
   const [isLoggingOut, startLogout] = useTransition();
 
   return (
@@ -295,6 +340,28 @@ export function ProfileView({ user }: { user: User }) {
             </p>
           </div>
         </section>
+
+        {user.role === 'admin' && (
+          <section className='bg-courier rounded-2xl p-5 text-white shadow-sm'>
+            <h2 className='flex items-center gap-2 text-base font-bold'>
+              <ShieldCheck className='size-5' aria-hidden />
+              Admin view
+              {adminView && (
+                <span className='rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold uppercase'>
+                  On
+                </span>
+              )}
+            </h2>
+            <p className='mt-1 text-sm text-white/80'>
+              {adminView
+                ? 'You are managing the platform. Switch back to request and deliver errands.'
+                : 'Review accounts and suspend or reinstate users.'}
+            </p>
+            <div className='mt-4'>
+              <AdminViewToggle adminView={adminView} />
+            </div>
+          </section>
+        )}
 
         <Section title='Account details'>
           <DetailsForm user={user} />

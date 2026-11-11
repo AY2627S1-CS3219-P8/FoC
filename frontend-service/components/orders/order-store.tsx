@@ -1,3 +1,6 @@
+'use client';
+
+import { useState } from 'react';
 import Image from 'next/image';
 import { Store } from 'lucide-react';
 
@@ -13,7 +16,8 @@ export function OrderStoreThumbnail({
   className?: string;
 }) {
   const src = order.supplier && supplierImageSrc(order.supplier);
-  if (src) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (src && src !== failedSrc) {
     return (
       // Unoptimized: the browser fetches the image directly from its host
       // instead of through the Next.js image optimizer.
@@ -23,6 +27,7 @@ export function OrderStoreThumbnail({
         width={44}
         height={44}
         unoptimized
+        onError={() => setFailedSrc(src)}
         className={cn('size-11 shrink-0 rounded-xl object-cover', className)}
       />
     );

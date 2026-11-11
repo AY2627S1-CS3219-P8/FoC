@@ -13,6 +13,7 @@ import {
   type Order,
   type OrderCreate,
   type OrderRole,
+  type OrderStatus,
   orderService,
 } from '@/lib/order-service';
 import { withSuppliers } from '@/lib/order-views';
@@ -94,10 +95,11 @@ export async function loadOpenOrders(
 
 export async function loadMyOrders(
   role: OrderRole,
+  status: OrderStatus | undefined,
   window: PageWindow = FIRST_PAGE,
 ): Promise<PageResult<OrderView>> {
   return loadPage(
-    (token, page) => orderService.listMyOrders(token, role, page),
+    (token, page) => orderService.listMyOrders(token, role, status, page),
     window,
   );
 }

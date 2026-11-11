@@ -24,12 +24,19 @@ from sqlalchemy.orm import Session
 from app.config import Settings, required_env
 from app.db import make_engine, make_session_factory
 from app.events import MalformedMessage, dump_event, parse_incoming_event
+from foc_observability import (
+    context_from_event_body,
+    configure_logging,
+    log_context,
+    log_event,
+)
 from app.messaging import (
     CREDIT_TOPIC,
     EVENT_STREAMS,
     PUBLISH_TIMEOUT_SECONDS,
     RELAY_BATCH_SIZE,
     RELAY_POLL_SECONDS,
+    WORKER_HEARTBEAT_SECONDS,
     EventStream,
 )
 from app.models import OutboxEvent, utc_now
@@ -225,7 +232,12 @@ def _rollback(db: Session | None) -> None:
     try:
         db.rollback()
     except Exception:
-        logger.exception("credit_event_rollback_failed")
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_event_rollback_failed",
+            exc_info=True,
+        )
 
 
 def _is_transient_infrastructure_failure(error: Exception) -> bool:
@@ -243,17 +255,29 @@ def _is_transient_infrastructure_failure(error: Exception) -> bool:
 
 
 def _log_failure(result: DeliveryResult, error: Exception) -> None:
-    logger.error(
-        "credit_event_quarantined failure_code=%s attempts=%s "
-        "exception_type=%s event_type=%s event_id=%s correlation_id=%s "
-        "order_id=%s",
-        result.failure_code,
-        result.attempts,
-        result.exception_type,
-        result.event_type,
-        result.event_id,
-        result.correlation_id,
-        result.order_id,
+    if result.failure_code == "TRANSIENT_RETRIES_EXHAUSTED":
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_event_retry_exhausted",
+            attempts=result.attempts,
+            event_type=result.event_type,
+            event_id=result.event_id,
+            correlation_id=result.correlation_id,
+            order_id=result.order_id,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+    log_event(
+        logger,
+        logging.ERROR,
+        "credit_event_quarantined",
+        failure_code=result.failure_code,
+        attempts=result.attempts,
+        exception_type=result.exception_type,
+        event_type=result.event_type,
+        event_id=result.event_id,
+        correlation_id=result.correlation_id,
+        order_id=result.order_id,
         exc_info=(type(error), error, error.__traceback__),
     )
 
@@ -268,6 +292,35 @@ def process_delivery(
 ) -> DeliveryResult:
     """Process once, retry only infrastructure failures, or quarantine safely."""
 
+    with log_context(**context_from_event_body(body)):
+        started = time.perf_counter()
+        result = _process_delivery(
+            session_factory,
+            body,
+            initial_allocation=initial_allocation,
+            retry_backoff_seconds=retry_backoff_seconds,
+            sleep=sleep,
+        )
+        log_event(
+            logger,
+            logging.ERROR if result.disposition == "QUARANTINE" else logging.INFO,
+            "credit_event_processing_completed",
+            duration_ms=round((time.perf_counter() - started) * 1000, 3),
+            outcome=result.disposition,
+            attempts=result.attempts,
+            failure_code=result.failure_code,
+        )
+        return result
+
+
+def _process_delivery(
+    session_factory: Callable[[], Session],
+    body: bytes,
+    *,
+    initial_allocation: int,
+    retry_backoff_seconds: tuple[float, ...],
+    sleep: Callable[[float], None],
+) -> DeliveryResult:
     for attempt in range(len(retry_backoff_seconds) + 1):
         attempts = attempt + 1
         db = None
@@ -286,16 +339,16 @@ def process_delivery(
             transient = _is_transient_infrastructure_failure(error)
             if transient and attempt < len(retry_backoff_seconds):
                 delay = retry_backoff_seconds[attempt]
-                logger.warning(
-                    "credit_event_transient_retry attempt=%s "
-                    "retry_delay_seconds=%s exception_type=%s event_type=%s "
-                    "event_id=%s correlation_id=%s",
-                    attempts,
-                    delay,
-                    type(error).__name__,
-                    getattr(event, "event_type", None),
-                    getattr(event, "event_id", None),
-                    getattr(event, "correlation_id", None),
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "credit_event_transient_retry",
+                    attempt=attempts,
+                    retry_delay_seconds=delay,
+                    exception_type=type(error).__name__,
+                    event_type=getattr(event, "event_type", None),
+                    event_id=getattr(event, "event_id", None),
+                    correlation_id=getattr(event, "correlation_id", None),
                     exc_info=(type(error), error, error.__traceback__),
                 )
                 sleep(delay)
@@ -449,24 +502,59 @@ def _handle_message(
     initial_allocation: int,
     retry_backoff_seconds: tuple[float, ...],
 ) -> None:
+    body = message.value() or b""
+    with log_context(
+        topic=message.topic(),
+        partition=message.partition(),
+        offset=message.offset(),
+        **context_from_event_body(body),
+    ):
+        _handle_message_in_context(
+            session_factory,
+            publisher,
+            consumer,
+            message,
+            stream=stream,
+            initial_allocation=initial_allocation,
+            retry_backoff_seconds=retry_backoff_seconds,
+            body=body,
+        )
+
+
+def _handle_message_in_context(
+    session_factory: Callable[[], Session],
+    publisher: KafkaPublisher,
+    consumer: Consumer,
+    message: Message,
+    *,
+    stream: EventStream,
+    initial_allocation: int,
+    retry_backoff_seconds: tuple[float, ...],
+    body: bytes,
+) -> None:
     """Apply/skip/quarantine one record, then synchronously commit its offset."""
 
     error = message.error()
     if error is not None:
         if error.fatal():
             raise KafkaException(error)
-        logger.error("kafka_poll_error", extra={"reason": str(error)})
+        log_event(
+            logger,
+            logging.ERROR,
+            "kafka_poll_error",
+            reason=str(error),
+        )
         return
 
     decision = inspect_transport_record(stream, message)
     if decision.action == "IGNORE":
-        logger.debug(
+        log_event(
+            logger,
+            logging.DEBUG,
             "credit_event_ignored",
-            extra={
-                "topic": message.topic(),
-                "partition": message.partition(),
-                "offset": message.offset(),
-            },
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
         )
         consumer.commit(message=message, asynchronous=False)
         return
@@ -477,35 +565,52 @@ def _handle_message(
     else:
         outcome = process_delivery(
             session_factory,
-            message.value() or b"",
+            body,
             initial_allocation=initial_allocation,
             retry_backoff_seconds=retry_backoff_seconds,
         )
 
     if outcome.disposition == "QUARANTINE":
-        logger.error(
-            "credit_event_sent_to_dlq failure_code=%s attempts=%s "
-            "topic=%s partition=%s offset=%s",
-            outcome.failure_code,
-            outcome.attempts,
-            message.topic(),
-            message.partition(),
-            message.offset(),
-        )
         publisher.dead_letter(
             message, dlq_topic=stream.dlq_topic, result=outcome
+        )
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_event_sent_to_dlq",
+            failure_code=outcome.failure_code,
+            attempts=outcome.attempts,
+            dlq_topic=stream.dlq_topic,
+            topic=message.topic(),
+            partition=message.partition(),
+            offset=message.offset(),
         )
     # Failed DLQ publication or database work raises before this point.
     consumer.commit(message=message, asynchronous=False)
 
 
-def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> None:
+def _relay(session_factory: Callable[[], Session], publisher: Publisher) -> int:
     db = session_factory()
     try:
-        relay_once(db, publisher)
+        published = relay_once(db, publisher)
+        if published:
+            log_event(
+                logger,
+                logging.INFO,
+                "worker_relay_completed",
+                relay="credit_outbox",
+                count=published,
+            )
+        return published
     except Exception:
         db.rollback()
-        logger.exception("credit_outbox_relay_failed")
+        log_event(
+            logger,
+            logging.ERROR,
+            "credit_outbox_relay_failed",
+            exc_info=True,
+        )
+        return 0
     finally:
         db.close()
 
@@ -516,9 +621,11 @@ def _client_config() -> dict[str, object]:
 
 def main() -> None:
     settings = Settings.from_env()
-    logging.basicConfig(
+    configure_logging(
+        "credit-worker",
+        component="worker",
+        environment=os.getenv("APP_ENV", "production"),
         level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     stream_name, stream = selected_stream()
     engine = make_engine(settings.database_url)
@@ -542,12 +649,16 @@ def main() -> None:
         }
     )
     consumer.subscribe([stream.topic])
-    logger.info(
-        "credit_worker_started event_stream=%s topic=%s consumer_group=%s",
-        stream_name,
-        stream.topic,
-        stream.group_id,
+    log_event(
+        logger,
+        logging.INFO,
+        "worker_started",
+        worker="credit-worker",
+        event_stream=stream_name,
+        topic=stream.topic,
+        consumer_group=stream.group_id,
     )
+    last_heartbeat = time.monotonic()
     try:
         while True:
             message = consumer.poll(RELAY_POLL_SECONDS)
@@ -562,7 +673,28 @@ def main() -> None:
                     retry_backoff_seconds=settings.retry_backoff_seconds,
                 )
             _relay(session_factory, publisher)
+            now = time.monotonic()
+            if now - last_heartbeat >= WORKER_HEARTBEAT_SECONDS:
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "worker_heartbeat",
+                    worker="credit-worker",
+                    event_stream=stream_name,
+                    topic=stream.topic,
+                    consumer_group=stream.group_id,
+                )
+                last_heartbeat = now
     finally:
+        log_event(
+            logger,
+            logging.INFO,
+            "worker_shutdown",
+            worker="credit-worker",
+            event_stream=stream_name,
+            topic=stream.topic,
+            consumer_group=stream.group_id,
+        )
         consumer.close()
         producer.flush(PUBLISH_TIMEOUT_SECONDS)
         engine.dispose()

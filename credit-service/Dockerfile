@@ -4,12 +4,14 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY credit-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+COPY packages/foc-observability /tmp/foc-observability
+RUN pip install --no-cache-dir /tmp/foc-observability
 
-COPY alembic.ini .
-COPY alembic ./alembic
-COPY app ./app
+COPY credit-service/alembic.ini .
+COPY credit-service/alembic ./alembic
+COPY credit-service/app ./app
 
 USER appuser
 

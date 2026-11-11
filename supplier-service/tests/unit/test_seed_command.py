@@ -82,6 +82,10 @@ def test_multiple_failures_reject_batch_but_count_only_validated_records(tmp_pat
     completed = run("--file", path, "--dry-run")
     assert completed.returncode == 1 and "Traceback" not in completed.stderr
     report = json.loads(completed.stdout)
+    assert report["schema_version"] == 1
+    assert report["service"] == "supplier-seed"
+    assert report["component"] == "seed"
+    assert report["event"] == "seed_preview_rejected"
     assert report["batch_rejected"] and not report["valid"]
     assert report["source_count"] == 21 and report["validated_supplier_count"] == 19
     assert report["total_category_assignments"] == sum(report["category_counts"].values())
@@ -313,3 +317,17 @@ def test_command_report_and_import_use_same_snapshot(tmp_path, monkeypatch, caps
             assert diagnostic['values'] == record.values.model_dump(mode='json')
             assert diagnostic['supplier_id'] == str(record.supplier_id)
             assert diagnostic['category_names'] == list(record.category_names)
+
+
+def test_explicit_manifest_and_area_mapping_options(tmp_path):
+    manifest = json.loads(MAPPINGS[0].read_text())
+    replacement = "8f9367c5-af4d-4431-83a2-366419247cca"
+    manifest[0]["supplier_id"] = replacement
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+    completed = run("--file", CSV, "--manifest", manifest_path,
+                    "--area-mapping", MAPPINGS[1], "--dry-run")
+    result = json.loads(completed.stdout)
+    assert result["source_count"] == result["validated_supplier_count"] == 21
+    assert result["validated_records"][0]["supplier_id"] == replacement
+    assert {issue["code"] for issue in result["issues"]} == {"CONFIGURATION_ERROR"}
