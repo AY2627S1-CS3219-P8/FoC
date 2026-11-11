@@ -1,5 +1,5 @@
 
-name: FoC publish six images to ECR
+name: FoC publish seven images to ECR
 
 # Releases are initiated manually, after CI on the selected commit has passed.
 on:
@@ -48,6 +48,9 @@ jobs:
           - name: frontend-service
             context: ./frontend-service
             dockerfile: ./frontend-service/Dockerfile
+          - name: notification-service
+            context: .
+            dockerfile: ./notification-service/Dockerfile
 
     env:
       AWS_REGION: ap-southeast-1

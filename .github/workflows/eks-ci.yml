@@ -15,6 +15,7 @@ on:
       - 'order-service/**'
       - 'credit-service/**'
       - 'frontend-service/**'
+      - 'notification-service/**'
       - 'packages/foc-observability/**'
   pull_request:
     paths:
@@ -28,6 +29,7 @@ on:
       - 'order-service/**'
       - 'credit-service/**'
       - 'frontend-service/**'
+      - 'notification-service/**'
       - 'packages/foc-observability/**'
 
 permissions:
@@ -68,6 +70,9 @@ jobs:
             command: python -m pytest tests/unit tests/api -q
           - component: credit-service
             requirements: credit-service/requirements-dev.txt
+            command: python -m pytest -q
+          - component: notification-service
+            requirements: notification-service/requirements-dev.txt
             command: python -m pytest -q
     steps:
       - uses: actions/checkout@v4
@@ -171,6 +176,9 @@ jobs:
           - name: frontend-service
             context: ./frontend-service
             dockerfile: ./frontend-service/Dockerfile
+          - name: notification-service
+            context: .
+            dockerfile: ./notification-service/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

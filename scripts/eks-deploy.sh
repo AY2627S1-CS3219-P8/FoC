@@ -116,6 +116,7 @@ stages=(
   jobs-wave-1
   jobs-wave-2
   jobs-wave-3
+  jobs-notification
   apps
 )
 
@@ -125,6 +126,7 @@ stage_path() {
     jobs-wave-1) echo "deploy/k8s/eks/jobs/wave-1" ;;
     jobs-wave-2) echo "deploy/k8s/eks/jobs/wave-2" ;;
     jobs-wave-3) echo "deploy/k8s/eks/jobs/wave-3" ;;
+    jobs-notification) echo "deploy/k8s/eks/jobs/notification" ;;
     apps) echo "deploy/k8s/eks/apps" ;;
     *) fail "Unknown deployment stage: $1" ;;
   esac
@@ -168,17 +170,17 @@ validate_rendered() {
     fail "EKS application Services must remain internal ClusterIP Services."
   fi
 
-  for service in user-service supplier-service supplier-db order-service credit-service frontend-service; do
+  for service in user-service supplier-service supplier-db order-service credit-service frontend-service notification-service; do
     grep -q "${target_registry}/${service}:${IMAGE_TAG}" "$combined" ||
       fail "Rendered manifests do not contain the expected ${service} ECR image."
   done
 
   local storage_claims
   storage_claims="$(grep -c "storageClassName: ${STORAGE_CLASS}" "$work_dir/data.yaml" || true)"
-  [[ "$storage_claims" -eq 5 ]] ||
-    fail "Expected five StatefulSet claims using ${STORAGE_CLASS}; found ${storage_claims}."
+  [[ "$storage_claims" -eq 6 ]] ||
+    fail "Expected six StatefulSet claims using ${STORAGE_CLASS}; found ${storage_claims}."
 
-  for name in USER_SERVICE_URL SUPPLIER_SERVICE_URL NODE_EXTRA_CA_CERTS COOKIE_SECURE; do
+  for name in USER_SERVICE_URL SUPPLIER_SERVICE_URL NOTIFICATION_SERVICE_URL NODE_EXTRA_CA_CERTS COOKIE_SECURE; do
     grep -q "name: ${name}" "$work_dir/apps.yaml" ||
       fail "Frontend runtime setting ${name} is missing."
   done
@@ -224,7 +226,7 @@ kubectl get storageclass "$STORAGE_CLASS" >/dev/null ||
   fail "StorageClass ${STORAGE_CLASS} is missing or inaccessible."
 
 echo "Checking required ECR images"
-services=(user-service supplier-service supplier-db order-service credit-service frontend-service)
+services=(user-service supplier-service supplier-db order-service credit-service frontend-service notification-service)
 for service in "${services[@]}"; do
   if ! aws ecr describe-images \
     --region "$AWS_REGION" \
@@ -252,6 +254,9 @@ required_nonempty_keys=(
   ORDER_DB_PASSWORD
   CREDIT_DB_USER
   CREDIT_DB_PASSWORD
+  NOTIFICATION_DB_USER
+  NOTIFICATION_DB_PASSWORD
+  NOTIFICATIONS_START_AT
   INITIAL_CREDIT_ALLOCATION
   CREDIT_RETRY_BACKOFF_SECONDS
 )
@@ -533,7 +538,7 @@ run_wave() {
 
 echo "Deploying databases and Kafka"
 kubectl apply -f "$work_dir/data.yaml" >/dev/null
-for stateful_set in user-db supplier-db order-db credit-db kafka; do
+for stateful_set in user-db supplier-db order-db credit-db notification-db kafka; do
   if ! kubectl --namespace "$NAMESPACE" rollout status \
     "statefulset/${stateful_set}" --timeout="$ROLLOUT_TIMEOUT"; then
     kubectl --namespace "$NAMESPACE" describe "statefulset/${stateful_set}" >&2 || true
@@ -546,6 +551,7 @@ run_wave jobs-wave-1 \
   user-migrate order-migrate credit-migrate supplier-bootstrap kafka-topics
 run_wave jobs-wave-2 user-bootstrap supplier-migrate
 run_wave jobs-wave-3 supplier-grants
+run_wave jobs-notification notification-migrate
 
 echo "Deploying APIs, workers, and frontend"
 kubectl apply -f "$work_dir/apps.yaml" >/dev/null
@@ -557,6 +563,8 @@ deployments=(
   credit-service
   credit-order-worker
   frontend-service
+  notification-service
+  notification-worker
 )
 for deployment in "${deployments[@]}"; do
   if ! kubectl --namespace "$NAMESPACE" rollout status \

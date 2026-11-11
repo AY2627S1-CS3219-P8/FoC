@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: foc
 resources:
   - ../../data
+  - notification-db.yaml
 images:
   - name: foc-supplier-db
     newName: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/supplier-db

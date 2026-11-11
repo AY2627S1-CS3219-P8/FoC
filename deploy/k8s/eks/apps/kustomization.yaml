@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: foc
 resources:
   - ../../apps
+  - notification-service.yaml
+  - notification-worker.yaml
 images:
   - name: foc-user-service
     newName: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/user-service
@@ -19,7 +21,19 @@ images:
   - name: foc-frontend-service
     newName: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/frontend-service
     newTag: 9a6415d
+  - name: foc-notification-service
+    newName: 816435462502.dkr.ecr.ap-southeast-1.amazonaws.com/foc/notification-service
+    newTag: 9a6415d
 patches:
+  - target:
+      kind: Deployment
+      name: frontend-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: NOTIFICATION_SERVICE_URL
+          value: http://notification-service:8080
   - target:
       kind: Deployment
     patch: |-
