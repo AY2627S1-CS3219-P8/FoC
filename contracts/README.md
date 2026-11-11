@@ -13,6 +13,9 @@ Topic and consumer ownership:
 
 - Order Service publishes `order.events`; Credit Service consumes it as
   `credit-service-order`.
+- Notification Service will consume `order.events` for `order.opened`,
+  `order.rejected`, `order.accepted`, `order.picked_up`, `order.completed`,
+  `order.cancelled`, and `order.expired`.
 - Credit Service publishes `credit.events`; Order Service consumes it with its
   own stable group.
 
