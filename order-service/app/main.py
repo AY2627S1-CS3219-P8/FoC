@@ -13,6 +13,7 @@ from app.clients import SupplierServiceClient, UserServiceClient
 from app.config import required_env
 from app.db import database_url, get_db, make_engine, make_session_factory
 from foc_observability import RequestContextMiddleware, configure_logging, log_event
+from app.routes.admin import router as admin_router
 from app.routes.orders import router as orders_router
 
 
@@ -76,3 +77,4 @@ def readiness_check(db: Session = Depends(get_db)):
 
 
 app.include_router(orders_router)
+app.include_router(admin_router)

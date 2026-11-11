@@ -7,6 +7,14 @@
 export const SESSION_COOKIE_NAME = 'foc_session';
 
 /**
+ * Set to `admin` while an administrator uses the admin view, toggled from
+ * the profile page. It only chooses which pages and navigation to show: the
+ * services check the role on every admin request, and `lib/session.ts`
+ * ignores the cookie for anyone who isn't an administrator.
+ */
+export const VIEW_COOKIE_NAME = 'foc_view';
+
+/**
  * Route that clears a session User Service has rejected. Pages can't modify
  * cookies while rendering, so they redirect here instead.
  */

@@ -1,8 +1,9 @@
 /**
- * Server-side client for Credit Service's own-account reads. Only import this
- * from Server Actions, Route Handlers or Server Components: every route needs
- * the User Service bearer token. Balances only change through order events,
- * so the frontend never writes to Credit Service.
+ * Server-side client for Credit Service reads: the caller's own account, and
+ * any account for administrators. Only import this from Server Actions, Route
+ * Handlers or Server Components: every route needs the User Service bearer
+ * token. Balances only change through order events, so the frontend never
+ * writes to Credit Service.
  */
 
 import 'server-only';
@@ -58,25 +59,29 @@ export type CreditTransaction = {
   created_at: string;
 };
 
+/** A balance, or null when the account doesn't exist yet. */
+async function balanceOrNull(path: string, token: string | undefined) {
+  try {
+    return await request<CreditBalance>(path, { token });
+  } catch (error) {
+    if (
+      error instanceof ServiceError &&
+      error.code === 'CREDIT_ACCOUNT_NOT_FOUND'
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export const creditService = {
   /**
    * The caller's balance, or null when they have no account yet. Accounts are
    * created with the initial allocation on the user's first order, and reads
    * never create one.
    */
-  getMyBalance: async (token: string | undefined) => {
-    try {
-      return await request<CreditBalance>('/credits/me', { token });
-    } catch (error) {
-      if (
-        error instanceof ServiceError &&
-        error.code === 'CREDIT_ACCOUNT_NOT_FOUND'
-      ) {
-        return null;
-      }
-      throw error;
-    }
-  },
+  getMyBalance: (token: string | undefined) =>
+    balanceOrNull('/credits/me', token),
 
   /** The caller's audit trail, newest first. Empty when there is no account. */
   listMyTransactions: (
@@ -85,6 +90,24 @@ export const creditService = {
   ) =>
     request<Page<CreditTransaction>>(
       withQuery('/credits/me/transactions', { limit, offset }),
+      { token },
+    ),
+
+  /** Another user's balance, or null without an account. Administrators only. */
+  getUserBalance: (token: string | undefined, userId: string) =>
+    balanceOrNull(`/admin/credits/${encodeURIComponent(userId)}`, token),
+
+  /** Another user's audit trail, newest first. Administrators only. */
+  listUserTransactions: (
+    token: string | undefined,
+    userId: string,
+    { limit, offset }: { limit?: number; offset?: number } = {},
+  ) =>
+    request<Page<CreditTransaction>>(
+      withQuery(`/admin/credits/${encodeURIComponent(userId)}/transactions`, {
+        limit,
+        offset,
+      }),
       { token },
     ),
 };

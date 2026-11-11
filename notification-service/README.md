@@ -40,15 +40,18 @@ Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-10
 Scope: Refactoring and documentation improvements — replace the stream section's "Limitation" paragraph with the per-recipient lock explanation (ai-20261110-001). The AI Use Summary subsection is a disclosure record.
 Author review: Keith confirmed on 2026-11-10: verification and testing with the full pytest suite (.venv/bin/python -m pytest -rs), 940 passed (ai-20261110-001).
 Details: notification-service/ai/usage-log.md; ai-20261110-001
+Tool: Claude Code (model: claude-opus-5-5), date: 2026-11-11
+Scope: Refactoring and documentation improvements — state in the introduction and the "Notification relay" handover section that the Frontend Service relay is built, and that Compose sets NOTIFICATION_SERVICE_URL (ai-20261111-001).
+Author review: Not confirmed (pending).
+Details: frontend-service/ai/usage-log.md; notification-service/ai/usage-log.md; ai-20261111-001
 -->
 
 # Notification Service
 
 Notification Service consumes `order.events` and turns order lifecycle events
 into per-user notifications. Each user reads them through a history API and a
-live Server-Sent Events (SSE) stream. The Frontend Service will relay both to the
-browser; that relay doesn't exist yet (see
-[Frontend Service handover](#frontend-service-handover)).
+live Server-Sent Events (SSE) stream. The Frontend Service relays both to the
+browser (see [Frontend Service handover](#frontend-service-handover)).
 
 It has two processes on one image:
 
@@ -810,9 +813,12 @@ running.
 
 ### Notification relay
 
-**The relay doesn't exist yet.** The Frontend Service owner builds it. The browser
-must never call Notification Service directly: Notification Service is published
-only on the host's loopback interface, and the session token stays in the
+**The relay is built** in `frontend-service/app/api/notifications/` and
+`frontend-service/lib/notification-relay.ts`; see the
+[Frontend Service README](../frontend-service/README.md#notification-service).
+This section is the contract it follows. The browser must never call
+Notification Service directly: Notification Service is published only on the
+host's loopback interface, and the session token stays in the
 httpOnly `foc_session` cookie, which browser code can't read. Every browser
 request goes to the Next.js route handlers, and they call Notification Service on
 the server side.
@@ -834,7 +840,7 @@ the server side.
 | In the `frontend-service` container | `http://notification-service:8080` |
 | On the host with `next dev` | `http://127.0.0.1:8084` |
 
-The API is plain HTTP on both. `frontend-service` doesn't have the variable yet.
+The API is plain HTTP on both. Compose sets it on `frontend-service`.
 
 **Authentication.** Read the `foc_session` cookie on the server and send its value
 as `Authorization: Bearer <token>`. Notification Service resolves it through
@@ -1336,3 +1342,19 @@ PostgreSQL, Kafka, Loki, Grafana, and Docker image checks were not run.
 Author review: Pending. See the
 [usage record](ai/usage-log.md#ai-20261110-002). Original per-message timestamps
 are unavailable; no redactions; no header exceptions.
+
+### Frontend relay documentation (ai-20261111-001)
+
+Claude Code (model: claude-opus-5-5) provided **Refactoring and documentation
+improvements** to this README while building the Frontend Service notification
+relay: the introduction and the "Notification relay" handover section now say
+the relay is built and link to the
+[Frontend Service README](../frontend-service/README.md#notification-service),
+and the configuration note says Compose sets `NOTIFICATION_SERVICE_URL`. No
+Notification Service code changed.
+
+Author review: Not confirmed (pending). See the
+[usage record](ai/usage-log.md#ai-20261111-001) and the canonical
+[Frontend Service record](../frontend-service/ai/usage-log.md#ai-20261111-001).
+Original per-message timestamps are unavailable; no redactions; no header
+exceptions.

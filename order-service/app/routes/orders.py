@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_identity
 from app.clients import Identity
 from app.db import get_db
-from app.schemas import DeliveryLocation, OrderCreate, OrderPage, OrderResponse
+from app.schemas import (
+    DeliveryLocation,
+    OrderCreate,
+    OrderPage,
+    OrderResponse,
+    OrderStatus,
+)
 from app.services import orders as order_service
 
 
@@ -70,11 +76,14 @@ def list_mine_route(
     role: Annotated[Literal["requester", "courier"], Query()],
     db: Session = Depends(get_db),
     actor: Identity = Depends(get_current_identity),
+    statuses: Annotated[list[OrderStatus] | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
+    """The caller's orders in one role. Repeat ``status`` to match any of several."""
+
     items, total = order_service.list_my_orders(
-        db, actor, role=role, limit=limit, offset=offset
+        db, actor, role=role, statuses=statuses, limit=limit, offset=offset
     )
     return OrderPage(
         items=[OrderResponse.model_validate(item) for item in items],

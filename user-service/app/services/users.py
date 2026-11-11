@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from argon2 import PasswordHasher
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -340,6 +340,89 @@ def get_user_status(user_id: UUID, db: Session) -> str:
         raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
 
     return user.status if user else "unknown"
+
+
+def _require_admin(actor_id: UUID, db: Session) -> None:
+    """Reject the request unless the actor is an active administrator."""
+
+    actor = _load_user(actor_id, db)
+    if actor is None or actor.status != "active" or actor.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE wildcards so a search term only matches literally."""
+
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def list_users_for_admin(
+    actor_id: UUID,
+    db: Session,
+    *,
+    query: str | None,
+    status: str | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[User], int]:
+    """Return a page of accounts in any status for an active administrator.
+
+    ``query`` matches case-insensitively against the student number, email
+    and display name. Results are newest first, with the ID as a tiebreaker so
+    paging is stable when accounts share a creation time.
+    """
+
+    try:
+        _require_admin(actor_id, db)
+
+        filters = []
+        if status is not None:
+            filters.append(User.status == status)
+        term = (query or "").strip().lower()
+        if term:
+            pattern = f"%{_escape_like(term)}%"
+            filters.append(
+                or_(
+                    func.lower(User.nus_student_number).like(pattern, escape="\\"),
+                    func.lower(User.email).like(pattern, escape="\\"),
+                    func.lower(User.display_name).like(pattern, escape="\\"),
+                )
+            )
+
+        total = db.scalar(select(func.count()).select_from(User).where(*filters)) or 0
+        items = list(
+            db.scalars(
+                select(User)
+                .where(*filters)
+                .order_by(User.created_at.desc(), User.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    return items, total
+
+
+def get_user_for_admin(actor_id: UUID, target_id: UUID, db: Session) -> User:
+    """Return any account, whatever its status, to an active administrator."""
+
+    try:
+        _require_admin(actor_id, db)
+        target = _load_user(target_id, db)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable") from exc
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return target
 
 
 def suspend_user(actor_id: UUID, target_id: UUID, db: Session) -> User:

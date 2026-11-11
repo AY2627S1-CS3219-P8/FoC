@@ -321,6 +321,103 @@ paths:
           schema:
             $ref: '#/definitions/ErrorResponse'
 
+  /admin/users:
+    get:
+      summary: List and search accounts
+      description: An active administrator lists accounts in any status, newest first, with the account ID breaking ties. Use it to find accounts to review, including suspended and deactivated ones. Administrator rights are re-checked on every request.
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: q
+          required: false
+          type: string
+          maxLength: 254
+          description: Case-insensitive substring of the student number, email, or display name. The characters % and _ match literally.
+        - in: query
+          name: status
+          required: false
+          type: string
+          enum:
+            - active
+            - deactivated
+            - suspended
+          description: Only return accounts in this status.
+        - in: query
+          name: limit
+          required: false
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        - in: query
+          name: offset
+          required: false
+          type: integer
+          minimum: 0
+          default: 0
+      responses:
+        "200":
+          description: One page of matching accounts.
+          schema:
+            $ref: '#/definitions/UserPage'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: A query parameter is out of range or not an allowed value.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
+  /admin/users/{user_id}:
+    get:
+      summary: Read any account
+      description: An active administrator reads an account's full profile in any status, so suspended and deactivated accounts can be reviewed. Unlike GET /users/{user_id}, this returns every UserResponse field. Administrator rights are re-checked on every request.
+      operationId: getUserAsAdmin
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: The account's full profile.
+          schema:
+            $ref: '#/definitions/UserResponse'
+        "401":
+          description: Bearer credentials are missing or invalid.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: The authenticated user is not an active administrator.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: User not found.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+        "422":
+          description: The user_id is not a valid UUID.
+          schema:
+            $ref: '#/definitions/ValidationErrorResponse'
+        "503":
+          description: Database is temporarily unavailable.
+          schema:
+            $ref: '#/definitions/ErrorResponse'
+
   /admin/users/{user_id}/suspend:
     post:
       summary: Suspend a user account
@@ -811,6 +908,26 @@ definitions:
       updated_at:
         type: string
         format: date-time
+
+  UserPage:
+    type: object
+    required:
+      - items
+      - total
+      - limit
+      - offset
+    properties:
+      items:
+        type: array
+        items:
+          $ref: '#/definitions/UserResponse'
+      total:
+        type: integer
+        description: Number of accounts matching the filters, across all pages.
+      limit:
+        type: integer
+      offset:
+        type: integer
 
   BasicProfileResponse:
     type: object

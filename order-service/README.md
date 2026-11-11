@@ -32,19 +32,38 @@ Every route except `/health` and `/ready` requires `Authorization: Bearer <sessi
 | --- | --- | --- | --- |
 | `POST` | `/orders` | requester | `201`, or `200` when the same `Idempotency-Key` and body are retried |
 | `GET` | `/orders/open?limit&offset` | any active user | open errands except the caller's, newest first |
-| `GET` | `/orders?role=requester\|courier&limit&offset` | caller | that caller's own orders |
+| `GET` | `/orders?role=requester\|courier&status&limit&offset` | caller | that caller's own orders; `status` is optional and repeatable, as on `/admin/orders` |
 | `GET` | `/orders/{id}` | requester, assigned courier, or admin | one order; anyone else gets `404` |
 | `PATCH` | `/orders/{id}/delivery` | requester, before pickup | replaces the destination |
 | `POST` | `/orders/{id}/accept` | anyone except the requester | first committed accept wins; the others get `409` |
 | `POST` | `/orders/{id}/pickup` | assigned courier | |
 | `POST` | `/orders/{id}/complete` | requester | does not touch credit balances |
 | `POST` | `/orders/{id}/cancel` | requester before pickup, or an admin until the order is closed | |
+| `GET` | `/admin/orders?status&limit&offset` | admin | every order, newest first; see [Admin routes](#admin-routes) |
+| `GET` | `/admin/orders/activity?hours` | admin | hourly creation, acceptance, and completion counts |
 
 `POST /orders` requires `Idempotency-Key` (max 128 characters). `X-Correlation-ID` is optional and must be a UUID. Pages are `{items, total, limit, offset}`. Errors are `{"detail": ...}`. A database outage is `503`.
 
 Repeating an action that the same person already completed returns `200` and does not write another event. An illegal transition returns `409`, leaves the row unchanged, and logs `illegal_order_transition`.
 
 Pickup must be an active supplier (`GET {SUPPLIER_SERVICE_URL}/suppliers/{id}`). `404` with code `SUPPLIER_NOT_FOUND` is `422`. Any other response, including a `404` from an unmounted route, is `503`. Delivery coordinates must fall inside latitude 1.288–1.310 and longitude 103.750–103.788, which covers the seeded stores and University Town.
+
+### Admin routes
+
+Both routes return `403 {"detail": "Administrator access required"}` unless User Service reports the caller as an active `admin`. The role is read from User Service on every request, so revoking admin rights or suspending the account takes effect at once.
+
+`GET /admin/orders` lists every order in any status, newest first, as a normal page. `status` is optional and can be repeated to match any of several statuses, e.g. `?status=PENDING_CREDIT&status=OPEN&status=ACCEPTED&status=PICKED_UP` for orders that are still active. An unknown status, `limit` outside 1–100, or a negative `offset` is `422`.
+
+`GET /admin/orders/activity` counts lifecycle events in rolling one-hour buckets that end at the time of the request. `hours` is 1–168 and defaults to `24`. Buckets are oldest first, so the last one is exactly the past hour:
+
+```json
+{"window_start": "2026-11-09T09:00:00Z", "window_end": "2026-11-10T09:00:00Z",
+ "bucket_minutes": 60,
+ "buckets": [{"start": "2026-11-09T09:00:00Z", "end": "2026-11-09T10:00:00Z",
+              "created": 3, "accepted": 2, "completed": 1}]}
+```
+
+`created`, `accepted`, and `completed` count orders whose `created_at`, `accepted_at`, or `completed_at` falls in the bucket, whatever the order's status is now. An order accepted and later cancelled still counts as accepted.
 
 ## States
 

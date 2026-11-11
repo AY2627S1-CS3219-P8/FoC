@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import Link from 'next/link';
 import { ArrowRight, Store } from 'lucide-react';
 
 import {
@@ -31,25 +32,17 @@ import {
 } from '@/lib/order-actions';
 import type { OrderRole, OrderStatus } from '@/lib/order-service';
 import {
+  ERRAND_STATUS_FILTERS,
   type OrderView,
   PRE_PICKUP_STATUSES,
   STATUS_LABELS,
+  STATUS_STYLES,
+  errandsHref,
   formatRejectionReason,
   orderPickupLocation,
   orderStoreName,
 } from '@/lib/orders';
 import { cn } from '@/lib/utils';
-
-const STATUS_STYLES: Record<OrderStatus, string> = {
-  PENDING_CREDIT: 'bg-slate-100 text-slate-600',
-  OPEN: 'bg-amber-50 text-amber-700',
-  ACCEPTED: 'bg-courier-soft text-courier',
-  PICKED_UP: 'bg-sky-50 text-sky-700',
-  COMPLETED: 'bg-emerald-50 text-emerald-700',
-  CANCELLED: 'bg-red-50 text-red-600',
-  EXPIRED: 'bg-slate-100 text-slate-500',
-  REJECTED: 'bg-red-50 text-red-600',
-};
 
 const ROLE_TABS: { role: OrderRole; label: string }[] = [
   { role: 'requester', label: 'As Requester' },
@@ -283,17 +276,27 @@ function ErrandCard({ order, role, onUpdate }: ErrandCardProps) {
 
 type ErrandListProps = {
   initialRole: OrderRole;
+  /** Only errands in this status; every status when undefined. */
+  status: OrderStatus | undefined;
   initial: Record<OrderRole, PageResult<OrderView>>;
 };
 
-export function ErrandList({ initialRole, initial }: ErrandListProps) {
+const STATUS_FILTERS: { status: OrderStatus | undefined; label: string }[] = [
+  { status: undefined, label: 'All' },
+  ...ERRAND_STATUS_FILTERS.map((status) => ({
+    status,
+    label: STATUS_LABELS[status],
+  })),
+];
+
+export function ErrandList({ initialRole, status, initial }: ErrandListProps) {
   const [role, setRole] = useState(initialRole);
   const lists = {
     requester: usePagedList(initial.requester, (window) =>
-      loadMyOrders('requester', window),
+      loadMyOrders('requester', status, window),
     ),
     courier: usePagedList(initial.courier, (window) =>
-      loadMyOrders('courier', window),
+      loadMyOrders('courier', status, window),
     ),
   };
   const current = lists[role];
@@ -303,7 +306,7 @@ export function ErrandList({ initialRole, initial }: ErrandListProps) {
     setRole(next);
     // Keeps the tab on reload without a server round trip; replacing rather
     // than pushing keeps tab switches out of the back button's history.
-    window.history.replaceState(null, '', `?role=${next}`);
+    window.history.replaceState(null, '', errandsHref(next, status));
   }
 
   // Both tabs, so the other tab's count stays current too.
@@ -350,6 +353,31 @@ export function ErrandList({ initialRole, initial }: ErrandListProps) {
             );
           })}
         </div>
+        <nav
+          aria-label='Filter by status'
+          className='-mx-4 mt-3 flex gap-2 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:px-0'
+        >
+          {STATUS_FILTERS.map((filter) => {
+            const active = filter.status === status;
+            return (
+              <Link
+                key={filter.label}
+                href={errandsHref(role, filter.status)}
+                replace
+                scroll={false}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'flex h-8 shrink-0 items-center rounded-full border px-3.5 text-sm font-semibold transition-colors',
+                  active
+                    ? 'border-brand bg-brand text-white'
+                    : 'bg-white text-slate-600 hover:bg-slate-50',
+                )}
+              >
+                {filter.label}
+              </Link>
+            );
+          })}
+        </nav>
       </PageHeader>
 
       {current.error && (
@@ -358,7 +386,11 @@ export function ErrandList({ initialRole, initial }: ErrandListProps) {
 
       <CardGrid
         empty={
-          !current.error && current.items.length === 0 && 'No errands yet.'
+          !current.error &&
+          current.items.length === 0 &&
+          (status
+            ? `No ${STATUS_LABELS[status].toLowerCase()} errands.`
+            : 'No errands yet.')
         }
       >
         {current.items.map((order) => (
